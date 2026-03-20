@@ -1,0 +1,12 @@
+# AllahPan 项目依赖（Python 3.12）
+# 安装: .venv\Scripts\pip install -r requirements.txt
+
+# Backend
+-r backend/requirements.txt
+
+# Frontend (PySide6)
+-r frontend_desktop/requirements.txt
+
+# 打包与启动
+PyInstaller>=6.0
+ollama

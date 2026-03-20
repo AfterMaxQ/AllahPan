@@ -1,0 +1,41 @@
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build / Dist (PyInstaller)
+build/
+dist/
+*.spec.bak
+
+# Runtime / Data
+data/
+*.db
+*.sqlite
+*.log
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Trae (if present)
+.trae/
+
+# Optional: keep spec files tracked (AllahPan.spec, AllahPan-macOS.spec, AllahPan-Linux.spec)
+# Do not ignore *.spec so packaging config is in repo

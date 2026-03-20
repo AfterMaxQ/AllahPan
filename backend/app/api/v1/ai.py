@@ -1,0 +1,394 @@
+"""
+AI语义服务API模块。
+
+本模块提供AI相关的RESTful API接口，包括文件搜索、文件解析和Ollama状态查询。
+
+搜索功能说明：
+- 图片文件：使用Ollama进行语义搜索（向量匹配）
+- 文本文件：使用文件名匹配搜索（模糊查询）
+
+AI解析功能：
+- 仅支持图片文件（jpeg, png, gif, webp）
+- 调用Ollama的Qwen3-VL-4B模型解析图片内容
+- 生成语义向量存储到向量数据库
+
+作者: AllahPan团队
+创建日期: 2026-03-19
+最后修改: 2026-03-19
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+
+from app.api.v1.dependencies import get_current_user, get_ollama, get_file_repo, AuthUser
+from app.database.repositories.file_repository import FileRepository
+from ollama.ollama_client import OllamaClient
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+SUPPORTED_IMAGE_TYPES = {
+    "image/jpeg": [".jpg", ".jpeg"],
+    "image/png": [".png"],
+    "image/gif": [".gif"],
+    "image/webp": [".webp"],
+}
+
+
+class SearchRequest(BaseModel):
+    """
+    文件搜索请求模型。
+
+    属性:
+        query: 搜索查询关键字（文件名匹配）
+        limit: 返回结果数量限制，默认为20
+    """
+    query: str
+    limit: int = 20
+
+
+class SearchResult(BaseModel):
+    """
+    搜索结果模型。
+
+    属性:
+        file_id: 文件唯一标识符
+        filename: 文件名
+        filetype: 文件类型
+        is_ai_parsed: 是否已AI解析（用于语义搜索）
+        size: 文件大小（字节）
+    """
+    file_id: str
+    filename: str
+    filetype: str
+    is_ai_parsed: bool
+    size: int
+
+
+class SearchResponse(BaseModel):
+    """
+    搜索响应模型。
+
+    属性:
+        results: 搜索结果列表
+        total: 总结果数量
+        mode: 搜索模式（filename/vector）
+    """
+    results: List[SearchResult]
+    total: int
+    mode: str
+
+
+class OllamaStatus(BaseModel):
+    """
+    Ollama服务状态模型。
+    与 /system/ollama 的 OllamaStatusInfo 语义对齐，提供 available 与 service_available 双字段。
+    """
+    available: bool
+    service_available: bool = False  # 与 available 一致，供前端统一使用
+    model: str = "qwen3-vl:4b"
+    embedding_model: str = "nomic-embed-text-v2-moe"
+    error: Optional[str] = None
+
+    class Config:
+        # 构造时用 available 填充 service_available
+        pass
+
+    def __init__(self, **data: Any) -> None:
+        if "service_available" not in data and "available" in data:
+            data["service_available"] = data["available"]
+        super().__init__(**data)
+
+
+class ParseResponse(BaseModel):
+    """
+    文件解析响应模型。
+
+    属性:
+        file_id: 文件唯一标识符
+        success: 解析是否成功
+        message: 解析结果消息
+        extracted_text: 提取的文本内容（截断版本）
+    """
+    file_id: str
+    success: bool
+    message: str
+    extracted_text: Optional[str] = None
+
+
+def is_supported_image_type(filetype: str) -> bool:
+    """检查文件类型是否为支持的图片格式。"""
+    return filetype.lower() in SUPPORTED_IMAGE_TYPES
+
+
+def is_image_file(filename: str, filetype: str) -> bool:
+    """检查文件是否为图片类型。"""
+    if is_supported_image_type(filetype):
+        return True
+    ext = Path(filename).suffix.lower()
+    for extensions in SUPPORTED_IMAGE_TYPES.values():
+        if ext in extensions:
+            return True
+    return False
+
+
+@router.post("/search", response_model=SearchResponse)
+async def search_files(
+    request: SearchRequest,
+    file_repo: "FileRepository" = Depends(get_file_repo),
+    current_user: AuthUser = Depends(get_current_user),
+    ollama: OllamaClient = Depends(get_ollama),
+):
+    """
+    搜索文件接口。
+
+    混合搜索策略：
+    - 首先进行文件名模糊匹配（所有文件类型）
+    - 对于已AI解析的图片文件，同时进行向量语义搜索
+
+    参数:
+        request: 搜索请求，包含查询关键字和结果数量限制
+        current_user: 当前认证用户（通过依赖注入获取）
+        ollama: Ollama客户端（通过依赖注入获取）
+
+    返回:
+        SearchResponse: 包含搜索结果和总数的响应对象
+
+    异常:
+        HTTPException: 当搜索失败时抛出500错误
+    """
+    logger.info(f"文件搜索请求，查询: {request.query[:50]}...")
+    try:
+        if not request.query.strip():
+            logger.warning("搜索失败，查询为空")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="搜索查询不能为空",
+            )
+
+        results_dict = {}
+        search_mode = "filename"
+
+        filename_results = file_repo.search_files_by_filename(request.query)
+        for file_meta in filename_results:
+            results_dict[file_meta.file_id] = {
+                "file_id": file_meta.file_id,
+                "filename": file_meta.filename,
+                "filetype": file_meta.filetype,
+                "is_ai_parsed": file_meta.is_ai_parsed,
+                "size": file_meta.size,
+            }
+
+        if len(results_dict) == 0:
+            logger.info("文件名搜索无匹配，直接返回空结果（跳过向量搜索）")
+            return SearchResponse(results=[], total=0, mode="filename")
+
+        if len(results_dict) < request.limit:
+            if await ollama.is_available():
+                try:
+                    query_vector = await ollama.embed_text(request.query)
+                    logger.info(f"查询向量生成完成，维度: {len(query_vector)}")
+                    vector_results = file_repo.search_similar_files(
+                        query_vector=query_vector,
+                        n_results=request.limit,
+                    )
+                    logger.info(f"向量搜索返回 {len(vector_results)} 个结果")
+
+                    for item in vector_results:
+                        metadata = item.get("metadata", {})
+                        file_id = metadata.get("file_id", item.get("id", "").replace("file_", ""))
+                        distance = item.get("distance")
+                        logger.debug(f"向量结果: file_id={file_id}, distance={distance:.4f}, filename={metadata.get('filename', 'unknown')}")
+
+                        if file_id not in results_dict:
+                            results_dict[file_id] = {
+                                "file_id": file_id,
+                                "filename": metadata.get("filename", "未知文件"),
+                                "filetype": metadata.get("filetype", "unknown"),
+                                "is_ai_parsed": True,
+                                "size": metadata.get("file_size", 0),
+                            }
+                    search_mode = "mixed"
+                except Exception as e:
+                    logger.warning(f"向量搜索失败，使用文件名搜索结果: {e}")
+            else:
+                logger.info("Ollama服务不可用，使用文件名搜索")
+
+        results = list(results_dict.values())[:request.limit]
+
+        logger.info(f"搜索完成，找到 {len(results)} 个匹配结果，模式: {search_mode}")
+        return SearchResponse(
+            results=[
+                SearchResult(**r) for r in results
+            ],
+            total=len(results),
+            mode=search_mode,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"搜索失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"搜索失败: {str(e)}",
+        )
+
+
+@router.post("/parse/{file_id}", response_model=ParseResponse)
+async def parse_file(
+    file_id: str,
+    file_repo: "FileRepository" = Depends(get_file_repo),
+    current_user: AuthUser = Depends(get_current_user),
+    ollama: OllamaClient = Depends(get_ollama),
+):
+    """
+    对指定文件进行AI解析。
+    
+    该接口调用Ollama的多模态模型（Qwen3-VL-4B）对图片文件进行解析，
+    提取文本内容并生成语义向量，用于后续的语义搜索。
+    
+    参数:
+        file_id: 需要解析的文件唯一标识符
+        file_repo: 文件仓库（通过依赖注入获取）
+        current_user: 当前认证用户（通过依赖注入获取）
+        ollama: Ollama客户端（通过依赖注入获取）
+    
+    返回:
+        ParseResponse: 包含解析结果的响应对象
+    
+    异常:
+        HTTPException: 当文件不存在或解析失败时抛出相应错误
+    """
+    logger.info(f"文件解析请求，文件ID: {file_id}")
+    try:
+        if not await ollama.is_available():
+            logger.error("Ollama服务不可用")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Ollama服务不可用，请确保Ollama正在运行",
+            )
+        
+        file_metadata = file_repo.get_file_metadata_by_id(file_id)
+        
+        if file_metadata is None:
+            logger.warning(f"文件不存在，文件ID: {file_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="文件不存在",
+            )
+        
+        if not is_supported_image_type(file_metadata.filetype):
+            logger.warning(f"不支持的文件类型，文件ID: {file_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"不支持的文件类型: {file_metadata.filetype}，仅支持图片格式",
+            )
+        
+        file_path = Path(file_metadata.filepath)
+        if not file_path.exists():
+            logger.error(f"文件已丢失，文件ID: {file_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="文件已丢失",
+            )
+        
+        logger.info(f"开始解析文件: {file_id}, 路径: {file_path}")
+        
+        extracted_text = await ollama.parse_image_content(str(file_path))
+        
+        if not extracted_text or not extracted_text.strip():
+            extracted_text = f"[图片内容] {file_metadata.filename}"
+        
+        embedding = await ollama.embed_text(extracted_text)
+        
+        vector_metadata = {
+            "filename": file_metadata.filename,
+            "filetype": file_metadata.filetype,
+            "file_size": file_metadata.size,
+            "parsed_text": extracted_text[:1000],
+            "parsed_at": file_metadata.upload_time,
+        }
+        
+        file_repo.add_vector(
+            file_id=file_id,
+            vector=embedding,
+            metadata=vector_metadata,
+        )
+        
+        file_repo.mark_as_ai_parsed(file_id)
+        
+        logger.info(f"文件解析完成: {file_id}, 提取文本长度: {len(extracted_text)}")
+        
+        return ParseResponse(
+            file_id=file_id,
+            success=True,
+            message="文件解析成功，已生成语义向量",
+            extracted_text=extracted_text[:500] if len(extracted_text) > 500 else extracted_text,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"文件解析失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"文件解析失败: {str(e)}",
+        )
+
+
+@router.get("/status", response_model=OllamaStatus)
+async def get_ollama_status(
+    ollama: OllamaClient = Depends(get_ollama),
+):
+    """
+    查询Ollama服务的当前状态。
+    
+    该接口检查Ollama推理引擎是否可用，并返回当前配置的模型信息。
+    用于前端判断AI功能是否可用。
+    
+    参数:
+        ollama: Ollama客户端（通过依赖注入获取）
+    
+    返回:
+        OllamaStatus: 包含服务可用性和模型配置的状态对象
+    """
+    logger.debug("查询Ollama服务状态")
+    try:
+        is_avail = await ollama.is_available()
+        
+        if not is_avail:
+            logger.warning("Ollama服务不可用")
+            return OllamaStatus(
+                available=False,
+                service_available=False,
+                model=ollama.vision_model,
+                embedding_model=ollama.embedding_model,
+                error="无法连接到Ollama服务",
+            )
+        
+        logger.info("Ollama服务可用")
+        return OllamaStatus(
+            available=True,
+            service_available=True,
+            model=ollama.vision_model,
+            embedding_model=ollama.embedding_model,
+            error=None,
+        )
+        
+    except Exception as e:
+        logger.error(f"获取Ollama状态失败: {e}")
+        return OllamaStatus(
+            available=False,
+            service_available=False,
+            model=getattr(ollama, "vision_model", "qwen3-vl:4b"),
+            embedding_model=ollama.embedding_model,
+            error=str(e),
+        )

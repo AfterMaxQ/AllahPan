@@ -1,0 +1,11 @@
+{
+    "include": ["backend"],
+    "exclude": ["**/__pycache__", "**/node_modules"],
+    "venvPath": ".",
+    "pythonVersion": "3.11",
+    "extraPaths": ["backend", "G:/Anaconda3/Lib/site-packages"],
+    "typeCheckingMode": "basic",
+    "reportMissingImports": true,
+    "reportMissingTypeStubs": false,
+    "reportInvalidTypeForm": false
+}
