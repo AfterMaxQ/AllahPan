@@ -1,109 +1,70 @@
-# AllahPan 极简 Web 前端
+# AllahPan Web 前端
 
-这是一个极简的 Web 前端，用于快速验证后端 API 功能。
+纯前端极简网盘界面，访问后端 API 实现文件管理、AI 搜索等功能，无需构建，浏览器直接运行。
 
-## 功能特性
+## 功能
 
-✅ **用户认证**
-- 用户注册
-- 用户登录
-- 自动登录（基于 localStorage）
-
-✅ **文件管理**
-- 文件列表展示
-- 点击上传文件
-- 拖拽上传文件
-- 上传进度条
-- 文件下载
-
-✅ **AI 功能**
-- AI 语义搜索
-- 文件名搜索
-- 搜索结果展示
+- **用户认证**：注册 / 登录 / 自动登录（localStorage）
+- **文件管理**：列表、点击上传、拖拽上传、上传进度、下载
+- **AI 搜索**：语义搜索 + 文件名搜索
+- **响应式**：适配桌面和手机浏览器
 
 ## 快速开始
 
-### 1. 启动后端服务
+### 1. 启动后端
 
-```bash
+```powershell
+# Windows
 cd backend
-f:\Python\AllahPan\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+.venv\Scripts\activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
-
-后端服务将在 `http://localhost:8000` 启动。
-
-### 2. 打开前端页面
-
-直接在浏览器中打开：
-```
-file:///f:/Python/AllahPan/frontend_web/index.html
-```
-
-或者使用简单的 HTTP 服务器：
 
 ```bash
-cd frontend_web
-f:\Python\AllahPan\.venv\Scripts\python.exe -m http.server 3000
+# macOS / Linux
+cd backend
+source ../.venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-然后访问：`http://localhost:3000`
+### 2. 打开前端页面（二选一）
 
-## 使用流程
+**方式 A（推荐）：** 在 `frontend_web` 下启动 HTTP 服务器：
 
-1. **注册账号**
-   - 点击"立即注册"
-   - 输入用户名、密码、邮箱
-   - 点击"注册"
+```powershell
+# Windows
+cd frontend_web
+.venv\Scripts\python run.py
+```
 
-2. **登录**
-   - 输入用户名和密码
-   - 点击"登录"
+```bash
+# macOS / Linux
+cd frontend_web
+source ../.venv/bin/activate
+python run.py
+```
 
-3. **上传文件**
-   - 点击上传区域选择文件
-   - 或直接拖拽文件到上传区域
-   - 查看上传进度
+浏览器自动打开 `http://localhost:3000`。
 
-4. **下载文件**
-   - 在文件列表中找到目标文件
-   - 点击"下载"按钮
+**方式 B：** 直接用浏览器打开 `frontend_web/index.html`（API 会回退到 `http://localhost:8000/api/v1`）。
 
-5. **搜索文件**
-   - 在搜索框输入关键词
-   - 自动执行 AI 语义搜索
-   - 查看搜索结果
+### 3. 注册 / 登录
+
+在页面注册账号后登录，即可使用文件上传、下载、AI 搜索等全部功能。
 
 ## API 端点
 
-后端 API 基础地址：`http://localhost:8000/api/v1`
-
-- `POST /auth/register` - 用户注册
-- `POST /auth/login` - 用户登录
-- `GET /auth/me` - 获取当前用户信息
-- `GET /files/list` - 获取文件列表
-- `POST /files/upload` - 上传文件
-- `GET /files/{file_id}/download` - 下载文件
-- `POST /ai/search` - AI 语义搜索
-- `GET /system/info` - 系统信息
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/auth/register` | 注册 |
+| POST | `/api/v1/auth/login` | 登录 |
+| GET | `/api/v1/auth/me` | 当前用户信息 |
+| GET | `/api/v1/files/list` | 文件列表 |
+| POST | `/api/v1/files/upload` | 上传文件 |
+| GET | `/api/v1/files/{id}/download` | 下载文件 |
+| POST | `/api/v1/ai/search` | AI 语义搜索 |
+| GET | `/api/v1/system/info` | 系统信息 |
 
 ## 技术栈
 
-- **纯 HTML5** - 单文件实现
-- **原生 JavaScript** - 无需框架
-- **Fetch API** - HTTP 请求
-- **localStorage** - Token 存储
-- **CSS3** - 响应式设计
-
-## 注意事项
-
-1. **CORS 配置**：后端已配置允许 `localhost:3000` 和 `localhost:5173` 的跨域请求
-
-2. **Token 管理**：登录成功后，Token 会自动存储到 localStorage，并在后续请求中自动携带
-
-3. **文件上传**：支持拖拽上传和点击上传，显示实时进度条
-
-4. **AI 搜索**：需要确保 Ollama 服务正在运行，并加载了相应的模型
-
-## 下一步
-
-完成 Web 前端验证后，可以开始开发 PySide6 桌面客户端，实现更完整的功能和更好的用户体验。
+纯 HTML5 + 原生 JavaScript（无框架），Fetch API 通信，localStorage 管理 Token，CSS3 响应式布局。
