@@ -17,10 +17,15 @@ __pycache__/
 *.swp
 *.swo
 
-# Build / Dist (PyInstaller)
-build/
-dist/
+# PyInstaller 中间产物备份
 *.spec.bak
+
+# dist/：Windows 打包目录内含 Qt WebEngine 等单文件可超过 GitHub 100MB 硬限制，无法推送。
+# 换机后请在本机执行：pip install -r requirements.txt && pip install PyInstaller && pyinstaller AllahPan.spec
+dist/
+
+# build/：纳入仓库便于保留 spec 构建辅助文件、版本信息等（体积相对可控）。
+# 若某文件仍超 100MB，再改回忽略或改用 Git LFS。
 
 # Runtime / Data
 data/
