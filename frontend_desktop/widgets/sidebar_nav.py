@@ -36,7 +36,6 @@ class SidebarNav(QWidget):
         {"id": "video", "name": "视频", "icon": "🎬", "section": "category"},
         {"id": "audio", "name": "音频", "icon": "🎵", "section": "category"},
         {"id": "other", "name": "其他", "icon": "📦", "section": "category"},
-        {"id": "ai_search", "name": "AI 搜索", "icon": "🤖", "section": "tool"},
         {"id": "ops_dashboard", "name": "运维看板", "icon": "📊", "section": "tool"},
     ]
     

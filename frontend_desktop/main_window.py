@@ -617,10 +617,6 @@ class MainWindow(QMainWindow):
         if self.stacked_pages.currentWidget() != self.file_browser:
             self._switch_main_page(self.file_browser)
 
-        if category == "ai_search":
-            self.search_bar.set_mode(SearchBar.MODE_AI)
-            return
-
         self.file_browser.set_category(category)
     
     def _on_search_triggered(self, keyword: str, is_ai: bool) -> None:
