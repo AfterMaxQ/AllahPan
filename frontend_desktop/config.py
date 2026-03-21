@@ -37,6 +37,8 @@ __all__ = [
     "_current_theme_mode",
     "_load_auth",
     "STORAGE_DIR",
+    "resolve_app_icon_path",
+    "SERVER_SETTINGS_PATH",
 ]
 
 # ==================== 应用元数据 ====================
@@ -44,6 +46,23 @@ __all__ = [
 APP_NAME = "AllahPan"
 APP_VERSION = "1.0.0"
 APP_DESCRIPTION = "家庭私有网盘"
+
+
+def resolve_app_icon_path() -> Optional[Path]:
+    """
+    主窗口 / 任务栏使用的应用图标路径。
+    优先使用 frontend_desktop/assets/app_icon.png（随 PyInstaller 一并打入 frontend_desktop）；
+    开发时若未复制资源，可回退到仓库根目录 图标.png。
+    """
+    base = Path(__file__).resolve().parent
+    for candidate in (base / "assets" / "app_icon.png", base.parent / "图标.png"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+# 与 launcher.py 中 _apply_persistent_server_settings 使用的路径一致
+SERVER_SETTINGS_PATH = Path.home() / ".allahpan" / "server_settings.json"
 
 # ==================== API 配置 ====================
 API_HOST = os.environ.get("ALLAHPAN_HOST", "localhost")
@@ -93,7 +112,7 @@ LIST_ROW_HEIGHT = 44
 LIST_HEADER_HEIGHT = 36
 
 # 侧边栏
-SIDEBAR_WIDTH = 220
+SIDEBAR_WIDTH = 256
 SIDEBAR_MIN_WIDTH = 180
 SIDEBAR_MAX_WIDTH = 280
 

@@ -19,10 +19,12 @@ AllahPan 统一启动器脚本。
 
 import argparse
 import atexit
+import json
 import logging
 import os
 import platform
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -40,6 +42,13 @@ if _FROZEN and _MEIPASS:
     PROJECT_ROOT = _BUNDLE_ROOT
     BACKEND_DIR = _BUNDLE_ROOT / "backend"
     FRONTEND_DIR = _BUNDLE_ROOT / "frontend_desktop"
+elif _FROZEN:
+    # 极少数环境下 frozen 但未注入 _MEIPASS，回退到 exe 旁 _internal（PyInstaller one-dir）
+    _exe_dir = Path(sys.executable).resolve().parent
+    _BUNDLE_ROOT = _exe_dir / "_internal"
+    PROJECT_ROOT = _BUNDLE_ROOT
+    BACKEND_DIR = _BUNDLE_ROOT / "backend"
+    FRONTEND_DIR = _BUNDLE_ROOT / "frontend_desktop"
 else:
     PROJECT_ROOT = Path(__file__).resolve().parent
     BACKEND_DIR = PROJECT_ROOT / "backend"
@@ -47,9 +56,104 @@ else:
 
 DATA_DIR = PROJECT_ROOT / "data" if not _FROZEN else (Path.home() / ".allahpan" / "data")
 
+# 与桌面端设置页写入的路径一致；环境变量优先于文件（便于脚本/CI 覆盖）
+SERVER_SETTINGS_PATH = Path.home() / ".allahpan" / "server_settings.json"
+
+
+def _apply_persistent_server_settings() -> None:
+    """从 ~/.allahpan/server_settings.json 应用 api_host / api_port / ollama_port（仅当对应环境变量未设置）。"""
+    p = SERVER_SETTINGS_PATH
+    if not p.is_file():
+        return
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(data, dict):
+        return
+    if "api_host" in data and "ALLAHPAN_HOST" not in os.environ:
+        os.environ["ALLAHPAN_HOST"] = str(data["api_host"]).strip()
+    if "api_port" in data and "ALLAHPAN_PORT" not in os.environ:
+        os.environ["ALLAHPAN_PORT"] = str(int(data["api_port"]))
+    if "ollama_port" in data and "OLLAMA_PORT" not in os.environ:
+        os.environ["OLLAMA_PORT"] = str(int(data["ollama_port"]))
+    if "ollama_port" in data and "ALLAHPAN_OLLAMA_URL" not in os.environ:
+        try:
+            op = int(data["ollama_port"])
+            os.environ["ALLAHPAN_OLLAMA_URL"] = f"http://127.0.0.1:{op}"
+        except (TypeError, ValueError):
+            pass
+
+
+_apply_persistent_server_settings()
+
+
+def ensure_backend_import_path() -> Path:
+    """
+    将「含 app 包的 backend 根目录」加入 sys.path。
+    打包后代码在 _MEIPASS/backend/app，必须让 sys.path 含 .../backend，否则后台线程内 import app 失败。
+    """
+    root = Path(BACKEND_DIR).resolve()
+    s = str(root)
+    if s not in sys.path:
+        sys.path.insert(0, s)
+    # 供同进程内其它逻辑、子进程（若将来有）使用
+    prev = os.environ.get("PYTHONPATH", "").strip()
+    os.environ["PYTHONPATH"] = s if not prev else s + os.pathsep + prev
+    return root
+
+
 API_HOST = os.environ.get("ALLAHPAN_HOST", "0.0.0.0")
 API_PORT = int(os.environ.get("ALLAHPAN_PORT", "8000"))
 OLLAMA_PORT = int(os.environ.get("OLLAMA_PORT", "11434"))
+
+_API_PORT_SCAN_MAX = 64
+
+
+def _tcp_bind_succeeds(host: str, port: int) -> bool:
+    """在当前机上尝试绑定 (host, port)，成功则表示本进程可占用该端口（未被占用或可与 SO_REUSEADDR 共存）。"""
+    bind_host = "0.0.0.0" if host in ("0.0.0.0", "") else host
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((bind_host, port))
+            return True
+    except OSError:
+        return False
+
+
+def ensure_api_listen_port() -> int:
+    """
+    在即将由本进程启动 uvicorn 之前调用：若首选端口已被占用（例如终端里已跑了一份后端），
+    则自动递增端口直至可用，并写回全局 API_PORT 与环境变量，保证内置桌面端读到同一端口。
+
+    若需强制固定端口（占用则失败），设置环境变量 ALLAHPAN_STRICT_PORT=1。
+    """
+    global API_PORT
+    strict = os.environ.get("ALLAHPAN_STRICT_PORT", "").strip().lower() in ("1", "true", "yes")
+    preferred = int(os.environ.get("ALLAHPAN_PORT", str(API_PORT)))
+    if strict:
+        if not _tcp_bind_succeeds(API_HOST, preferred):
+            raise RuntimeError(
+                f"端口 {preferred} 已被占用，且已设置 ALLAHPAN_STRICT_PORT=1，请关闭占用进程或更换 ALLAHPAN_PORT。"
+            )
+        chosen = preferred
+    else:
+        chosen = preferred
+        for _ in range(_API_PORT_SCAN_MAX):
+            if _tcp_bind_succeeds(API_HOST, chosen):
+                break
+            chosen += 1
+        else:
+            raise RuntimeError(
+                f"在 {preferred}～{preferred + _API_PORT_SCAN_MAX - 1} 范围内未找到可用 TCP 端口，请释放端口或设置 ALLAHPAN_PORT。"
+            )
+    if chosen != preferred:
+        logging.warning("首选 API 端口 %s 已被占用，本实例改用 %s", preferred, chosen)
+    API_PORT = chosen
+    os.environ["ALLAHPAN_PORT"] = str(chosen)
+    os.environ["ALLAHPAN_HOST"] = API_HOST
+    return chosen
 
 LOG_DIR = Path.home() / ".allahpan" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -246,6 +350,10 @@ class Launcher:
         if not BACKEND_DIR.exists():
             logging.error(f"后端目录不存在: {BACKEND_DIR}")
             return False
+
+        if not (BACKEND_DIR / "app").is_dir():
+            logging.error(f"后端 app 包不存在: {BACKEND_DIR / 'app'}")
+            return False
         
         if not FRONTEND_DIR.exists():
             logging.error(f"前端目录不存在: {FRONTEND_DIR}")
@@ -260,12 +368,17 @@ class Launcher:
     
     def start_backend(self, wait: bool = True) -> bool:
         logging.info("启动后端服务...")
-        
+        try:
+            ensure_api_listen_port()
+        except RuntimeError as e:
+            logging.error("%s", e)
+            return False
+
         if OLLAMA_MANAGER_ENABLED and not OllamaHelper.is_running():
             OllamaHelper.start_server()
-        
-        sys.path.insert(0, str(BACKEND_DIR))
-        
+
+        ensure_backend_import_path()
+
         return self.process_manager.start_process(
             name="api",
             cmd=[sys.executable, "-m", "uvicorn", "app.main:app",
@@ -307,8 +420,7 @@ class Launcher:
     
     def _run_backend_in_thread(self) -> None:
         """在后台线程中运行 FastAPI（仅打包后使用）。"""
-        import threading
-        sys.path.insert(0, str(BACKEND_DIR))
+        ensure_backend_import_path()
         try:
             import uvicorn
             from app.main import app
@@ -396,8 +508,8 @@ class Launcher:
         if str(FRONTEND_DIR) not in sys.path:
             sys.path.insert(0, str(PROJECT_ROOT))
         os.chdir(FRONTEND_DIR)
-        os.environ.setdefault("ALLAHPAN_HOST", "localhost" if API_HOST == "0.0.0.0" else API_HOST)
-        os.environ.setdefault("ALLAHPAN_PORT", str(API_PORT))
+        os.environ["ALLAHPAN_HOST"] = "localhost" if API_HOST == "0.0.0.0" else API_HOST
+        os.environ["ALLAHPAN_PORT"] = str(API_PORT)
         try:
             import frontend_desktop.run as run_module
             return run_module.main()
@@ -496,8 +608,22 @@ def main():
     if _FROZEN and not (args.status or args.stop):
         if not launcher.check_environment():
             return 1
+        try:
+            ensure_api_listen_port()
+        except RuntimeError as e:
+            logging.error("%s", e)
+            return 1
         if OLLAMA_MANAGER_ENABLED and not args.no_ollama and not OllamaHelper.is_running():
             OllamaHelper.start_server()
+        # 主线程先注入路径并预加载 app，避免部分环境下子线程 import 找不到 app
+        ensure_backend_import_path()
+        try:
+            import importlib
+
+            importlib.import_module("app.main")
+        except Exception as e:
+            logging.exception("打包环境预加载 app.main 失败（请确认已用 AllahPan.spec 完整构建）: %s", e)
+            return 1
         # 后端在守护线程中运行
         backend_thread = threading.Thread(target=launcher._run_backend_in_thread, daemon=True)
         backend_thread.start()

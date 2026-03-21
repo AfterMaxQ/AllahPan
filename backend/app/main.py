@@ -18,10 +18,15 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.routing import APIRoute
+from starlette.routing import Match
+from starlette._utils import get_route_path
 
 from app.api.v1 import auth, files, ai, system, tunnel
+from app.observability.http_middleware import TrafficRecordingMiddleware
 from app.config import (
     CORS_ALLOWED_ORIGINS,
+    CORS_ORIGIN_REGEX,
     WEB_FRONTEND_DIR,
     get_storage_dir,
     OLLAMA_BASE_URL,
@@ -33,6 +38,25 @@ from app.services.image_parser import ImageParserQueue, set_image_parser_queue, 
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class SpaCatchallAPIRoute(APIRoute):
+    """
+    SPA 通配 GET 路由：路径以 /api/ 开头时不参与匹配。
+
+    get_route_path(scope) 返回的 path 带前导斜杠（如 /api/v1/...），
+    必须与 /api、/api/ 比较；若误写成 api/ 则永远不匹配，导致未注册的
+    /api/... 被通配当成静态页并返回 index.html（运维接口等会表现为「HTML 非 JSON」）。
+    """
+
+    def matches(self, scope):
+        if scope["type"] == "http":
+            path = get_route_path(scope)
+            # 兼容 path 无前导 / 的反代或 ASGI 变体，避免 /api/... 落入 SPA 返回 index.html
+            tail = path.lstrip("/").lower()
+            if tail == "api" or tail.startswith("api/"):
+                return Match.NONE, {}
+        return super().matches(scope)
 
 
 _dirWatcher: DirectoryWatcher | None = None
@@ -174,13 +198,26 @@ app = FastAPI(
 
 logger.info("FastAPI应用初始化完成")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if CORS_ORIGIN_REGEX:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        allow_origin_regex=CORS_ORIGIN_REGEX,
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+# 后注册者更靠外：先收到请求、最后写回响应，便于统计最终状态码
+app.add_middleware(TrafficRecordingMiddleware)
 
 logger.info("CORS中间件配置完成")
 
@@ -235,7 +272,6 @@ async def root():
     return {"status": "ok", "message": "AllahPan服务运行中"}
 
 
-@app.get("/{full_path:path}", tags=["Web"])
 async def serve_web(full_path: str):
     """
     托管 Web 前端静态资源（js、css 等）。若文件不存在则返回 index.html 以支持 SPA 前端路由。
@@ -250,3 +286,12 @@ async def serve_web(full_path: str):
         if index.is_file():
             return FileResponse(index)
     raise HTTPException(status_code=404, detail="Not Found")
+
+
+app.router.add_api_route(
+    "/{full_path:path}",
+    serve_web,
+    methods=["GET"],
+    tags=["Web"],
+    route_class_override=SpaCatchallAPIRoute,
+)

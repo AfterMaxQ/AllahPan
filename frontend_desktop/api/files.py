@@ -170,8 +170,9 @@ class FilesAPI:
         client = self._client
         headers = client._get_auth_headers()
         
+        # 须与 APIClient 一致：相对路径，避免 httpx 丢弃 /api/v1
         response = client._client.get(
-            f"/files/{file_id}/preview",
+            f"files/{file_id}/preview",
             headers=headers,
             timeout=90.0,
         )

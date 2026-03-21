@@ -14,7 +14,7 @@ sys.path.insert(0, str(project_root))
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPalette, QColor, QFont
+from PySide6.QtGui import QPalette, QColor, QFont, QIcon
 
 import config
 from theme import LIGHT_QSS, DARK_QSS
@@ -31,7 +31,11 @@ def setup_application(app: QApplication) -> None:
     app.setApplicationName(config.APP_NAME)
     app.setApplicationVersion(config.APP_VERSION)
     app.setOrganizationName("AllahPan Team")
-    
+
+    icon_path = config.resolve_app_icon_path()
+    if icon_path is not None:
+        app.setWindowIcon(QIcon(str(icon_path)))
+
     app.setStyle("Fusion")
     
     palette = QPalette()

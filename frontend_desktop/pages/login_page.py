@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from api.auth import AuthAPI
 from api.client import APIError
+from theme.apple_effects import apply_acrylic_shadow
 
 
 class AuthWorker(QThread):
@@ -107,8 +108,11 @@ class LoginPage(QWidget):
         main_layout.addLayout(logo_layout)
         
         card_container = QWidget()
+        card_container.setObjectName("LoginGlassCard")
+        card_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         card_container.setFixedWidth(360)
         card_layout = QVBoxLayout(card_container)
+        card_layout.setContentsMargins(28, 28, 28, 28)
         card_layout.setSpacing(20)
         
         self.username_input = QLineEdit()
@@ -143,18 +147,8 @@ class LoginPage(QWidget):
         card_layout.addWidget(self.submit_button)
         
         self.switch_button = QPushButton("没有账号？立即注册")
+        self.switch_button.setObjectName("LoginSwitchLink")
         self.switch_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.switch_button.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                color: #007AFF;
-                border: none;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                text-decoration: underline;
-            }
-        """)
         self.switch_button.clicked.connect(self._toggle_mode)
         card_layout.addWidget(self.switch_button)
         
@@ -165,7 +159,8 @@ class LoginPage(QWidget):
         card_layout.addWidget(self.error_label)
         
         main_layout.addWidget(card_container)
-        
+        apply_acrylic_shadow(card_container, blur=48, offset_y=16, alpha=36)
+
         self.hint_label = QLabel("AllahPan v1.0.0")
         self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint_label.setStyleSheet("color: #86868B; font-size: 12px;")

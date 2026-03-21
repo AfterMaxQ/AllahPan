@@ -52,6 +52,13 @@ pip install -r requirements.txt
 python launcher.py
 ```
 
+**家用主机模式（与打包 exe 一致）**
+
+- 启动后会在本机同时跑 **后端（FastAPI）** 与 **桌面前端（PySide6）**；后端默认监听 **`0.0.0.0`**，便于局域网访问。
+- **网页端**由后端托管，与 API **同一端口**：手机/其他电脑浏览器打开 `http://<本机局域网IP>:<端口>/` 即可（`frontend_web` 已随 PyInstaller 打入包内）。
+- 监听地址、API 端口、Ollama 端口可在桌面 **设置 → 本机服务与局域网 Web** 中配置，保存至 `~/.allahpan/server_settings.json`，**完全退出应用后重新打开**生效。
+- 若局域网无法访问，请检查系统防火墙是否放行对应 TCP 端口。
+
 **方式 B：分别启动**
 
 终端 1 — 后端：

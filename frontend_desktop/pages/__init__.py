@@ -5,6 +5,7 @@
 """
 
 from .login_page import LoginPage
+from .ops_dashboard_page import OpsDashboardPage
 from .settings_page import SettingsPage, TunnelConfigDialog
 
-__all__ = ["LoginPage", "SettingsPage", "TunnelConfigDialog"]
+__all__ = ["LoginPage", "OpsDashboardPage", "SettingsPage", "TunnelConfigDialog"]

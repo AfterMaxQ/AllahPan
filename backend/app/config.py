@@ -12,6 +12,7 @@
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 
 # ==================== Frozen 模式检测 ====================
@@ -43,8 +44,11 @@ else:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Web 前端静态目录（后端托管后，访问 / 即进网盘；可用 ALLAHPAN_WEB_DIR 覆盖）
+# 打包后 frontend_web 与 backend 并列于 _MEIPASS 根下，不能用 backend 的父级的 frontend_web（不存在）
 if os.environ.get("ALLAHPAN_WEB_DIR"):
     _web_dir = Path(os.environ.get("ALLAHPAN_WEB_DIR")).resolve()
+elif _FROZEN and _MEIPASS:
+    _web_dir = Path(_MEIPASS) / "frontend_web"
 else:
     _web_dir = _PROJECT_ROOT / "frontend_web"
 WEB_FRONTEND_DIR = _web_dir if _web_dir.exists() else None
@@ -121,12 +125,32 @@ CORS_ORIGINS_STR = os.environ.get(
 )
 CORS_ALLOWED_ORIGINS = [o.strip() for o in CORS_ORIGINS_STR.split(",") if o.strip()]
 
+# 允许任意 http(s) Origin（含局域网 IP、主机名），便于手机/其他电脑访问托管在同一后端的 Web SPA。
+# 同源页面（http://本机IP:端口/）不依赖此项；拆域部署或 file:// 调试时可依赖正则。
+# 未设置 ALLAHPAN_CORS_ORIGIN_REGEX 时使用宽松默认；设为空字符串则关闭正则，仅使用上方列表。
+_cors_regex_raw = os.environ.get("ALLAHPAN_CORS_ORIGIN_REGEX")
+if _cors_regex_raw is None:
+    CORS_ORIGIN_REGEX: Optional[str] = r"https?://[^\s/?#]+(:\d+)?$"
+elif _cors_regex_raw.strip() == "":
+    CORS_ORIGIN_REGEX = None
+else:
+    CORS_ORIGIN_REGEX = _cors_regex_raw.strip()
+
 
 # ==================== 服务配置 ====================
 
 API_HOST = os.environ.get("ALLAHPAN_HOST", "0.0.0.0")
 API_PORT = int(os.environ.get("ALLAHPAN_PORT", "8000"))
 DEBUG_MODE = os.environ.get("ALLAHPAN_DEBUG", "false").lower() == "true"
+
+# 运维指标：不计入请求统计的路径前缀（逗号分隔），减轻 /health 等对曲线干扰
+METRICS_EXCLUDE_PREFIXES = tuple(
+    p.strip()
+    for p in os.environ.get(
+        "ALLAHPAN_METRICS_EXCLUDE_PREFIXES", "/health,/favicon.ico"
+    ).split(",")
+    if p.strip()
+)
 
 
 def get_storage_dir() -> Path:

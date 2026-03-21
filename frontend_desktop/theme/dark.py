@@ -14,7 +14,27 @@ QWidget {
 }
 
 QMainWindow {
-    background-color: #1C1C1E;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 #121214, stop:0.5 #1A1A1C, stop:1 #1C1C1F);
+}
+
+#MainShell {
+    background-color: transparent;
+}
+
+#MainContentColumn {
+    background-color: transparent;
+}
+
+#MainHeaderBar {
+    background-color: rgba(44, 44, 46, 0.55);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#StackedGlassPanel {
+    background-color: rgba(36, 36, 38, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 20px;
 }
 
 /* ==================== 滚动条样式 ==================== */
@@ -169,8 +189,8 @@ QToolButton:disabled {
 
 /* ==================== 侧边栏样式 ==================== */
 #SidebarWidget {
-    background-color: #1C1C1E;
-    border-right: 1px solid #3A3A3C;
+    background-color: rgba(28, 28, 30, 0.88);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 QListWidget#SidebarList {
@@ -182,9 +202,9 @@ QListWidget#SidebarList {
 QListWidget#SidebarList::item {
     background-color: transparent;
     border: none;
-    border-radius: 6px;
-    padding: 10px 12px;
-    margin: 2px 8px;
+    border-radius: 12px;
+    padding: 10px 10px;
+    margin: 3px 6px;
     color: #FFFFFF;
 }
 
@@ -216,7 +236,15 @@ QListWidget#SidebarList::item:selected:active {
 
 /* ==================== 主内容区域 ==================== */
 #ContentWidget {
-    background-color: #1C1C1E;
+    background-color: rgba(28, 28, 30, 0.82);
+    border-radius: 14px;
+}
+
+#ToolbarWidget {
+    background-color: rgba(44, 44, 46, 0.45);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
 }
 
 /* ==================== 设置页 ==================== */
@@ -235,7 +263,9 @@ QScrollArea#SettingsPageScroll::viewport {
 }
 
 #SettingsPageContainer {
-    background-color: #1C1C1E;
+    background-color: rgba(36, 36, 38, 0.65);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 #SettingsPage QPushButton.QPushButton__secondary {
@@ -243,9 +273,9 @@ QScrollArea#SettingsPageScroll::viewport {
 }
 
 QGroupBox {
-    background-color: rgba(38, 38, 40, 0.5);
-    border: 1px solid rgba(58, 58, 60, 0.5);
-    border-radius: 14px;
+    background-color: rgba(38, 38, 40, 0.55);
+    border: 1px solid rgba(58, 58, 60, 0.55);
+    border-radius: 18px;
     margin-top: 16px;
     padding: 20px 20px 14px 20px;
     font-weight: 500;
@@ -261,17 +291,11 @@ QGroupBox::title {
     color: #E5E5EA;
 }
 
-/* ==================== 工具栏样式 ==================== */
-#ToolbarWidget {
-    background-color: #1C1C1E;
-    border-bottom: 1px solid #3A3A3C;
-    padding: 8px 16px;
-}
-
 /* ==================== 搜索栏样式 ==================== */
 #SearchBarWidget {
-    background-color: #2C2C2E;
-    border-radius: 10px;
+    background-color: rgba(44, 44, 46, 0.92);
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     padding: 8px 12px;
 }
 
@@ -377,15 +401,15 @@ QHeaderView::section:hover {
 
 /* ==================== 上传队列样式 ==================== */
 #UploadQueueWidget {
-    background-color: #1C1C1E;
-    border-top: 1px solid #3A3A3C;
+    background-color: rgba(28, 28, 30, 0.65);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
     padding: 12px 16px;
 }
 
 #UploadItemWidget {
-    background-color: #2C2C2E;
-    border: 1px solid #3A3A3C;
-    border-radius: 8px;
+    background-color: rgba(44, 44, 46, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
     padding: 10px 14px;
     margin-bottom: 8px;
 }
@@ -405,8 +429,8 @@ QProgressBar#UploadProgressBar::chunk {
 
 /* ==================== 状态栏样式 ==================== */
 #StatusBarWidget {
-    background-color: #1C1C1E;
-    border-top: 1px solid #3A3A3C;
+    background-color: rgba(28, 28, 30, 0.6);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
     padding: 8px 16px;
     color: #636366;
     font-size: 12px;
@@ -591,6 +615,26 @@ QMenu::separator {
     border-radius: 12px;
 }
 
+QWidget#DropOverlayFrosted {
+    background-color: rgba(44, 44, 46, 0.62);
+    border: 2px dashed rgba(10, 132, 255, 0.55);
+    border-radius: 18px;
+}
+
+QWidget#DropOverlayFrosted QLabel#DropOverlayTitle {
+    font-size: 22px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.92);
+    background: transparent;
+}
+
+QWidget#DropOverlayFrosted QLabel#DropOverlayHint {
+    font-size: 13px;
+    color: rgba(235, 235, 245, 0.72);
+    background: transparent;
+    max-width: 420px;
+}
+
 /* ==================== 登录页 ==================== */
 #LoginPage QLineEdit {
     border-radius: 12px;
@@ -620,5 +664,94 @@ QMenu::separator {
 #LoginPage QPushButton#LoginSubmitButton:disabled {
     background: #3A3A3C;
     color: #636366;
+}
+
+/* ==================== 登录毛玻璃卡片 ==================== */
+#LoginGlassCard {
+    background-color: rgba(44, 44, 46, 0.72);
+    border-radius: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#LoginPage QPushButton#LoginSwitchLink {
+    background: transparent;
+    color: #0A84FF;
+    border: none;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+#LoginPage QPushButton#LoginSwitchLink:hover {
+    text-decoration: underline;
+    color: #409CFF;
+}
+
+/* ==================== 运维看板 ==================== */
+#OpsDashboardPage QLabel#OpsPageTitle {
+    color: #0A84FF;
+    letter-spacing: -0.3px;
+}
+
+#OpsDashboardPage QLabel#OpsPageSubtitle,
+#OpsDashboardPage QLabel#OpsHintLabel,
+#OpsDashboardPage QLabel#OpsLogPathLabel {
+    color: #98989D;
+    font-size: 12px;
+}
+
+#OpsDashboardPage QFrame#OpsMetricCard {
+    background-color: rgba(255, 255, 255, 0.07);
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#OpsDashboardPage QLabel#OpsCardTitle {
+    color: #98989D;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+#OpsDashboardPage QLabel#OpsCardValue {
+    font-size: 20px;
+    font-weight: 600;
+    color: #FFFFFF;
+}
+
+QTabWidget#OpsDashboardTabs::pane {
+    border: none;
+    background: transparent;
+    top: 2px;
+}
+
+QTabWidget#OpsDashboardTabs QTabBar::tab {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: #AEAEB2;
+    border: none;
+    padding: 10px 22px;
+    margin-right: 6px;
+    border-radius: 12px;
+    min-width: 76px;
+    font-weight: 500;
+}
+
+QTabWidget#OpsDashboardTabs QTabBar::tab:selected {
+    background-color: #0A84FF;
+    color: #FFFFFF;
+    font-weight: 600;
+}
+
+QTabWidget#OpsDashboardTabs QTabBar::tab:hover:!selected {
+    background-color: rgba(10, 132, 255, 0.2);
+    color: #FFFFFF;
+}
+
+QTextEdit#OpsLogView {
+    background-color: rgba(28, 28, 30, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    padding: 10px;
+    color: #E5E5EA;
+    selection-background-color: #0A84FF;
+    selection-color: #FFFFFF;
 }
 """

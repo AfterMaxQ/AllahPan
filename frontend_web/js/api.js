@@ -7,13 +7,37 @@
 (function (global) {
   'use strict';
 
-  /** 默认 API 根地址，可通过 window.ALLAH_PAN_API_BASE 覆盖 */
+  /**
+   * API 根地址（无尾斜杠），可通过 window.ALLAH_PAN_API_BASE 或 meta[name=allahpan-api-base] 覆盖。
+   * 独立静态服务器（如 run.py :3000）上若仍用页面 origin，会把 /api/v1 打到静态站 → GET 404、POST 501。
+   */
   function getBaseUrl() {
-    if (global.ALLAH_PAN_API_BASE) return global.ALLAH_PAN_API_BASE;
-    var origin = global.location && global.location.origin;
-    // 与后端同源（后端托管前端）：用当前页面的 origin，这样本地打开用 localhost:8000，远程用 https://allahpan.cn
-    if (origin) return origin + '/api/v1';
-    return 'http://localhost:8000/api/v1';
+    var ex = global.ALLAH_PAN_API_BASE != null ? String(global.ALLAH_PAN_API_BASE).trim() : '';
+    if (ex) return ex.replace(/\/+$/, '');
+
+    var loc = global.location;
+    if (!loc || loc.protocol === 'file:') {
+      return 'http://localhost:8000/api/v1';
+    }
+    var origin = loc.origin;
+    if (!origin || origin === 'null') {
+      return 'http://localhost:8000/api/v1';
+    }
+
+    var host = loc.hostname || '';
+    var port = loc.port || '';
+    var isLoopback = host === 'localhost' || host === '127.0.0.1';
+    // 常见「只托管静态页」的端口：与 run.py(3000)、Live Server、Vite 等一致，API 默认同机 8000
+    var staticDevPorts = { '3000': true, '5173': true, '8080': true, '5500': true };
+
+    if (loc.protocol === 'http:' && port && port !== '8000') {
+      if (isLoopback || staticDevPorts[port]) {
+        return 'http://' + host + ':8000/api/v1';
+      }
+    }
+
+    // 与后端同源（Uvicorn 托管 frontend_web 时在 8000）：origin + /api/v1
+    return origin.replace(/\/+$/, '') + '/api/v1';
   }
 
   /**

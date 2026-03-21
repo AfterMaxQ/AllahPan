@@ -6,15 +6,13 @@
 作者: AllahPan团队
 """
 
-from typing import Optional, Dict, Any, Callable, List
+from typing import Optional, Dict, List
 
 from PySide6.QtCore import Signal, Qt, QSize
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QListWidget, QListWidgetItem,
-    QLabel, QSizePolicy
+    QLabel, QSizePolicy,
 )
-from PySide6.QtGui import QIcon
-
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -30,7 +28,6 @@ class SidebarNav(QWidget):
     """
     
     category_changed = Signal(str)
-    folder_clicked = Signal(str)  # 点击一级目录时发射路径
 
     CATEGORY_ITEMS = [
         {"id": "all", "name": "全部文件", "icon": "📁", "section": "main"},
@@ -40,6 +37,7 @@ class SidebarNav(QWidget):
         {"id": "audio", "name": "音频", "icon": "🎵", "section": "category"},
         {"id": "other", "name": "其他", "icon": "📦", "section": "category"},
         {"id": "ai_search", "name": "AI 搜索", "icon": "🤖", "section": "tool"},
+        {"id": "ops_dashboard", "name": "运维看板", "icon": "📊", "section": "tool"},
     ]
     
     def __init__(self, parent: Optional[QWidget] = None):
@@ -86,36 +84,19 @@ class SidebarNav(QWidget):
             item.setToolTip(item_config["name"])
             self._category_item_map[item_config["id"]] = item
             
-            item.setSizeHint(QSize(item.listWidget().width() if item.listWidget() else 200, 40))
+            w = item.listWidget().width() if item.listWidget() else 220
+            item.setSizeHint(QSize(max(160, w - 20), 44))
             
             self.list_widget.addItem(item)
         
         self.list_widget.itemSelectionChanged.connect(self._on_selection_changed)
-        
-        layout.addWidget(self.list_widget)
-        
-        # 当前路径与一级目录快捷入口
-        path_header = QLabel("当前路径")
-        path_header.setObjectName("SidebarTitle")
-        path_header.setStyleSheet("margin-top: 12px;")
-        layout.addWidget(path_header)
-        self._current_path_label = QLabel("根目录")
-        self._current_path_label.setObjectName("SidebarPathLabel")
-        self._current_path_label.setWordWrap(True)
-        self._current_path_label.setStyleSheet("font-size: 12px; color: #86868B; padding: 4px 0;")
-        layout.addWidget(self._current_path_label)
-        
-        dirs_header = QLabel("一级目录")
-        dirs_header.setObjectName("SidebarTitle")
-        dirs_header.setStyleSheet("margin-top: 8px;")
-        layout.addWidget(dirs_header)
-        self._root_dirs_container = QWidget()
-        self._root_dirs_layout = QVBoxLayout(self._root_dirs_container)
-        self._root_dirs_layout.setContentsMargins(0, 0, 0, 0)
-        self._root_dirs_layout.setSpacing(2)
-        layout.addWidget(self._root_dirs_container)
-        
-        layout.addStretch()
+        self.list_widget.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
+        self.list_widget.setHorizontalScrollMode(
+            QListWidget.ScrollMode.ScrollPerPixel
+        )
+        layout.addWidget(self.list_widget, 1)
         
         info_label = QLabel("AllahPan v1.0.0")
         info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -185,38 +166,12 @@ class SidebarNav(QWidget):
                 item.setText(f"{icon}  {name} ({count})")
     
     def set_current_path(self, path: str) -> None:
-        """设置当前路径显示。"""
-        display = path.strip().replace("\\", "/") if path else "根目录"
-        self._current_path_label.setText(display if display else "根目录")
-    
+        """兼容主窗口调用；侧栏已不再展示路径。"""
+        return
+
     def set_root_directories(self, dirs: List[Dict[str, str]]) -> None:
-        """
-        设置一级目录列表（点击可进入）。
-        
-        参数:
-            dirs: [{"name": "文件夹名", "path": "相对路径"}, ...]
-        """
-        while self._root_dirs_layout.count():
-            item = self._root_dirs_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        primary = config.get_current_colors().get("primary", config.ThemeColors.LIGHT.get("primary", "#007AFF"))
-        for d in dirs:
-            name = d.get("name", "")
-            path_val = d.get("path", "")
-            if not name:
-                continue
-            label = QLabel(f"📁 {name}")
-            label.setCursor(Qt.CursorShape.PointingHandCursor)
-            label.setStyleSheet(f"font-size: 12px; color: {primary}; padding: 4px 8px; border-radius: 4px;")
-            label.setToolTip(f"点击进入 {name}")
-            label.mousePressEvent = lambda e, p=path_val: self._on_root_dir_click(p)
-            self._root_dirs_layout.addWidget(label)
-    
-    def _on_root_dir_click(self, path: str) -> None:
-        """点击一级目录。"""
-        if path:
-            self.folder_clicked.emit(path)
+        """兼容主窗口调用；已移除侧栏一级目录快捷入口。"""
+        return
     
     def set_width(self, width: int) -> None:
         """
@@ -230,4 +185,4 @@ class SidebarNav(QWidget):
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             if item.flags() != Qt.ItemFlag.NoItemFlags:
-                item.setSizeHint(QSize(width - 16, 40))
+                item.setSizeHint(QSize(max(160, width - 24), 44))

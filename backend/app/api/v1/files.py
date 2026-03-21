@@ -56,6 +56,38 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _delete_physical_file_under_storage(filepath_str: str) -> None:
+    """
+    删除 STORAGE_DIR 内的物理文件；路径越界则拒绝。
+    文件已不存在时直接返回（幂等）。
+    """
+    try:
+        p = Path(filepath_str).resolve()
+        root = STORAGE_DIR.resolve()
+        p.relative_to(root)
+    except (ValueError, OSError) as e:
+        logger.error(f"拒绝删除存储根外的文件或路径无效: {filepath_str} ({e})")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="文件路径配置异常",
+        )
+    if not p.exists():
+        logger.info(f"物理文件已不存在，仅清理数据库记录: {p}")
+        return
+    if not p.is_file():
+        logger.warning(f"路径不是常规文件，跳过物理删除: {p}")
+        return
+    try:
+        p.unlink()
+        logger.info(f"已删除物理文件: {p}")
+    except OSError as e:
+        logger.error(f"删除物理文件失败: {p}，{e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="无法删除磁盘上的文件",
+        )
+
+
 router = APIRouter()
 
 # 断点续传配置
@@ -1020,8 +1052,8 @@ def delete_file(
     """
     删除文件接口。
 
-    删除指定文件，级联删除文件元数据（SQLite）和语义向量（ChromaDB）。
-    文件本身由 DirectoryWatcher 的异步任务在实际存储层删除。
+    删除指定文件：先删除磁盘上的实际文件，再级联删除 SQLite 元数据与 ChromaDB 向量。
+    若仅删库不删盘，列表接口会再次扫盘并将同一文件「惰性入库」，表现为 UUID 文件名重复出现。
 
     参数:
         file_id: 要删除的文件唯一标识符
@@ -1032,17 +1064,23 @@ def delete_file(
         dict: 包含操作结果的响应对象
 
     异常:
-        HTTPException: 当文件不存在时抛出404错误
+        HTTPException: 仅当磁盘删除失败或元数据删除失败时
     """
     logger.info(f"删除文件请求，文件ID: {file_id}")
 
     file_metadata = file_repo.get_file_metadata_by_id(file_id)
     if file_metadata is None:
-        logger.warning(f"文件不存在，文件ID: {file_id}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="文件不存在",
-        )
+        # 先 unlink 时 DirectoryWatcher 会抢先删库；或用户重复点击导致第二次请求。
+        # 幂等：视为已删除，避免 404 + 前端「文件不存在」误报。
+        logger.info(f"删除请求：元数据已不存在，按幂等成功处理，file_id: {file_id}")
+        file_repo.delete_file_metadata(file_id)
+        return {
+            "success": True,
+            "file_id": file_id,
+            "message": "文件已删除",
+        }
+
+    _delete_physical_file_under_storage(file_metadata.filepath)
 
     success = file_repo.delete_file_metadata(file_id)
 

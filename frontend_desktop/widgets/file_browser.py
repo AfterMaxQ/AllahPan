@@ -17,7 +17,13 @@ from PySide6.QtWidgets import (
     QHeaderView, QLabel, QPushButton, QToolButton,
     QMenu, QFileDialog, QMessageBox, QApplication
 )
-from PySide6.QtGui import QAction, QDragEnterEvent, QDragMoveEvent, QDragLeaveEvent, QDropEvent
+from PySide6.QtGui import (
+    QAction,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDragLeaveEvent,
+    QDropEvent,
+)
 
 import os
 
@@ -70,14 +76,22 @@ class FileBrowser(QWidget):
         self._install_event_filters()
 
     def _install_event_filters(self) -> None:
-        """安装事件过滤器以支持键盘导航。"""
+        """安装事件过滤器：键盘导航 + 列表/网格内拖拽（子控件否则吞掉拖放事件）。"""
         self.list_view.installEventFilter(self)
         self.grid_view.installEventFilter(self)
+        self.stacked_widget.installEventFilter(self)
+        lv = self.list_view.viewport()
+        gv = self.grid_view.viewport()
+        if lv is not None:
+            lv.installEventFilter(self)
+        if gv is not None:
+            gv.installEventFilter(self)
     
     def _setup_ui(self) -> None:
         """设置 UI。"""
         self.setObjectName("ContentWidget")
-        
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
@@ -96,6 +110,7 @@ class FileBrowser(QWidget):
         main_layout.addWidget(self.stacked_widget)
         
         self._drop_overlay = self._create_drop_overlay()
+        self.setAcceptDrops(True)
         
         self._empty_state_icon = None
         self._empty_state_text_label = None
@@ -248,37 +263,32 @@ class FileBrowser(QWidget):
         self._update_empty_state()
     
     def _create_drop_overlay(self) -> QWidget:
-        """创建拖拽时的毛玻璃覆盖层，覆盖文件显示区域（stacked_widget）。"""
-        overlay = QWidget(self.stacked_widget)
+        """拖拽时覆盖整个文件主页（工具栏 + 列表/网格）的毛玻璃层。"""
+        overlay = QWidget(self)
         overlay.setObjectName("DropOverlayFrosted")
-        overlay.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        overlay.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         overlay.setWindowFlags(Qt.WindowType.Widget)
         overlay.setCursor(Qt.CursorShape.DragCopyCursor)
-        # 毛玻璃效果：半透明白 + 圆角 + 虚线边框
-        overlay.setStyleSheet("""
-            QWidget#DropOverlayFrosted {
-                background-color: rgba(255, 255, 255, 0.82);
-                border: 3px dashed rgba(0, 122, 255, 0.65);
-                border-radius: 24px;
-            }
-        """)
         layout = QVBoxLayout(overlay)
-        layout.setContentsMargins(32, 32, 32, 32)
+        layout.setContentsMargins(40, 40, 40, 40)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label = QLabel("📤 释放文件上传")
-        label.setStyleSheet("""
-            font-size: 28px;
-            font-weight: 600;
-            color: rgba(0, 0, 0, 0.75);
-        """)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
+        layout.setSpacing(12)
+        title = QLabel("📤 松开即可上传")
+        title.setObjectName("DropOverlayTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint = QLabel("将上传到当前打开的网盘目录（可在确认框中调整子目录）")
+        hint.setObjectName("DropOverlayHint")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setWordWrap(True)
+        layout.addWidget(title)
+        layout.addWidget(hint)
         overlay.hide()
         return overlay
     
     def show_drop_overlay(self, show: bool) -> None:
-        """显示或隐藏拖拽覆盖层（仅覆盖文件显示区域）。"""
-        self._drop_overlay.setGeometry(self.stacked_widget.rect())
+        """显示或隐藏拖拽毛玻璃层（覆盖整块文件浏览器）。"""
+        self._drop_overlay.setGeometry(self.rect())
         if show:
             self._drop_overlay.raise_()
             self._drop_overlay.show()
@@ -289,7 +299,7 @@ class FileBrowser(QWidget):
         """窗口大小变化时更新覆盖层几何。"""
         super().resizeEvent(event)
         if self._drop_overlay.isVisible():
-            self._drop_overlay.setGeometry(self.stacked_widget.rect())
+            self._drop_overlay.setGeometry(self.rect())
         if self._loading_overlay.isVisible():
             self._loading_overlay.setGeometry(self.stacked_widget.rect())
     
@@ -752,6 +762,8 @@ class FileBrowser(QWidget):
             enabled: 是否启用
         """
         self.grid_view.setAcceptDrops(enabled)
+        self.list_view.setAcceptDrops(enabled)
+        self.stacked_widget.setAcceptDrops(enabled)
         self.setAcceptDrops(enabled)
     
     def add_files(self, new_files: List[FileItem]) -> None:
@@ -804,7 +816,32 @@ class FileBrowser(QWidget):
             event.ignore()
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        """事件过滤器，处理键盘导航。"""
+        """事件过滤器：键盘导航；在表格/网格视口上转发拖放以驱动毛玻璃与上传。"""
+        drag_targets = (
+            self.stacked_widget,
+            self.list_view.viewport(),
+            self.grid_view.viewport(),
+        )
+        if obj in drag_targets:
+            et = event.type()
+            if et == QEvent.Type.DragEnter:
+                if isinstance(event, QDragEnterEvent) and event.mimeData().hasUrls():
+                    event.acceptProposedAction()
+                    self.drag_enter.emit()
+                    return True
+            if et == QEvent.Type.DragMove:
+                if isinstance(event, QDragMoveEvent) and event.mimeData().hasUrls():
+                    event.acceptProposedAction()
+                    return True
+            if et == QEvent.Type.DragLeave:
+                if isinstance(event, QDragLeaveEvent):
+                    self.drag_leave.emit()
+                return False
+            if et == QEvent.Type.Drop:
+                if isinstance(event, QDropEvent) and event.mimeData().hasUrls():
+                    event.acceptProposedAction()
+                    self.file_dropped.emit(event.mimeData().urls())
+                    return True
         if event.type() == QEvent.Type.KeyPress:
             key = event.key()  # type: ignore[reportAttributeAccessIssue]
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):

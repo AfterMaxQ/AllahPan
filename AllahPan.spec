@@ -33,6 +33,7 @@ PROJECT_ROOT = Path(SPECPATH)
 # Data dirs
 BACKEND_DIR = PROJECT_ROOT / "backend"
 FRONTEND_DIR = PROJECT_ROOT / "frontend_desktop"
+FRONTEND_WEB_DIR = PROJECT_ROOT / "frontend_web"
 BUILD_DIR = PROJECT_ROOT / "build"
 
 # 确保 Qt/PySide6 相关 hook 在导入 Qt 前执行（必须放在 BUILD_DIR 定义之后）
@@ -61,17 +62,9 @@ except Exception as _e:
     import warnings
     warnings.warn("PySide6 显式收集失败，GUI 可能缺 DLL: %s" % _e)
 
-# Qt6Core.dll 依赖 ICU（ucnv_open 等），运行时从系统加载；打包后若目标机 ICU 版本不一致会报「无法定位程序输入点 ucnv_open」。
-# 将构建机 System32 下的 ICU DLL 打进 PySide6 目录，由 packaging/pyi_rth_qt_dll 的 add_dll_directory 优先加载，避免依赖目标机系统 ICU。
-if sys.platform == "win32":
-    _system32 = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32")
-    for _icu in ("icu.dll", "icuin.dll", "icuuc.dll"):
-        _src = os.path.join(_system32, _icu)
-        if os.path.isfile(_src):
-            _pyside6_binaries.append((_src, "PySide6"))
-        else:
-            import warnings
-            warnings.warn("未找到 ICU DLL，打包后可能报 ucnv_open 错误: %s" % _src)
+# Qt6Core 需要与 Qt 构建匹配的 ICU。不要将 System32 里的 icu*.dll 存根复制进 PySide6（Win10/11 上多为几 KB 转发器），
+# 否则会先于系统 WinSxS 中的完整 ICU 被加载，触发 WinError 127（界面无控制台时表现为双击无反应）。
+# 同时 chromadb/duckdb 等会把另一套 icuuc/icudt 打到 _internal 根目录，与 Qt 冲突；见 Analysis 后的 TOC 剔除。
 
 
 # ==================== Hidden Imports (collect automatically where possible) ====================
@@ -269,6 +262,8 @@ a = Analysis(
         (str(FRONTEND_DIR), "frontend_desktop"),
         # Theme files
         (str(FRONTEND_DIR / "theme"), "frontend_desktop/theme"),
+        # Web SPA：由 FastAPI 同端口托管，供局域网/远程浏览器访问
+        (str(FRONTEND_WEB_DIR), "frontend_web"),
     ] + _pyside6_datas,
     hiddenimports=all_hidden_imports + ["shiboken6"],
     hookspath=[os.path.join(os.path.dirname(PyInstaller.__file__), "hooks")],
@@ -304,6 +299,30 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# Windows：从二进制列表中移除「仅位于 bundle 根（非子目录）」的 ICU DLL，避免 Qt6Core 误加载与 Qt 不兼容的版本。
+if sys.platform == "win32":
+    _icu_root_basenames = frozenset(
+        n.lower()
+        for n in (
+            "icu.dll",
+            "icuin.dll",
+            "icuuc.dll",
+            "icudt73.dll",
+            "icudt74.dll",
+            "icudt75.dll",
+            "icudt76.dll",
+        )
+    )
+
+    def _keep_win_binary(bin_entry):
+        dest = bin_entry[0].replace("\\", "/")
+        base = os.path.basename(dest).lower()
+        if base not in _icu_root_basenames:
+            return True
+        return "/" in dest
+
+    a.binaries = [b for b in a.binaries if _keep_win_binary(b)]
 
 
 # ==================== PYZ ====================

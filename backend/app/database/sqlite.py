@@ -9,10 +9,11 @@ SQLite用于存储结构化数据，包括用户信息和文件元数据。
 最后修改: 2026-03-19
 """
 
+import threading
 import uuid
 import sqlite3
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from app.models.user import User
 from app.models.file_metadata import FileMetadata
@@ -20,6 +21,22 @@ from app.models.file_metadata import FileMetadata
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def as_sql_text_param(value: Any) -> str:
+    """
+    将绑定到 SQLite 占位符的值规范为 str。
+    JWT / Pydantic 可能传入 uuid.UUID、bytes 或非规范 str，部分环境下会触发
+    sqlite3.InterfaceError: bad parameter or other API misuse。
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    return str(value).strip()
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,48 +74,47 @@ class SQLite:
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         logger.info(f"初始化SQLite数据库连接，数据库文件: {db_path}")
         self.db_name = db_path
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.cursor = self.conn.cursor()
-        
-        # 配置 SQLite 以支持更好的并发处理
-        # 1. 设置 busy_timeout：等待锁释放的最大时间（毫秒）
-        self.conn.execute("PRAGMA busy_timeout = 30000")  # 30秒超时
-        # 2. 启用 WAL 模式：提高并发读写性能
-        self.conn.execute("PRAGMA journal_mode = WAL")
-        # 3. 启用外键约束
-        self.conn.execute("PRAGMA foreign_keys = ON")
-        
-        self._create_tables()
+        self._lock = threading.RLock()
+        with self._lock:
+            self.conn = sqlite3.connect(db_path, check_same_thread=False)
+            self.conn.row_factory = sqlite3.Row
+            self.cursor = self.conn.cursor()
+            self.conn.execute("PRAGMA busy_timeout = 30000")
+            self.conn.execute("PRAGMA journal_mode = WAL")
+            self.conn.execute("PRAGMA foreign_keys = ON")
+            self._create_tables()
         logger.info(f"SQLite数据库连接初始化完成")
 
     def _execute_fetchone(self, sql: str, params: tuple) -> Optional[sqlite3.Row]:
-        """执行查询并返回一行，使用独立游标避免多请求/嵌套调用时的「Recursive use of cursors」。"""
-        cur = self.conn.cursor()
-        try:
-            cur.execute(sql, params)
-            return cur.fetchone()
-        finally:
-            cur.close()
+        """执行查询并返回一行，使用独立游标；连接级锁避免多线程并发导致 InterfaceError。"""
+        with self._lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute(sql, params)
+                return cur.fetchone()
+            finally:
+                cur.close()
 
     def _execute_fetchall(self, sql: str, params: tuple = ()) -> list:
         """执行查询并返回多行，使用独立游标。"""
-        cur = self.conn.cursor()
-        try:
-            cur.execute(sql, params)
-            return cur.fetchall()
-        finally:
-            cur.close()
+        with self._lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute(sql, params)
+                return cur.fetchall()
+            finally:
+                cur.close()
 
     def _execute_write(self, sql: str, params: tuple) -> int:
         """执行写操作并提交，使用独立游标，返回 rowcount。"""
-        cur = self.conn.cursor()
-        try:
-            cur.execute(sql, params)
-            self.conn.commit()
-            return cur.rowcount
-        finally:
-            cur.close()
+        with self._lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute(sql, params)
+                self.conn.commit()
+                return cur.rowcount
+            finally:
+                cur.close()
 
     def _create_tables(self) -> None:
         """
@@ -137,9 +153,10 @@ class SQLite:
     def close(self) -> None:
         """关闭数据库连接。"""
         logger.info("关闭SQLite数据库连接")
-        if self.conn:
-            self.conn.close()
-            logger.info("SQLite数据库连接已关闭")
+        with self._lock:
+            if self.conn:
+                self.conn.close()
+                logger.info("SQLite数据库连接已关闭")
 
     def add_user(self, user: User) -> str:
         """
@@ -172,7 +189,14 @@ class SQLite:
             Optional[User]: 找到的User实例，未找到返回None
         """
         logger.debug(f"根据ID检索用户: {user_id}")
-        row = self._execute_fetchone("SELECT * FROM users WHERE id = ?", (str(user_id),))
+        uid = as_sql_text_param(user_id)
+        if not uid:
+            return None
+        try:
+            row = self._execute_fetchone("SELECT * FROM users WHERE id = ?", (uid,))
+        except sqlite3.Error as e:
+            logger.error("get_user_by_id SQLite 错误 user_id=%r: %s", uid, e)
+            return None
         user = None
         if row:
             try:

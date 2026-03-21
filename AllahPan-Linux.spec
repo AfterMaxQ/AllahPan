@@ -28,6 +28,7 @@ PROJECT_ROOT = Path(SPECPATH)
 
 BACKEND_DIR = PROJECT_ROOT / "backend"
 FRONTEND_DIR = PROJECT_ROOT / "frontend_desktop"
+FRONTEND_WEB_DIR = PROJECT_ROOT / "frontend_web"
 BUILD_DIR = PROJECT_ROOT / "build"
 
 
@@ -197,6 +198,7 @@ a = Analysis(
         (str(BACKEND_DIR / "ollama"), "backend/ollama"),
         (str(FRONTEND_DIR), "frontend_desktop"),
         (str(FRONTEND_DIR / "theme"), "frontend_desktop/theme"),
+        (str(FRONTEND_WEB_DIR), "frontend_web"),
     ],
     hiddenimports=all_hidden_imports,
     hookspath=[],

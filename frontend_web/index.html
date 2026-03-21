@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <!-- 可选：由后端或构建注入 API 根地址，如 <meta name="allahpan-api-base" content="https://api.example.com/api/v1"> -->
     <meta name="allahpan-api-base" content="">
     <title>AllahPan - 私有网盘</title>
@@ -34,20 +34,32 @@
             --border-color: #e5e7eb;
             --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+            --mobile-gap: 10px;
+            --mobile-card-pad: 12px;
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
+            --safe-top: env(safe-area-inset-top, 0px);
         }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
+            min-height: 100dvh;
             color: var(--text-primary);
+            -webkit-tap-highlight-color: rgba(79, 70, 229, 0.15);
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
+            padding-left: max(20px, env(safe-area-inset-left, 0px));
+            padding-right: max(20px, env(safe-area-inset-right, 0px));
+            padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
         }
+
+        .desktop-only { display: block; }
+        .mobile-only { display: none; }
 
         .auth-container {
             max-width: 400px;
@@ -308,10 +320,12 @@
             transition: all 0.3s;
         }
 
-        .file-item:hover {
-            border-color: var(--primary-color);
-            background: var(--bg-color);
-            transform: translateX(5px);
+        @media (hover: hover) and (min-width: 769px) {
+            .file-item:hover {
+                border-color: var(--primary-color);
+                background: var(--bg-color);
+                transform: translateX(5px);
+            }
         }
 
         .file-item-dir {
@@ -358,10 +372,15 @@
         .file-actions {
             display: flex;
             gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .file-actions .btn-primary {
+            width: auto;
         }
 
         .file-item .delete-btn {
-            opacity: 0;
+            opacity: 1;
             transition: opacity 0.3s;
             background: transparent;
             border: none;
@@ -371,8 +390,13 @@
             border-radius: 4px;
         }
 
-        .file-item:hover .delete-btn {
-            opacity: 1;
+        @media (hover: hover) and (min-width: 769px) {
+            .file-item .delete-btn {
+                opacity: 0;
+            }
+            .file-item:hover .delete-btn {
+                opacity: 1;
+            }
         }
 
         .file-item .delete-btn:hover {
@@ -609,36 +633,412 @@
             padding: 40px 20px;
             color: var(--text-secondary);
         }
-        .loading-state .loading { margin-right: 8px; vertical-align: middle; }
+        .loading-state .loading {
+            margin-right: 8px;
+            vertical-align: middle;
+            border-color: rgba(79, 70, 229, 0.2);
+            border-top-color: var(--primary-color);
+        }
+
+        /* 主界面内操作反馈（登录页仍用 #alertBox） */
+        .app-toast {
+            position: fixed;
+            left: 50%;
+            bottom: 28px;
+            transform: translateX(-50%) translateY(12px);
+            max-width: min(90vw, 420px);
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 500;
+            box-shadow: var(--shadow-lg);
+            z-index: 1200;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+        .app-toast.visible {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        .app-toast-success {
+            background: #ecfdf5;
+            color: #047857;
+            border: 1px solid #6ee7b7;
+        }
+        .app-toast-error {
+            background: #fef2f2;
+            color: #b91c1c;
+            border: 1px solid #fca5a5;
+        }
 
         @media (max-width: 768px) {
+            .desktop-only { display: none !important; }
+            .mobile-only { display: block !important; }
+
             .auth-container {
-                margin: 20px;
-                padding: 30px 20px;
+                margin: max(12px, env(safe-area-inset-left, 0px));
+                margin-right: max(12px, env(safe-area-inset-right, 0px));
+                padding: 24px 18px;
+            }
+
+            .container {
+                max-width: none;
+                width: 100%;
+                padding: 6px;
+                padding-left: max(6px, env(safe-area-inset-left, 0px));
+                padding-right: max(6px, env(safe-area-inset-right, 0px));
+                padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+            }
+
+            /* 纵向占满视口，文件区内部滚动，避免整页被卡片挤没 */
+            .main-app.active {
+                display: flex;
+                flex-direction: column;
+                gap: var(--mobile-gap);
+                min-height: calc(100dvh - 16px - var(--safe-top) - var(--safe-bottom));
             }
 
             .header {
-                flex-direction: column;
-                gap: 15px;
+                flex-direction: row;
+                flex-wrap: wrap;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                text-align: left;
+                padding: 12px 14px;
+                margin-bottom: 0;
+            }
+
+            .header-title {
+                font-size: 17px;
+                flex: 1 1 auto;
+                min-width: 0;
+            }
+
+            .user-info {
+                flex: 0 0 auto;
+                gap: 8px;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+            }
+
+            .username {
+                max-width: 42vw;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                font-size: 14px;
+            }
+
+            .header .btn-sm {
+                min-height: 40px;
+                padding: 8px 12px;
+                font-size: 14px;
+            }
+
+            .status-panel {
+                padding: 10px 12px;
+                margin-bottom: 0;
+            }
+
+            .search-box {
+                padding: var(--mobile-card-pad);
+                margin-bottom: 0;
+            }
+
+            .search-tabs {
+                width: 100%;
+                margin-bottom: 8px;
+            }
+
+            .search-tab {
+                flex: 1;
+                min-height: 40px;
+                font-size: 14px;
+                padding: 8px 10px;
                 text-align: center;
             }
 
+            /* 同一行：关键词 + 搜索，少占垂直空间 */
             .search-input-wrapper {
+                flex-direction: row;
+                flex-wrap: wrap;
+                align-items: stretch;
+                gap: 8px;
+            }
+
+            .search-input-wrapper .search-input {
+                flex: 1 1 0;
+                min-width: 0;
+                min-height: 44px;
+                font-size: 16px;
+            }
+
+            .search-input-wrapper #searchBtn {
+                flex: 0 0 auto;
+                min-width: 72px;
+                width: auto;
+                min-height: 44px;
+                padding-left: 16px;
+                padding-right: 16px;
+            }
+
+            .search-input-wrapper #cancelSearchBtn:not(.hidden) {
+                flex: 1 1 100%;
+                order: 3;
+                min-height: 44px;
+                width: 100% !important;
+            }
+
+            .upload-area {
+                padding: 14px var(--mobile-card-pad);
+                margin-bottom: 0;
+                touch-action: manipulation;
+            }
+
+            .upload-icon {
+                font-size: 32px;
+                margin-bottom: 8px;
+            }
+
+            .upload-text {
+                font-size: 15px;
+                margin-bottom: 6px;
+                font-weight: 500;
+                color: var(--text-primary);
+            }
+
+            .upload-hint {
+                font-size: 12px;
+                line-height: 1.45;
+            }
+
+            .file-list {
+                padding: var(--mobile-card-pad);
+                margin-bottom: 0;
+                flex: 1 1 auto;
+                min-height: 0;
+                display: flex;
                 flex-direction: column;
             }
 
+            #fileListContent {
+                flex: 1 1 auto;
+                min-height: 140px;
+                overflow-y: auto;
+                overflow-x: hidden;
+                -webkit-overflow-scrolling: touch;
+                overscroll-behavior-y: contain;
+                touch-action: pan-y;
+            }
+
+            .file-list-title {
+                flex-direction: row;
+                flex-wrap: wrap;
+                align-items: center;
+                justify-content: space-between;
+                gap: 6px;
+                margin-bottom: 8px;
+                font-size: 16px;
+            }
+
+            .file-count {
+                font-size: 11px;
+                padding: 3px 8px;
+            }
+
+            .breadcrumb {
+                font-size: 12px;
+                word-break: break-all;
+                margin-bottom: 8px;
+            }
+
+            .empty-state {
+                padding: 28px 12px;
+            }
+
+            .empty-icon {
+                font-size: 48px;
+            }
+
+            .loading-state {
+                padding: 20px 12px;
+            }
+
+            .app-toast {
+                bottom: max(16px, calc(var(--safe-bottom) + 8px));
+                max-width: calc(100vw - 24px);
+                font-size: 14px;
+                padding: 10px 16px;
+            }
+
+            .modal-content {
+                padding: 20px 16px;
+                margin: 0 8px;
+                width: calc(100% - 16px);
+                max-width: 380px;
+            }
+
+            .preview-close {
+                top: max(12px, var(--safe-top));
+                right: max(12px, env(safe-area-inset-right, 0px));
+            }
+
+            /* 紧凑单行：左侧图标 + 中间信息 + 右侧可横向滑动的图标按钮，减少纵向占用 */
             .file-item {
+                display: flex;
+                align-items: stretch;
+                gap: 10px;
+                padding: 10px;
+                margin-bottom: 8px;
+                border-radius: 10px;
+                touch-action: manipulation;
+            }
+
+            .file-item:not(.file-item-dir)[data-can-preview="1"] {
+                cursor: pointer;
+            }
+
+            .file-item:not(.file-item-dir)[data-can-preview="1"]:active {
+                background: var(--bg-color);
+            }
+
+            .file-icon {
+                flex: 0 0 40px;
+                width: 40px;
+                font-size: 30px;
+                margin-right: 0;
+                line-height: 1;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                align-self: center;
+            }
+
+            .file-info {
+                flex: 1 1 0;
+                min-width: 0;
+                display: flex;
                 flex-direction: column;
-                align-items: flex-start;
-                gap: 15px;
+                justify-content: center;
+                gap: 4px;
+            }
+
+            .file-name {
+                font-size: 14px;
+                font-weight: 600;
+                line-height: 1.25;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .file-meta {
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 6px 8px;
+                font-size: 11px;
+            }
+
+            .file-meta .badge {
+                padding: 2px 6px;
+                font-size: 10px;
+                font-weight: 600;
+                line-height: 1.35;
             }
 
             .file-actions {
-                width: 100%;
+                flex: 0 0 auto;
+                display: flex;
+                flex-direction: row;
+                flex-wrap: nowrap;
+                align-items: center;
+                align-self: center;
+                gap: 6px;
+                max-width: min(46%, 200px);
+                overflow-x: auto;
+                overflow-y: hidden;
+                -webkit-overflow-scrolling: touch;
+                overscroll-behavior-x: contain;
+                scrollbar-width: none;
+                padding: 2px 0;
             }
 
-            .file-actions .btn {
-                flex: 1;
+            .file-actions::-webkit-scrollbar {
+                display: none;
+            }
+
+            .file-actions:empty {
+                display: none;
+            }
+
+            .file-actions .btn-sm {
+                flex: 0 0 auto;
+                width: 44px;
+                min-width: 44px;
+                height: 44px;
+                min-height: 44px;
+                padding: 0;
+                font-size: 18px;
+                line-height: 1;
+                border-radius: 10px;
+                box-sizing: border-box;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .file-action-label {
+                display: none !important;
+            }
+
+            .file-item .delete-btn {
+                opacity: 1;
+                width: 44px;
+                min-width: 44px;
+                height: 44px;
+                min-height: 44px;
+                padding: 0;
+                font-size: 18px;
+                border-radius: 10px;
+                background: rgba(239, 68, 68, 0.08);
+                border: 1px solid rgba(239, 68, 68, 0.35);
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                box-sizing: border-box;
+            }
+
+            .file-item .delete-btn:active {
+                background: rgba(239, 68, 68, 0.18);
+            }
+        }
+
+        @media (max-width: 480px) {
+            .header-title {
+                font-size: 15px;
+            }
+
+            .search-tab {
+                font-size: 13px;
+                padding: 8px 6px;
+            }
+
+            .upload-area {
+                padding: 12px 10px;
+            }
+
+            .success-emoji {
+                font-size: 80px;
+            }
+
+            .success-text {
+                font-size: 24px;
+            }
+
+            .success-subtext {
+                font-size: 15px;
             }
         }
 
@@ -882,6 +1282,8 @@
                 </div>
             </div>
 
+            <div id="appToast" class="app-toast hidden" role="status" aria-live="polite"></div>
+
             <div class="header">
                 <div class="header-title">📁 AllahPan 私有网盘</div>
                 <div class="user-info">
@@ -914,21 +1316,24 @@
                 </div>
                 <div class="search-input-wrapper">
                     <input
-                        type="text"
+                        type="search"
                         id="searchInput"
                         class="search-input"
-                        placeholder="🔍 输入关键词后点击搜索..."
+                        enterkeyhint="search"
+                        autocomplete="off"
+                        placeholder="搜索文件名或语义…"
                     >
                     <button class="btn btn-primary" id="searchBtn" onclick="runSearch(document.getElementById('searchInput').value.trim())">搜索</button>
                     <button class="btn btn-secondary hidden" id="cancelSearchBtn" onclick="cancelSearch()">取消</button>
                 </div>
             </div>
 
-            <div class="upload-area" id="uploadArea">
-                <div class="upload-icon">☁️</div>
-                <div class="upload-text">点击或拖拽文件到此处上传</div>
-                <div class="upload-hint">支持所有文件格式</div>
-                <input type="file" id="fileInput" style="display: none;" onchange="handleFileSelect(event)">
+            <div class="upload-area" id="uploadArea" role="button" tabindex="0" aria-label="上传文件，点击选择">
+                <div class="upload-icon" aria-hidden="true">☁️</div>
+                <div class="upload-text">点击选择文件上传</div>
+                <div class="upload-hint desktop-only">或将文件拖到此区域（电脑端）· 支持常见格式</div>
+                <div class="upload-hint mobile-only">从相册或「文件」选取，可多选</div>
+                <input type="file" id="fileInput" style="display: none;" multiple onchange="handleFileSelect(event)">
                 
                 <div class="progress-container" id="uploadProgress">
                     <div class="progress-bar">
@@ -974,10 +1379,38 @@
         let fileListPollingInterval = null;
         let isPollingFileList = false;
         let fileListPollingAttempts = 0;
-        const POLLING_INTERVAL = 5000;   // 5 秒一次，避免频繁请求
+        const POLLING_INTERVAL = 8000;   // 未解析轮询：略拉长减轻手机端主线程与网络压力
         const POLLING_MAX_ATTEMPTS = 150; // 约 12 分钟
         let lastLoadFileListOnVisible = 0; // 用于 visibilitychange 节流
         const VISIBLE_RELOAD_THROTTLE_MS = 5000; // 页面重新可见后 5 秒内不重复拉列表
+        /** 与上次渲染一致则跳过 DOM，避免轮询时 innerHTML 整表重绘导致列表 scroll 归零、拖动卡顿 */
+        let fileListLastSnapshot = '';
+        /** 合并短时间内多次 loadFileList（只保留一次在途 + 结束后补跑一次） */
+        let fileListLoadLocked = false;
+        let fileListLoadPending = false;
+
+        function fileListSnapshotKey(path, directories, files) {
+            try {
+                return (path || '') + '\0' + JSON.stringify({ d: directories, f: files });
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function restoreScrollAfterListRender(savedWindowX, savedWindowY, savedListScrollTop) {
+            var listEl = document.getElementById('fileListContent');
+            requestAnimationFrame(function () {
+                requestAnimationFrame(function () {
+                    if (listEl && savedListScrollTop != null && !isNaN(savedListScrollTop)) {
+                        listEl.scrollTop = savedListScrollTop;
+                    }
+                    window.scrollTo(
+                        savedWindowX != null ? savedWindowX : 0,
+                        savedWindowY != null ? savedWindowY : 0
+                    );
+                });
+            });
+        }
 
         function setToken(token) {
             currentToken = token;
@@ -992,6 +1425,28 @@
             if (token) {
                 setToken(token);
                 showMainApp();
+            }
+
+            var fileListEl = document.getElementById('fileListContent');
+            if (fileListEl) {
+                fileListEl.addEventListener('click', function (e) {
+                    try {
+                        if (!window.matchMedia('(max-width: 768px)').matches) return;
+                        var item = e.target.closest('.file-item');
+                        if (!item || item.classList.contains('file-item-dir')) return;
+                        if (e.target.closest('button, a')) return;
+                        if (item.getAttribute('data-can-preview') !== '1') return;
+                        var rawFid = item.getAttribute('data-fid') || '';
+                        var rawMime = item.getAttribute('data-mime') || '';
+                        var rawName = item.getAttribute('data-fname') || '';
+                        var fid = rawFid ? decodeURIComponent(rawFid) : '';
+                        if (!fid) return;
+                        e.preventDefault();
+                        openPreview(fid, decodeURIComponent(rawMime), decodeURIComponent(rawName));
+                    } catch (err) {
+                        Logger.error('移动端行点击预览异常', err);
+                    }
+                });
             }
 
             document.addEventListener('visibilitychange', function () {
@@ -1060,8 +1515,20 @@
                 var total = (data && data.total !== undefined) ? data.total : files.length;
                 var hasUnparsedFiles = files.some(function (f) { return !f.is_ai_parsed; });
 
+                var snap = fileListSnapshotKey(currentPath, directories, files);
+                var wrap = document.getElementById('fileListContent');
+                var prevTop = wrap ? wrap.scrollTop : 0;
+                if (snap && snap === fileListLastSnapshot) {
+                    if (!hasUnparsedFiles) {
+                        stopFileListPolling();
+                        Logger.info('所有文件已完成 AI 解析');
+                    }
+                    return;
+                }
+                if (snap) fileListLastSnapshot = snap;
                 renderList(directories, files, false);
                 document.getElementById('fileCount').textContent = total + ' 个文件';
+                if (wrap) wrap.scrollTop = prevTop;
                 if (!hasUnparsedFiles) {
                     stopFileListPolling();
                     Logger.info('所有文件已完成 AI 解析');
@@ -1081,8 +1548,33 @@
             document.getElementById('switchBtn').textContent = isLoginMode ? '立即注册' : '立即登录';
         }
 
-        // 显示警告信息
+        var appToastTimer = null;
+        function showAppToast(message, type) {
+            type = type || 'success';
+            var el = document.getElementById('appToast');
+            if (!el) return;
+            el.textContent = message;
+            el.className = 'app-toast app-toast-' + (type === 'error' ? 'error' : 'success');
+            el.classList.remove('hidden');
+            requestAnimationFrame(function () {
+                el.classList.add('visible');
+            });
+            if (appToastTimer) clearTimeout(appToastTimer);
+            appToastTimer = setTimeout(function () {
+                el.classList.remove('visible');
+                setTimeout(function () {
+                    el.classList.add('hidden');
+                }, 280);
+            }, 3200);
+        }
+
+        // 显示警告信息（主界面已打开时用底部 Toast，#alertBox 在登录区内不可见）
         function showAlert(message, type = 'error') {
+            var mainApp = document.getElementById('mainApp');
+            if (mainApp && mainApp.classList.contains('active')) {
+                showAppToast(message, type);
+                return;
+            }
             const alertBox = document.getElementById('alertBox');
             alertBox.textContent = message;
             alertBox.className = `alert alert-${type}`;
@@ -1306,6 +1798,11 @@
             isSearchView = false;
             document.getElementById('searchInput').value = '';
             document.getElementById('cancelSearchBtn').classList.add('hidden');
+            if (fileListLoadLocked) {
+                fileListLoadPending = true;
+                return;
+            }
+            fileListLoadLocked = true;
             var container = document.getElementById('fileListContent');
             container.innerHTML = '<div class="loading-state"><span class="loading"></span>加载中...</div>';
             Logger.info('加载文件列表', currentPath || '(根目录)');
@@ -1324,9 +1821,12 @@
                 var files = (data && data.files) ? data.files : [];
                 var total = (data && data.total !== undefined) ? data.total : files.length;
 
+                var snap = fileListSnapshotKey(currentPath, directories, files);
+                if (snap) fileListLastSnapshot = snap;
                 renderList(directories, files, false);
                 document.getElementById('fileCount').textContent = total + ' 个文件';
                 updateBreadcrumb();
+                if (container) container.scrollTop = 0;
 
                 var hasUnparsedFiles = files.some(function (f) { return !f.is_ai_parsed; });
                 if (hasUnparsedFiles) {
@@ -1336,6 +1836,73 @@
             }).catch(function (err) {
                 Logger.error('加载文件列表异常', err);
                 container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div>网络错误，请重试</div></div>';
+            }).finally(function () {
+                fileListLoadLocked = false;
+                if (fileListLoadPending) {
+                    fileListLoadPending = false;
+                    loadFileList();
+                }
+            });
+        }
+
+        /** 删除/重命名等操作后刷新列表：不清空搜索、不插「加载中」占位，并尽量保持滚动位置 */
+        function refreshFileListSoft() {
+            var scrollY = window.scrollY != null ? window.scrollY : window.pageYOffset;
+            var scrollX = window.scrollX != null ? window.scrollX : window.pageXOffset;
+            var listEl = document.getElementById('fileListContent');
+            var listScrollTop = listEl ? listEl.scrollTop : 0;
+            function restoreScroll() {
+                restoreScrollAfterListRender(scrollX, scrollY, listScrollTop);
+            }
+            if (isSearchView) {
+                var q = document.getElementById('searchInput').value.trim();
+                if (!q) {
+                    loadFileList();
+                    return;
+                }
+                Logger.info('软刷新搜索结果', q);
+                API.ai.search(q, 20, currentToken, currentSearchMode).then(function (res) {
+                    if (!res.ok) {
+                        if (res.status === 401) handleSessionExpired();
+                        else showAppToast(res.error || '刷新列表失败', 'error');
+                        return;
+                    }
+                    var data = res.data;
+                    var results = Array.isArray(data && data.results) ? data.results : [];
+                    var total = (data && typeof data.total === 'number') ? data.total : results.length;
+                    var mode = (data && data.mode) ? data.mode : '';
+                    renderList([], results, true);
+                    document.getElementById('fileCount').textContent = '找到 ' + total + ' 个结果' + (mode ? ' (' + mode + ')' : '');
+                    restoreScroll();
+                }).catch(function (err) {
+                    Logger.error('软刷新搜索异常', err);
+                    showAppToast('刷新失败，请重试', 'error');
+                });
+                return;
+            }
+            Logger.info('软刷新文件列表', currentPath || '(根目录)');
+            API.files.list(currentPath, currentToken).then(function (res) {
+                if (!res.ok) {
+                    if (res.status === 401) handleSessionExpired();
+                    else showAppToast(res.error || '刷新列表失败', 'error');
+                    return;
+                }
+                var data = res.data;
+                var directories = (data && data.directories) ? data.directories : [];
+                var files = (data && data.files) ? data.files : [];
+                var total = (data && data.total !== undefined) ? data.total : files.length;
+                var snap = fileListSnapshotKey(currentPath, directories, files);
+                if (snap) fileListLastSnapshot = snap;
+                renderList(directories, files, false);
+                document.getElementById('fileCount').textContent = total + ' 个文件';
+                updateBreadcrumb();
+                var hasUnparsedFiles = files.some(function (f) { return !f.is_ai_parsed; });
+                if (hasUnparsedFiles) startFileListPolling();
+                else stopFileListPolling();
+                restoreScroll();
+            }).catch(function (err) {
+                Logger.error('软刷新列表异常', err);
+                showAppToast('刷新失败，请重试', 'error');
             });
         }
 
@@ -1399,26 +1966,38 @@
                 var isAudio = ftype.indexOf('audio/') === 0;
                 var canPreview = isImage || isVideo || isAudio;
                 var reparseBtn = isImage
-                    ? '<button class="btn btn-secondary btn-sm" onclick="reparseFile(\'' + fid + '\')" title="重新进行 AI 解析">🔄 重新解析</button>'
+                    ? '<button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();reparseFile(\'' + fid + '\')" title="重新解析" aria-label="重新解析">🔄<span class="file-action-label"> 重新解析</span></button>'
                     : '';
                 var previewBtn = canPreview
-                    ? '<button class="btn btn-secondary btn-sm" onclick="openPreview(\'' + fid + '\', \'' + (ftype || '').replace(/'/g, "\\'") + '\', \'' + fname + '\')" title="预览">👁️ 预览</button>'
+                    ? '<button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();openPreview(\'' + fid + '\', \'' + (ftype || '').replace(/'/g, "\\'") + '\', \'' + fname + '\')" title="预览" aria-label="预览">👁️<span class="file-action-label"> 预览</span></button>'
                     : '';
-                return '<div class="file-item">' +
-                    '<div class="file-icon">' + icon + '</div>' +
-                    '<div class="file-info"><div class="file-name">' + escapeHtml(file.filename) + '</div>' +
+                var encFid = encodeURIComponent(file.file_id || '');
+                var encMime = encodeURIComponent(ftype || '');
+                var encName = encodeURIComponent(file.filename || '');
+                var nameTitle = escapeHtmlAttr(file.filename || '');
+                return '<div class="file-item" data-fid="' + encFid + '" data-mime="' + encMime + '" data-fname="' + encName + '" data-can-preview="' + (canPreview ? '1' : '0') + '">' +
+                    '<div class="file-icon" aria-hidden="true">' + icon + '</div>' +
+                    '<div class="file-info"><div class="file-name" title="' + nameTitle + '">' + escapeHtml(file.filename) + '</div>' +
                     '<div class="file-meta"><span>' + size + '</span><span>' + date + '</span>' +
                     (isParsed ? '<span class="badge badge-success">AI 已解析</span>' : '<span class="badge badge-warning">未解析</span>') + '</div></div>' +
                     '<div class="file-actions">' +
                     reparseBtn +
                     previewBtn +
-                    '<button class="btn btn-secondary btn-sm" onclick="showRenameModal(\'' + fid + '\', \'' + fname + '\')" title="重命名">✏️ 重命名</button>' +
-                    '<button class="btn btn-primary btn-sm" onclick="downloadFile(\'' + fid + '\', \'' + (file.filename || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;') + '\')">⬇️ 下载</button>' +
-                    '<button class="delete-btn" onclick="showDeleteConfirm(\'' + fid + '\', \'' + fname + '\')" title="删除文件">🗑️</button>' +
+                    '<button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();showRenameModal(\'' + fid + '\', \'' + fname + '\')" title="重命名" aria-label="重命名">✏️<span class="file-action-label"> 重命名</span></button>' +
+                    '<button type="button" class="btn btn-primary btn-sm" onclick="event.stopPropagation();downloadFile(\'' + fid + '\', \'' + (file.filename || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;') + '\')" title="下载" aria-label="下载">⬇️<span class="file-action-label"> 下载</span></button>' +
+                    '<button type="button" class="delete-btn" onclick="event.stopPropagation();showDeleteConfirm(\'' + fid + '\', \'' + fname + '\')" title="删除" aria-label="删除">🗑️<span class="file-action-label"> 删除</span></button>' +
                     '</div></div>';
             }).join('');
             container.innerHTML = html;
             fileCountEl.textContent = total + ' 个文件';
+        }
+
+        function escapeHtmlAttr(s) {
+            if (!s) return '';
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;');
         }
 
         function escapeHtml(s) {
@@ -1554,7 +2133,7 @@
                 if (res.ok && res.data && res.data.success) {
                     showAlert('已提交重新解析，请稍候刷新列表查看状态', 'success');
                     startFileListPolling();
-                    loadFileList();
+                    refreshFileListSoft();
                 } else {
                     showAlert(res.error || '重新解析失败', 'error');
                 }
@@ -1563,10 +2142,20 @@
             });
         }
 
-        // 上传区域点击
-        document.getElementById('uploadArea').addEventListener('click', () => {
-            document.getElementById('fileInput').click();
-        });
+        // 上传区域：点击 / 键盘（无障碍与外接键盘）
+        (function () {
+            var ua = document.getElementById('uploadArea');
+            var fi = document.getElementById('fileInput');
+            ua.addEventListener('click', function () {
+                fi.click();
+            });
+            ua.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    fi.click();
+                }
+            });
+        })();
 
         // 文件选择处理（支持多选，加入队列）
         function handleFileSelect(event) {
@@ -1638,7 +2227,7 @@
                 if (res.ok && (res.status === 201 || (res.data && res.data.file_id))) {
                     showAlert('文件上传成功：' + file.name, 'success');
                     Logger.info('文件上传成功', file.name, file.size);
-                    loadFileList();
+                    refreshFileListSoft();
                     if (file.type && file.type.indexOf('image/') === 0) {
                         Logger.info('图片已上传，启动 AI 解析轮询');
                         startFileListPolling();
@@ -1740,6 +2329,7 @@
         }
 
         let pendingDeleteFileId = null;
+        let deleteRequestInFlight = false;
         let pendingRenameFileId = null;
 
         function showRenameModal(fileId, currentFilename) {
@@ -1770,11 +2360,7 @@
                 }
                 showAlert('重命名成功', 'success');
                 cancelRename();
-                if (isSearchView) {
-                    searchFiles(document.getElementById('searchInput').value.trim());
-                } else {
-                    loadFileList();
-                }
+                refreshFileListSoft();
             }).catch(function (err) {
                 showAlert(err && err.message ? err.message : '重命名失败', 'error');
             });
@@ -1793,22 +2379,34 @@
         }
 
         function confirmDelete() {
-            if (!pendingDeleteFileId) return;
-            API.files.delete(pendingDeleteFileId, currentToken).then(function (res) {
+            if (!pendingDeleteFileId || deleteRequestInFlight) return;
+            deleteRequestInFlight = true;
+            var deleteBtns = document.querySelectorAll('#deleteModal .modal-buttons .btn');
+            deleteBtns.forEach(function (b) { b.disabled = true; });
+            var fid = pendingDeleteFileId;
+            API.files.delete(fid, currentToken).then(function (res) {
+                deleteRequestInFlight = false;
+                deleteBtns.forEach(function (b) { b.disabled = false; });
                 if (!res.ok) {
                     if (res.status === 401) handleSessionExpired();
                     else showAlert(res.error || '删除失败', 'error');
                     return;
                 }
-                showAlert('文件删除成功！', 'success');
                 cancelDelete();
-                loadFileList();
+                showAlert('文件已删除', 'success');
+                refreshFileListSoft();
+            }).catch(function (err) {
+                deleteRequestInFlight = false;
+                deleteBtns.forEach(function (b) { b.disabled = false; });
+                showAlert(err && err.message ? err.message : '删除失败', 'error');
             });
         }
 
         function cancelDelete() {
             pendingDeleteFileId = null;
+            deleteRequestInFlight = false;
             document.getElementById('deleteModal').classList.add('hidden');
+            document.querySelectorAll('#deleteModal .modal-buttons .btn').forEach(function (b) { b.disabled = false; });
         }
     </script>
 </body>

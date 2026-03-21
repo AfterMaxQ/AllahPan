@@ -160,6 +160,7 @@ class FileRepository:
         删除文件元数据及其关联的向量。
         
         先删 SQLite 元数据再删 ChromaDB 向量，避免“向量已删、元数据未删”的永久不一致。
+        API 先删物理文件时 DirectoryWatcher 可能已抢先删掉元数据，故记录不存在时视为成功（幂等）。
         
         参数:
             file_id: 要删除的文件元数据ID
@@ -169,9 +170,17 @@ class FileRepository:
         """
         logger.info(f"FileRepository删除文件元数据，文件ID: {file_id}")
         if self.sqlite.get_file_metadata_by_id(file_id) is None:
-            logger.warning(f"文件元数据不存在，无需删除: {file_id}")
-            return False
+            logger.info(f"文件元数据已不存在，视为删除成功（可能已由目录监听清理）: {file_id}")
+            try:
+                self.chroma.delete_vector(file_id)
+            except Exception as e:
+                logger.debug(f"Chroma 向量清理跳过: {file_id}，{e}")
+            return True
+
         success = self.sqlite.delete_file_metadata(file_id)
+        if not success and self.sqlite.get_file_metadata_by_id(file_id) is None:
+            success = True
+
         if success:
             try:
                 self.chroma.delete_vector(file_id)

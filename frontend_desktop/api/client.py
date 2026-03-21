@@ -47,10 +47,29 @@ class APIClient:
     - 统一的错误处理
     - 响应数据验证
     - 超时控制
+    
+    注意（httpx URL 合并规则）:
+    - base_url 必须为「目录」形式并以 / 结尾，例如 http://host:8000/api/v1/
+    - 请求 path 必须为相对片段且不以 / 开头，例如 system/metrics/traffic
+    否则会出现请求落到 http://host/system/... 或 http://host/api/tunnel/...，
+    后端无此路由时易被 SPA 静态托管返回 HTML，表现为「服务器返回了 HTML 而非 JSON」。
     """
     
     DEFAULT_TIMEOUT = 30.0
     UPLOAD_TIMEOUT = 300.0
+    
+    @staticmethod
+    def _normalize_base_url(url: str) -> str:
+        u = (url or "").strip()
+        if not u:
+            return u
+        return u.rstrip("/") + "/"
+    
+    @staticmethod
+    def _relative_api_path(path: str) -> str:
+        if not path:
+            return path
+        return path.lstrip("/")
     
     def __init__(self, base_url: Optional[str] = None):
         """
@@ -59,7 +78,7 @@ class APIClient:
         参数:
             base_url: API 基础 URL，默认使用 config.API_BASE_URL
         """
-        self.base_url = base_url or config.API_BASE_URL
+        self.base_url = self._normalize_base_url(base_url or config.API_BASE_URL)
         self._client: Optional[httpx.Client] = None
     
     def _get_client(self) -> httpx.Client:
@@ -120,11 +139,37 @@ class APIClient:
         
         if response.status_code == 204:
             return None
-        
+
+        raw_text = response.text
+        if not (raw_text or "").strip():
+            return {}
+
         try:
-            return response.json()
+            parsed = response.json()
         except Exception:
-            return response.text
+            t = raw_text.strip()
+            if t.startswith("<!") or t.lower().startswith("<html"):
+                raise APIError(
+                    response.status_code,
+                    "服务器返回了 HTML 而非 API JSON，请确认 API 基础地址为后端的 /api/v1（例如 http://主机:端口/api/v1）。",
+                )
+            raise APIError(
+                response.status_code,
+                f"响应无法解析为 JSON: {t[:200]}",
+            )
+
+        if isinstance(parsed, str):
+            if "<html" in parsed.lower()[:800]:
+                raise APIError(
+                    response.status_code,
+                    "响应内容为 HTML 文本，请检查是否连错地址或网关替换了响应体。",
+                )
+            raise APIError(
+                response.status_code,
+                f"接口返回了 JSON 字符串而非对象，可能是网关或旧版后端: {parsed[:200]}",
+            )
+
+        return parsed
     
     def get(
         self,
@@ -146,8 +191,9 @@ class APIClient:
         client = self._get_client()
         headers = self._get_auth_headers()
         
+        rel = self._relative_api_path(path)
         response = client.get(
-            path,
+            rel,
             params=params,
             headers=headers,
             timeout=timeout or self.DEFAULT_TIMEOUT,
@@ -176,8 +222,9 @@ class APIClient:
         client = self._get_client()
         headers = self._get_auth_headers()
         
+        rel = self._relative_api_path(path)
         response = client.post(
-            path,
+            rel,
             json=json,
             data=data,
             headers=headers,
@@ -204,9 +251,10 @@ class APIClient:
         """
         client = self._get_client()
         headers = self._get_auth_headers()
+        rel = self._relative_api_path(path)
         response = client.request(
             "PATCH",
-            path,
+            rel,
             json=json,
             headers=headers,
             timeout=timeout or self.DEFAULT_TIMEOUT,
@@ -231,8 +279,9 @@ class APIClient:
         client = self._get_client()
         headers = self._get_auth_headers()
 
+        rel = self._relative_api_path(path)
         response = client.delete(
-            path,
+            rel,
             headers=headers,
             timeout=timeout or self.DEFAULT_TIMEOUT,
         )
@@ -298,7 +347,7 @@ class APIClient:
         files = {"file": (file_name, wrapped_file)}
         
         response = client.post(
-            "/files/upload",
+            self._relative_api_path("/files/upload"),
             files=files,  # type: ignore[arg-type]
             headers=headers,
             timeout=httpx.Timeout(self.UPLOAD_TIMEOUT),
@@ -329,7 +378,7 @@ class APIClient:
         
         with client.stream(
             "GET",
-            f"/files/{file_id}/download",
+            self._relative_api_path(f"/files/{file_id}/download"),
             headers=headers,
             timeout=httpx.Timeout(self.UPLOAD_TIMEOUT),
         ) as response:

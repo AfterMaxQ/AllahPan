@@ -12,13 +12,19 @@ Tunnel状态等系统监控功能。
 
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.api.v1.dependencies import get_current_user, AuthUser
-from app.config import STORAGE_DIR, get_storage_dir
+from app.config import (
+    CHROMA_PERSIST_PATH,
+    DATA_DIR,
+    DB_PATH,
+    STORAGE_DIR,
+    get_storage_dir,
+)
 from app.watcher.watcher import DirectoryWatcher
 from app.services.image_parser import get_image_parser_queue
 
@@ -619,3 +625,86 @@ def get_system_status_summary(
         watcher=watcher,
         image_parser=image_parser_status,
     )
+
+
+def _path_size_bytes(path: Path) -> int:
+    """目录或文件占用字节数（递归目录）。"""
+    if not path.exists():
+        return 0
+    if path.is_file():
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
+    total = 0
+    try:
+        for child in path.rglob("*"):
+            if child.is_file():
+                try:
+                    total += child.stat().st_size
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
+@router.get("/metrics/traffic")
+def get_metrics_traffic(
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """运维：最近最多 120 分钟的请求量（按 API 分类聚合）。"""
+    from app.observability.traffic_stats import get_traffic_snapshot
+
+    return get_traffic_snapshot()
+
+
+@router.get("/metrics/data-volumes")
+def get_metrics_data_volumes(
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """运维：数据库、向量库、数据目录等占用体积。"""
+    db_p = DB_PATH.resolve()
+    chroma_p = Path(CHROMA_PERSIST_PATH).resolve()
+    data_p = DATA_DIR.resolve()
+    storage_p = STORAGE_DIR.resolve()
+    return {
+        "database_bytes": _path_size_bytes(db_p) if db_p.exists() else 0,
+        "chroma_bytes": _path_size_bytes(chroma_p) if chroma_p.exists() else 0,
+        "data_dir_bytes": _path_size_bytes(data_p) if data_p.is_dir() else 0,
+        "storage_dir_bytes": _path_size_bytes(storage_p) if storage_p.exists() else 0,
+        "paths": {
+            "database": str(db_p),
+            "chroma": str(chroma_p),
+            "data_dir": str(data_p),
+            "storage_dir": str(storage_p),
+        },
+    }
+
+
+@router.get("/logs/tail")
+def get_logs_tail(
+    lines: int = 300,
+    current_user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """运维：读取 ~/.allahpan/logs 下最近修改的 .log 文件末尾若干行。"""
+    n = max(1, min(int(lines), 2000))
+    log_dir = Path.home() / ".allahpan" / "logs"
+    if not log_dir.is_dir():
+        return {"path": None, "lines": [], "raw": "", "message": "日志目录不存在"}
+    log_files = sorted(log_dir.glob("*.log"), key=lambda x: x.stat().st_mtime, reverse=True)
+    if not log_files:
+        return {"path": None, "lines": [], "raw": "", "message": "暂无 .log 文件"}
+    latest = log_files[0]
+    try:
+        text = latest.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return {"path": str(latest), "lines": [], "raw": "", "message": f"读取失败: {e}"}
+    all_lines: List[str] = text.splitlines()
+    tail = all_lines[-n:] if len(all_lines) > n else all_lines
+    return {
+        "path": str(latest.resolve()),
+        "lines": tail,
+        "raw": "\n".join(tail),
+        "message": None,
+    }

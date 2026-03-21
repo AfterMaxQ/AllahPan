@@ -14,7 +14,9 @@
 最后修改: 2026-03-20
 """
 
+import json
 import os
+import socket
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -245,6 +247,7 @@ class SettingsPage(QWidget):
         super().__init__(parent)
         self.setObjectName("SettingsPage")
         self._setup_ui()
+        self._load_server_settings_ui()
         self._load_current_status()
     
     def _setup_ui(self) -> None:
@@ -256,6 +259,7 @@ class SettingsPage(QWidget):
         
         container = QWidget()
         container.setObjectName("SettingsPageContainer")
+        container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         main_layout = QVBoxLayout(container)
         main_layout.setContentsMargins(24, 24, 24, 24)
         main_layout.setSpacing(24)
@@ -274,6 +278,10 @@ class SettingsPage(QWidget):
         # 存储设置
         storage_group = self._create_storage_group()
         main_layout.addWidget(storage_group)
+
+        # 本机服务（后端监听 + 局域网 Web）
+        local_server_group = self._create_local_server_group()
+        main_layout.addWidget(local_server_group)
         
         # 远程访问设置
         tunnel_group = self._create_tunnel_group()
@@ -300,7 +308,7 @@ class SettingsPage(QWidget):
         scroll.setWidget(container)
         
         page_layout = QVBoxLayout(self)
-        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setContentsMargins(10, 8, 10, 8)
         page_layout.addWidget(scroll)
     
     def _create_appearance_group(self) -> QGroupBox:
@@ -341,6 +349,118 @@ class SettingsPage(QWidget):
         group_layout.addRow("", self.storage_path_btn)
         
         return group
+
+    @staticmethod
+    def _guess_lan_ipv4() -> str:
+        """推测本机局域网 IPv4，用于展示给其他设备的访问地址。"""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(0.25)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except OSError:
+            return "127.0.0.1"
+
+    def _create_local_server_group(self) -> QGroupBox:
+        """本机 API / Ollama 监听与局域网 Web 访问说明（写入 server_settings.json，重启生效）。"""
+        group = QGroupBox("本机服务与局域网 Web")
+        group_layout = QFormLayout(group)
+        group_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        group_layout.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
+        group_layout.setSpacing(16)
+
+        self._srv_host = QLineEdit()
+        self._srv_host.setPlaceholderText("0.0.0.0 表示允许局域网内其他设备访问")
+        self._srv_host.textChanged.connect(self._update_web_access_hint)
+        group_layout.addRow("API 监听地址:", self._srv_host)
+
+        self._srv_port_spin = QSpinBox()
+        self._srv_port_spin.setRange(1, 65535)
+        self._srv_port_spin.setValue(8000)
+        self._srv_port_spin.valueChanged.connect(self._update_web_access_hint)
+        group_layout.addRow("API 端口:", self._srv_port_spin)
+
+        self._ollama_port_spin = QSpinBox()
+        self._ollama_port_spin.setRange(1, 65535)
+        self._ollama_port_spin.setValue(11434)
+        group_layout.addRow("Ollama 端口:", self._ollama_port_spin)
+
+        self._web_hint_label = QLabel()
+        self._web_hint_label.setWordWrap(True)
+        self._web_hint_label.setStyleSheet("color: #86868B; font-size: 12px; font-family: monospace;")
+        group_layout.addRow("其他设备 Web 入口:", self._web_hint_label)
+
+        save_srv_btn = QPushButton("保存本机服务设置")
+        save_srv_btn.setObjectName("QPushButton__secondary")
+        save_srv_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_srv_btn.clicked.connect(self._on_save_server_settings)
+        group_layout.addRow("", save_srv_btn)
+
+        tip = QLabel(
+            "保存后写入 ~/.allahpan/server_settings.json。请完全退出并重新启动 AllahPan（或 exe）后生效。\n"
+            "手机/其他电脑在同一局域网内，用浏览器打开上方地址即可使用网页端；桌面前端仅在本机使用。\n"
+            "若无法访问，请检查本机防火墙是否放行对应 TCP 端口。"
+        )
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color: #86868B; font-size: 12px;")
+        group_layout.addRow("", tip)
+
+        return group
+
+    def _load_server_settings_ui(self) -> None:
+        """从 server_settings.json 或默认值填充本机服务表单。"""
+        p = config.SERVER_SETTINGS_PATH
+        host = "0.0.0.0"
+        api_p = int(os.environ.get("ALLAHPAN_PORT", "8000") or 8000)
+        ollama_p = int(os.environ.get("OLLAMA_PORT", "11434") or 11434)
+        if p.is_file():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    if "api_host" in data:
+                        host = str(data["api_host"]).strip() or host
+                    if "api_port" in data:
+                        api_p = int(data["api_port"])
+                    if "ollama_port" in data:
+                        ollama_p = int(data["ollama_port"])
+            except (json.JSONDecodeError, OSError, TypeError, ValueError):
+                pass
+        self._srv_host.setText(host)
+        self._srv_port_spin.setValue(api_p)
+        self._ollama_port_spin.setValue(ollama_p)
+        self._update_web_access_hint()
+
+    def _update_web_access_hint(self) -> None:
+        if not hasattr(self, "_web_hint_label"):
+            return
+        port = self._srv_port_spin.value()
+        ip = self._guess_lan_ipv4()
+        self._web_hint_label.setText(
+            f"http://{ip}:{port}/\n（将 IP 换成本机实际局域网地址即可；API 与网页由同一端口提供）"
+        )
+
+    def _on_save_server_settings(self) -> None:
+        host = (self._srv_host.text() or "").strip() or "0.0.0.0"
+        data = {
+            "api_host": host,
+            "api_port": int(self._srv_port_spin.value()),
+            "ollama_port": int(self._ollama_port_spin.value()),
+        }
+        try:
+            config.SERVER_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            config.SERVER_SETTINGS_PATH.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            QMessageBox.information(
+                self,
+                "已保存",
+                "已写入 ~/.allahpan/server_settings.json。\n请完全退出并重新启动 AllahPan 后生效。",
+            )
+        except OSError as e:
+            QMessageBox.warning(self, "保存失败", str(e))
     
     def _create_tunnel_group(self) -> QGroupBox:
         """创建远程访问设置组。"""

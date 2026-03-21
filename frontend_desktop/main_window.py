@@ -13,11 +13,20 @@ from PySide6.QtCore import Qt, QTimer, QThread, Signal, QUrl, QEvent, QObject
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QMenuBar, QMenu, QMessageBox, QFileDialog,
-    QSplitter, QStackedWidget, QGraphicsDropShadowEffect,
+    QFrame, QStackedWidget,
     QDialog, QDialogButtonBox, QFormLayout, QProgressBar,
-    QLineEdit
+    QLineEdit,
 )
-from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QPalette, QColor, QPixmap, QGuiApplication
+from PySide6.QtGui import (
+    QAction,
+    QDragEnterEvent,
+    QDropEvent,
+    QPalette,
+    QColor,
+    QPixmap,
+    QGuiApplication,
+    QIcon,
+)
 
 import sys
 from pathlib import Path
@@ -25,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import config
 from theme import LIGHT_QSS, DARK_QSS
+from theme.apple_effects import apply_acrylic_shadow, fade_in_widget
 from api.auth import AuthAPI
 from api.files import FilesAPI
 from api.ai import AIAPI
@@ -40,6 +50,7 @@ from widgets.file_browser import FileBrowser
 from widgets.file_list_model import FileItem
 from pages.login_page import LoginPage
 from pages.settings_page import SettingsPage, TunnelConfigDialog
+from pages.ops_dashboard_page import OpsDashboardPage
 
 
 class UploadConfirmDialog(QDialog):
@@ -55,17 +66,28 @@ class UploadConfirmDialog(QDialog):
         total_size: int,
     ):
         super().__init__(parent)
-        self.setWindowTitle("上传到 AllahPan")
+        self.setWindowTitle("确认上传")
         layout = QVBoxLayout(self)
-        form = QFormLayout()
         location_display = save_location.strip().replace("\\", "/") if save_location else "根目录"
+        size_str = config.format_file_size(total_size)
+        intro = QLabel()
+        intro.setWordWrap(True)
+        intro.setTextFormat(Qt.TextFormat.RichText)
+        intro.setText(
+            f"<p style='line-height:1.45;'>是否将 <b>{file_count}</b> 个文件"
+            f"（合计 <b>{size_str}</b>）上传到当前网盘目录下的 "
+            f"<b>「{location_display}」</b>？</p>"
+            f"<p style='color:#86868B;font-size:12px;margin-top:8px;'>"
+            "可在下方填写子目录，将文件保存到该文件夹内。</p>"
+        )
+        layout.addWidget(intro)
+        form = QFormLayout()
         self._location_label = QLabel(location_display)
         self._location_label.setStyleSheet("color: #1D1D1F; font-size: 13px;")
-        form.addRow("保存位置:", self._location_label)
-        size_str = config.format_file_size(total_size)
-        self._count_label = QLabel(f"{file_count} 个文件（共 {size_str}）")
+        form.addRow("目标路径:", self._location_label)
+        self._count_label = QLabel(f"{file_count} 个文件 · {size_str}")
         self._count_label.setStyleSheet("color: #1D1D1F; font-size: 13px;")
-        form.addRow("数量:", self._count_label)
+        form.addRow("数量与大小:", self._count_label)
         self._subdir_edit = QLineEdit()
         self._subdir_edit.setPlaceholderText("留空则保存到当前目录；可输入如 文档/2024")
         self._subdir_edit.setStyleSheet("color: #1D1D1F; font-size: 13px;")
@@ -77,6 +99,12 @@ class UploadConfirmDialog(QDialog):
         buttons.setOrientation(Qt.Orientation.Horizontal)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if ok_btn is not None:
+            ok_btn.setText("上传")
+        if cancel_btn is not None:
+            cancel_btn.setText("取消")
         layout.addWidget(buttons)
 
     def get_subdir(self) -> str:
@@ -200,9 +228,12 @@ class MainWindow(QMainWindow):
     def _setup_window(self) -> None:
         """设置窗口属性。"""
         self.setWindowTitle(f"{config.APP_NAME} - {config.APP_DESCRIPTION}")
+        icon_path = config.resolve_app_icon_path()
+        if icon_path is not None:
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.setMinimumSize(config.WINDOW_MIN_WIDTH, config.WINDOW_MIN_HEIGHT)
         self.resize(config.WINDOW_DEFAULT_WIDTH, config.WINDOW_DEFAULT_HEIGHT)
-        
+
         self.setAcceptDrops(True)
     
     def _setup_ui(self) -> None:
@@ -218,6 +249,7 @@ class MainWindow(QMainWindow):
         central_layout.addWidget(self.login_page)
         
         self.main_widget = QWidget()
+        self.main_widget.setObjectName("MainShell")
         self.main_widget.setVisible(False)
         main_layout = QHBoxLayout(self.main_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -229,11 +261,14 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.sidebar)
         
         content_widget = QWidget()
+        content_widget.setObjectName("MainContentColumn")
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
         
         header_widget = QWidget()
+        header_widget.setObjectName("MainHeaderBar")
+        header_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         header_layout = QHBoxLayout(header_widget)
         header_layout.setContentsMargins(16, 12, 16, 12)
         header_layout.setSpacing(16)
@@ -272,6 +307,13 @@ class MainWindow(QMainWindow):
         
         content_layout.addWidget(header_widget)
         
+        stacked_shell = QFrame()
+        stacked_shell.setObjectName("StackedGlassPanel")
+        stacked_shell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        stacked_shell_layout = QVBoxLayout(stacked_shell)
+        stacked_shell_layout.setContentsMargins(12, 10, 12, 10)
+        stacked_shell_layout.setSpacing(0)
+
         self.stacked_pages = QStackedWidget()
         
         self.file_browser = FileBrowser()
@@ -284,8 +326,11 @@ class MainWindow(QMainWindow):
         self.file_browser.drag_leave.connect(lambda: self._show_drop_overlay(False))
         self.file_browser.file_dropped.connect(self._on_file_dropped)
         self.file_browser.open_storage_in_explorer_requested.connect(self._on_open_storage_in_explorer)
-        self.sidebar.folder_clicked.connect(self._on_sidebar_folder_clicked)
+        self.file_browser.set_drag_drop_enabled(True)
         self.stacked_pages.addWidget(self.file_browser)
+
+        self.ops_dashboard_page = OpsDashboardPage()
+        self.stacked_pages.addWidget(self.ops_dashboard_page)
         
         self.settings_page = SettingsPage()
         self.settings_page.theme_changed.connect(self._on_theme_changed)
@@ -293,8 +338,12 @@ class MainWindow(QMainWindow):
         self.settings_page.logout_requested.connect(self._on_logout_requested)
         self.settings_page.tunnel_config_requested.connect(self._show_tunnel_config)
         self.stacked_pages.addWidget(self.settings_page)
-        
-        content_layout.addWidget(self.stacked_pages)
+
+        stacked_shell_layout.addWidget(self.stacked_pages)
+        content_layout.addWidget(stacked_shell, 1)
+
+        apply_acrylic_shadow(self.sidebar, blur=24, offset_y=6, alpha=30)
+        apply_acrylic_shadow(stacked_shell, blur=40, offset_y=12, alpha=38)
         
         self.upload_queue = UploadQueue(max_concurrent=config.UPLOAD_QUEUE_MAX_CONCURRENT)
         self.upload_queue.upload_completed.connect(self._on_upload_completed)
@@ -335,7 +384,17 @@ class MainWindow(QMainWindow):
                 )
         finally:
             self._applying_theme = False
-    
+
+    def _switch_main_page(self, widget: QWidget) -> None:
+        """切换主内容堆叠页并做短暂淡入动画。"""
+        if self.stacked_pages.currentWidget() is widget:
+            return
+        prev = self.stacked_pages.currentWidget()
+        if prev is not None and prev.graphicsEffect() is not None:
+            prev.setGraphicsEffect(None)  # type: ignore[arg-type]
+        self.stacked_pages.setCurrentWidget(widget)
+        fade_in_widget(widget, self, duration_ms=240)
+
     def _connect_signals(self) -> None:
         """连接信号。"""
         self.sidebar.category_changed.connect(self._on_category_changed)
@@ -548,15 +607,15 @@ class MainWindow(QMainWindow):
         if self._is_auth_error(error):
             self._handle_session_expired()
     
-    def _on_sidebar_folder_clicked(self, path: str) -> None:
-        """侧边栏点击一级目录，进入该路径。"""
-        self._current_path = path
-        self._load_files()
-
     def _on_category_changed(self, category: str) -> None:
         """处理分类切换。"""
+        if category == "ops_dashboard":
+            self._switch_main_page(self.ops_dashboard_page)
+            self.ops_dashboard_page.on_show()
+            return
+
         if self.stacked_pages.currentWidget() != self.file_browser:
-            self.stacked_pages.setCurrentWidget(self.file_browser)
+            self._switch_main_page(self.file_browser)
 
         if category == "ai_search":
             self.search_bar.set_mode(SearchBar.MODE_AI)
@@ -567,7 +626,7 @@ class MainWindow(QMainWindow):
     def _on_search_triggered(self, keyword: str, is_ai: bool) -> None:
         """处理搜索触发。"""
         if self.stacked_pages.currentWidget() != self.file_browser:
-            self.stacked_pages.setCurrentWidget(self.file_browser)
+            self._switch_main_page(self.file_browser)
 
         if not keyword:
             self._load_files()
@@ -968,7 +1027,7 @@ class MainWindow(QMainWindow):
     def _show_settings(self) -> None:
         """显示设置页面。"""
         self.settings_page.refresh_status()
-        self.stacked_pages.setCurrentWidget(self.settings_page)
+        self._switch_main_page(self.settings_page)
     
     def _show_tunnel_config(self) -> None:
         """显示 Tunnel 配置对话框。"""
@@ -1119,7 +1178,7 @@ class MainWindow(QMainWindow):
         if event.key() == Qt.Key.Key_F5:
             self._load_files()
         elif event.key() == Qt.Key.Key_Escape:
-            self.stacked_pages.setCurrentWidget(self.file_browser)
+            self._switch_main_page(self.file_browser)
         elif event.key() == Qt.Key.Key_Backspace:
             if self.stacked_pages.currentWidget() == self.file_browser and (getattr(self, "_current_path", "") or ""):
                 self._on_breadcrumb_back()

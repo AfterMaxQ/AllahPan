@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 import bcrypt
 
-from app.database.sqlite import SQLite
+from app.database.sqlite import SQLite, as_sql_text_param
 from app.database.repositories.user_repository import UserRepository
 from app.models.user import User
 from ollama.ollama_client import OllamaClient
@@ -93,6 +93,8 @@ def create_access_token(data: dict) -> str:
         str: 编码后的JWT令牌字符串
     """
     to_encode = data.copy()
+    if "user_id" in to_encode and to_encode["user_id"] is not None:
+        to_encode["user_id"] = as_sql_text_param(to_encode["user_id"])
     encoded_jwt: str = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
     return encoded_jwt
 
@@ -120,8 +122,8 @@ def verify_access_token(token: str) -> TokenData:
             token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM],
             options={"verify_exp": False},
         )
-        user_id: str = payload.get("user_id", "")
-        username: str = payload.get("username", "")
+        user_id = as_sql_text_param(payload.get("user_id", ""))
+        username = as_sql_text_param(payload.get("username", ""))
         if not user_id or not username:
             logger.warning(f"JWT令牌缺少必需字段: user_id={user_id}, username={username}")
             raise credentials_exception
@@ -221,7 +223,7 @@ def get_current_user(
     """
     logger.debug("开始认证用户")
     token_data = verify_access_token(credentials.credentials)
-    user_id = str(token_data.user_id) if token_data.user_id is not None else ""
+    user_id = as_sql_text_param(token_data.user_id)
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

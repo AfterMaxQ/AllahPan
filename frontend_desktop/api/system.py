@@ -8,10 +8,19 @@
 
 import sys
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from api.client import APIClient, get_api_client, APIError
+
+
+def _expect_dict(data: Any, endpoint: str) -> Dict[str, Any]:
+    if isinstance(data, dict):
+        return data
+    raise APIError(
+        0,
+        f"{endpoint} 期望返回 JSON 对象，实际为 {type(data).__name__}，请确认后端已更新并包含运维接口。",
+    )
 
 
 class SystemAPI:
@@ -36,7 +45,7 @@ class SystemAPI:
         异常:
             APIError: 获取失败时
         """
-        return self._client.get("/system/info")
+        return _expect_dict(self._client.get("/system/info"), "/system/info")
     
     def get_storage_directory(self) -> Dict[str, Any]:
         """
@@ -45,7 +54,7 @@ class SystemAPI:
         返回:
             包含 path、exists、size 的字典
         """
-        return self._client.get("/system/storage")
+        return _expect_dict(self._client.get("/system/storage"), "/system/storage")
     
     def get_watcher_status(self) -> Dict[str, Any]:
         """
@@ -57,7 +66,7 @@ class SystemAPI:
         异常:
             APIError: 获取失败时
         """
-        return self._client.get("/system/watcher")
+        return _expect_dict(self._client.get("/system/watcher"), "/system/watcher")
     
     def get_image_parser_status(self) -> Dict[str, Any]:
         """
@@ -70,7 +79,10 @@ class SystemAPI:
         异常:
             APIError: 获取失败时
         """
-        return self._client.get("/system/image-parser-queue")
+        return _expect_dict(
+            self._client.get("/system/image-parser-queue"),
+            "/system/image-parser-queue",
+        )
     
     def get_status_summary(self) -> Dict[str, Any]:
         """
@@ -147,3 +159,24 @@ class SystemAPI:
             return 0
         
         return round((used / total) * 100, 1)
+
+    def get_metrics_traffic(self) -> Dict[str, Any]:
+        """运维看板：按分钟的 HTTP 请求统计。"""
+        return _expect_dict(
+            self._client.get("/system/metrics/traffic"),
+            "/system/metrics/traffic",
+        )
+
+    def get_metrics_data_volumes(self) -> Dict[str, Any]:
+        """运维看板：数据库 / 向量库 / 目录体积。"""
+        return _expect_dict(
+            self._client.get("/system/metrics/data-volumes"),
+            "/system/metrics/data-volumes",
+        )
+
+    def get_logs_tail(self, lines: int = 400) -> Dict[str, Any]:
+        """运维看板：日志文件尾部。"""
+        return _expect_dict(
+            self._client.get("/system/logs/tail", params={"lines": lines}),
+            "/system/logs/tail",
+        )
