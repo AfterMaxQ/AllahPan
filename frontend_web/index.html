@@ -227,6 +227,67 @@
             color: white;
         }
 
+        .file-list-title-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .mobile-selection-bar {
+            display: none;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            padding: 10px 12px;
+            background: var(--bg-color);
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .mobile-selection-bar .btn-sm {
+            min-height: 36px;
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
+        #selectionCountEl {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-right: 4px;
+        }
+
+        .file-select-wrap {
+            flex: 0 0 auto;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            min-width: 44px;
+            min-height: 44px;
+            margin-right: 4px;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .file-list.selection-mode .file-select-wrap {
+            display: flex;
+        }
+
+        .file-select-cb {
+            width: 22px;
+            height: 22px;
+            accent-color: var(--primary-color);
+            cursor: pointer;
+        }
+
+        .file-item.file-item-selected {
+            border-color: var(--primary-color);
+            background: rgba(79, 70, 229, 0.07);
+        }
+
         .search-input-wrapper {
             display: flex;
             gap: 10px;
@@ -757,6 +818,24 @@
                 font-size: 14px;
                 padding: 8px 10px;
                 text-align: center;
+                -webkit-tap-highlight-color: rgba(79, 70, 229, 0.2);
+                touch-action: manipulation;
+                user-select: none;
+                transition: transform 0.1s ease, opacity 0.1s ease, border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+            }
+
+            .search-tab:active {
+                transform: scale(0.96);
+                opacity: 0.9;
+            }
+
+            .search-tab.active:active {
+                opacity: 0.92;
+                transform: scale(0.97);
+            }
+
+            .mobile-selection-bar {
+                display: flex;
             }
 
             /* 同一行：关键词 + 搜索，少占垂直空间 */
@@ -1335,10 +1414,20 @@
                 </div>
             </div>
 
-            <div class="file-list">
+            <div class="file-list" id="fileListSection">
                 <div class="file-list-title">
                     <span>📄 文件列表</span>
-                    <span class="file-count" id="fileCount">0 个文件</span>
+                    <div class="file-list-title-right">
+                        <span class="file-count" id="fileCount">0 个文件</span>
+                        <button type="button" class="btn btn-secondary btn-sm mobile-only" id="btnToggleSelectMode" onclick="toggleFileSelectionMode()">多选</button>
+                    </div>
+                </div>
+                <div id="mobileSelectionBar" class="mobile-selection-bar hidden" aria-live="polite">
+                    <span id="selectionCountEl">已选 0</span>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="selectAllVisibleFiles()">全选</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="clearFileSelection()">清除</button>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="batchDownloadSelected()">下载</button>
+                    <button type="button" class="btn btn-danger btn-sm" onclick="showBatchDeleteConfirm()">删除</button>
                 </div>
                 <div id="breadcrumb" class="breadcrumb hidden"></div>
                 <div id="fileListContent">
@@ -1362,6 +1451,11 @@
         let isSearchView = false;  // 当前是否为搜索结果（不显示目录、用 results 渲染）
         let sessionExpiredHandled = false;  // 避免 401 重复弹窗
         let currentSearchMode = 'filename';  // 搜索模式：filename 按文件名，vector 图片/语义
+
+        /** 手机端文件多选：仅窄屏下可用，selectedFileMap: file_id -> 显示文件名 */
+        let fileSelectionMode = false;
+        let selectedFileMap = {};
+        let pendingDeleteBatchIds = null;
 
         // 系统状态轮询（桌面 30s；移动端默认不轮询，展开「系统状态」后再 90s 一轮）
         let statusPanelInterval = null;
@@ -1444,9 +1538,35 @@
 
             var fileListEl = document.getElementById('fileListContent');
             if (fileListEl) {
+                fileListEl.addEventListener('change', function (e) {
+                    var t = e.target;
+                    if (!t || !t.classList || !t.classList.contains('file-select-cb')) return;
+                    var enc = t.getAttribute('data-fid') || '';
+                    var id = enc ? decodeURIComponent(enc) : '';
+                    if (!id) return;
+                    var row = t.closest('.file-item');
+                    var ne = row ? (row.getAttribute('data-fname') || '') : '';
+                    var name = ne ? decodeURIComponent(ne) : id;
+                    if (t.checked) selectedFileMap[id] = name;
+                    else delete selectedFileMap[id];
+                    if (row) row.classList.toggle('file-item-selected', t.checked);
+                    updateSelectionBar();
+                });
                 fileListEl.addEventListener('click', function (e) {
                     try {
                         if (!window.matchMedia('(max-width: 768px)').matches) return;
+                        if (fileSelectionMode) {
+                            if (e.target.closest('button, a')) return;
+                            if (e.target.closest('.file-select-wrap') || e.target.classList.contains('file-select-cb')) return;
+                            var item = e.target.closest('.file-item');
+                            if (!item || item.classList.contains('file-item-dir')) return;
+                            var cb = item.querySelector('.file-select-cb');
+                            if (!cb) return;
+                            cb.checked = !cb.checked;
+                            cb.dispatchEvent(new Event('change', { bubbles: true }));
+                            e.preventDefault();
+                            return;
+                        }
                         var item = e.target.closest('.file-item');
                         if (!item || item.classList.contains('file-item-dir')) return;
                         if (e.target.closest('button, a')) return;
@@ -1746,6 +1866,10 @@
             pageHiddenAt = null;
             lastListFetchAt = 0;
             lastVisibilitySoftRefreshAt = 0;
+            fileSelectionMode = false;
+            selectedFileMap = {};
+            pendingDeleteBatchIds = null;
+            updateSelectionBar();
             setToken(null);
             currentPath = '';
             isSearchView = false;
@@ -2018,8 +2142,80 @@
             });
         }
 
+        function updateSelectionBar() {
+            var bar = document.getElementById('mobileSelectionBar');
+            var btn = document.getElementById('btnToggleSelectMode');
+            var cnt = document.getElementById('selectionCountEl');
+            var fl = document.getElementById('fileListSection');
+            var n = Object.keys(selectedFileMap).length;
+            if (cnt) cnt.textContent = '已选 ' + n;
+            if (btn) btn.textContent = fileSelectionMode ? '取消' : '多选';
+            if (bar) bar.classList.toggle('hidden', !fileSelectionMode);
+            if (fl) fl.classList.toggle('selection-mode', fileSelectionMode);
+        }
+
+        function toggleFileSelectionMode() {
+            if (!isNarrowMobile()) return;
+            fileSelectionMode = !fileSelectionMode;
+            if (!fileSelectionMode) selectedFileMap = {};
+            updateSelectionBar();
+            refreshFileListSoft();
+        }
+
+        function clearFileSelection() {
+            selectedFileMap = {};
+            document.querySelectorAll('#fileListContent .file-select-cb').forEach(function (cb) { cb.checked = false; });
+            document.querySelectorAll('#fileListContent .file-item-selected').forEach(function (r) { r.classList.remove('file-item-selected'); });
+            updateSelectionBar();
+        }
+
+        function selectAllVisibleFiles() {
+            selectedFileMap = {};
+            document.querySelectorAll('#fileListContent .file-item:not(.file-item-dir)').forEach(function (row) {
+                var enc = row.getAttribute('data-fid') || '';
+                if (!enc) return;
+                var id = decodeURIComponent(enc);
+                var ne = row.getAttribute('data-fname') || '';
+                selectedFileMap[id] = ne ? decodeURIComponent(ne) : id;
+                var cb = row.querySelector('.file-select-cb');
+                if (cb) cb.checked = true;
+                row.classList.add('file-item-selected');
+            });
+            updateSelectionBar();
+        }
+
+        function batchDownloadSelected() {
+            var ids = Object.keys(selectedFileMap);
+            if (!ids.length) {
+                showAppToast('请先选择文件', 'error');
+                return;
+            }
+            var delay = 0;
+            ids.forEach(function (id) {
+                var name = selectedFileMap[id];
+                setTimeout(function () { downloadFile(id, name); }, delay);
+                delay += 450;
+            });
+            showAppToast('已开始依次下载 ' + ids.length + ' 个文件', 'success');
+        }
+
+        function showBatchDeleteConfirm() {
+            var ids = Object.keys(selectedFileMap);
+            if (!ids.length) {
+                showAppToast('请先选择文件', 'error');
+                return;
+            }
+            pendingDeleteFileId = null;
+            pendingDeleteBatchIds = ids.slice();
+            document.getElementById('deleteModalMessage').textContent = '确定删除已选中的 ' + ids.length + ' 个文件吗？此操作不可撤销。';
+            document.getElementById('deleteModal').classList.remove('hidden');
+        }
+
         // 进入子目录（与后端 path 参数一致）
         function enterDirectory(path) {
+            fileSelectionMode = false;
+            selectedFileMap = {};
+            updateSelectionBar();
             currentPath = path || '';
             loadFileList();
         }
@@ -2053,9 +2249,11 @@
             if (dirs.length === 0 && list.length === 0) {
                 container.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><div>' + (isSearch ? '未找到匹配文件' : '暂无文件，请上传文件') + '</div></div>';
                 fileCountEl.textContent = '0 个文件';
+                updateSelectionBar();
                 return;
             }
 
+            var selOn = fileSelectionMode && isNarrowMobile();
             var html = '';
             if (!isSearch && dirs.length > 0) {
                 html += dirs.map(function (d) {
@@ -2087,7 +2285,14 @@
                 var encMime = encodeURIComponent(ftype || '');
                 var encName = encodeURIComponent(file.filename || '');
                 var nameTitle = escapeHtmlAttr(file.filename || '');
-                return '<div class="file-item" data-fid="' + encFid + '" data-mime="' + encMime + '" data-fname="' + encName + '" data-can-preview="' + (canPreview ? '1' : '0') + '">' +
+                var rawId = file.file_id || '';
+                var isSel = selOn && rawId && selectedFileMap[rawId];
+                var selCol = selOn
+                    ? '<label class="file-select-wrap" onclick="event.stopPropagation();">' +
+                      '<input type="checkbox" class="file-select-cb" data-fid="' + encFid + '"' + (isSel ? ' checked' : '') + ' aria-label="选择文件"></label>'
+                    : '';
+                return '<div class="file-item' + (isSel ? ' file-item-selected' : '') + '" data-fid="' + encFid + '" data-mime="' + encMime + '" data-fname="' + encName + '" data-can-preview="' + (canPreview ? '1' : '0') + '">' +
+                    selCol +
                     '<div class="file-icon" aria-hidden="true">' + icon + '</div>' +
                     '<div class="file-info"><div class="file-name" title="' + nameTitle + '">' + escapeHtml(file.filename) + '</div>' +
                     '<div class="file-meta"><span>' + size + '</span><span>' + date + '</span>' +
@@ -2102,6 +2307,7 @@
             }).join('');
             container.innerHTML = html;
             fileCountEl.textContent = total + ' 个文件';
+            updateSelectionBar();
         }
 
         /** 未解析但可能由后台异步变为已解析的类型（与可触发 AI 解析的图片一致）；.py 等不应触发列表轮询 */
@@ -2403,6 +2609,9 @@
             document.getElementById('searchInput').value = '';
             document.getElementById('cancelSearchBtn').classList.add('hidden');
             isSearchView = false;
+            fileSelectionMode = false;
+            selectedFileMap = {};
+            updateSelectionBar();
             loadFileList();
         }
 
@@ -2421,6 +2630,9 @@
                 return;
             }
             isSearchView = true;
+            fileSelectionMode = false;
+            selectedFileMap = {};
+            updateSelectionBar();
             stopFileListPolling();
             updateBreadcrumb();
             document.getElementById('cancelSearchBtn').classList.remove('hidden');
@@ -2494,13 +2706,56 @@
         }
 
         function showDeleteConfirm(fileId, filename) {
+            pendingDeleteBatchIds = null;
             pendingDeleteFileId = fileId;
             document.getElementById('deleteModalMessage').textContent = `确定要删除文件 "${filename}" 吗？此操作不可撤销。`;
             document.getElementById('deleteModal').classList.remove('hidden');
         }
 
         function confirmDelete() {
-            if (!pendingDeleteFileId || deleteRequestInFlight) return;
+            if (deleteRequestInFlight) return;
+            if (pendingDeleteBatchIds && pendingDeleteBatchIds.length) {
+                var batch = pendingDeleteBatchIds.slice();
+                pendingDeleteBatchIds = null;
+                deleteRequestInFlight = true;
+                var deleteBtns = document.querySelectorAll('#deleteModal .modal-buttons .btn');
+                deleteBtns.forEach(function (b) { b.disabled = true; });
+                function step() {
+                    if (!batch.length) {
+                        deleteRequestInFlight = false;
+                        deleteBtns.forEach(function (b) { b.disabled = false; });
+                        cancelDelete();
+                        fileSelectionMode = false;
+                        selectedFileMap = {};
+                        updateSelectionBar();
+                        refreshFileListSoft();
+                        showAppToast('已删除所选文件', 'success');
+                        return;
+                    }
+                    var fid = batch.shift();
+                    API.files.delete(fid, currentToken).then(function (res) {
+                        if (!res.ok) {
+                            deleteRequestInFlight = false;
+                            deleteBtns.forEach(function (b) { b.disabled = false; });
+                            if (res.status === 401) handleSessionExpired();
+                            else showAlert(res.error || '删除失败', 'error');
+                            cancelDelete();
+                            refreshFileListSoft();
+                            return;
+                        }
+                        step();
+                    }).catch(function (err) {
+                        deleteRequestInFlight = false;
+                        deleteBtns.forEach(function (b) { b.disabled = false; });
+                        showAlert(err && err.message ? err.message : '删除失败', 'error');
+                        cancelDelete();
+                        refreshFileListSoft();
+                    });
+                }
+                step();
+                return;
+            }
+            if (!pendingDeleteFileId) return;
             deleteRequestInFlight = true;
             var deleteBtns = document.querySelectorAll('#deleteModal .modal-buttons .btn');
             deleteBtns.forEach(function (b) { b.disabled = true; });
@@ -2525,6 +2780,7 @@
 
         function cancelDelete() {
             pendingDeleteFileId = null;
+            pendingDeleteBatchIds = null;
             deleteRequestInFlight = false;
             document.getElementById('deleteModal').classList.add('hidden');
             document.querySelectorAll('#deleteModal .modal-buttons .btn').forEach(function (b) { b.disabled = false; });
