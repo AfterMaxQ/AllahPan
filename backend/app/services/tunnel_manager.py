@@ -630,15 +630,52 @@ class TunnelManager:
         else:
             logger.error("已达到最大重连次数或自动重连已禁用")
     
+    def _is_cloudflared_process_running(self) -> bool:
+        """
+        检测系统中是否有 cloudflared 进程在运行（可能由本管理器外的进程启动，如桌面端或手动）。
+        用于在内部状态为 stopped 时仍能正确报告「运行中」。
+        """
+        try:
+            system = platform.system()
+            if system == "Windows":
+                out = subprocess.run(
+                    ["tasklist", "/FI", "IMAGENAME eq cloudflared.exe", "/NH"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                return out.returncode == 0 and "cloudflared.exe" in (out.stdout or "")
+            # macOS / Linux：先尝试 pgrep，再回退到 ps
+            out = subprocess.run(
+                ["pgrep", "-x", "cloudflared"],
+                capture_output=True,
+                timeout=5,
+            )
+            if out.returncode == 0:
+                return True
+            out = subprocess.run(
+                ["ps", "-A", "-o", "comm="],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                encoding="utf-8",
+                errors="replace",
+            )
+            return "cloudflared" in (out.stdout or "")
+        except Exception as e:
+            logger.debug(f"检测 cloudflared 进程时出错: {e}")
+            return False
+
     def get_status_info(self) -> Dict[str, Any]:
         """
         获取详细状态信息。
-        
-        返回:
-            dict: 包含完整状态信息的字典
+        若本管理器未启动进程但检测到系统中有 cloudflared 在运行（如由桌面端或手动启动），
+        则返回 status=running，避免前端误显示为 stopped。
         """
         with self._status_lock:
-            return {
+            info = {
                 "status": self._status.value,
                 "is_running": self.is_running,
                 "uptime": self.uptime,
@@ -651,18 +688,33 @@ class TunnelManager:
                 "process_pid": self._process.pid if self._process else None,
                 "error": self._error_message,
             }
+        # 未持有锁时检测外部进程，避免 subprocess 阻塞
+        if info["status"] == "stopped" and info["token_configured"] and self._is_cloudflared_process_running():
+            logger.info("检测到 cloudflared 进程在运行，将状态报告为 running")
+            info["status"] = "running"
+            info["is_running"] = True
+            if not info.get("connection_url") and (self.domain or info.get("domain")):
+                d = info.get("domain") or self.domain
+                info["connection_url"] = f"https://{d}" if d else None
+                info["domain"] = d
+        return info
     
     def get_connection_info(self) -> Dict[str, Any]:
         """
         获取连接信息。
-        
-        返回:
-            dict: 连接信息
+        若本管理器未启动进程但检测到系统中有 cloudflared 在运行，则返回 status=running 及基于域名的 url。
         """
+        status = self.status.value
+        domain = self.connection_domain
+        url = self.connection_url
+        if status == "stopped" and self.tunnel_token and self._is_cloudflared_process_running():
+            status = "running"
+            if not url and domain:
+                url = f"https://{domain}"
         return {
-            "domain": self.connection_domain,
-            "url": self.connection_url,
-            "status": self.status.value,
+            "domain": domain,
+            "url": url,
+            "status": status,
             "uptime": self.uptime,
         }
     

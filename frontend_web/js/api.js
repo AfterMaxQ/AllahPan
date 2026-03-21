@@ -11,10 +11,8 @@
   function getBaseUrl() {
     if (global.ALLAH_PAN_API_BASE) return global.ALLAH_PAN_API_BASE;
     var origin = global.location && global.location.origin;
-    // 仅当页面与后端同源（例如后端托管了前端）时用 origin；否则前端在 3000/静态页时请求发往后端 8000
-    if (origin && (origin === 'http://localhost:8000' || origin === 'http://127.0.0.1:8000')) {
-      return origin + '/api/v1';
-    }
+    // 与后端同源（后端托管前端）：用当前页面的 origin，这样本地打开用 localhost:8000，远程用 https://allahpan.cn
+    if (origin) return origin + '/api/v1';
     return 'http://localhost:8000/api/v1';
   }
 
@@ -175,6 +173,14 @@
         var cd = res.headers.get('Content-Disposition');
         if (cd && /filename[*]?=(?:UTF-8'')?([^;\n]+)/i.test(cd)) {
           name = RegExp.$1.trim().replace(/^["']|["']$/g, '');
+          // 服务端可能对中文等做 URL 编码（%xx），需解码后保存为正确文件名
+          try {
+            if (name && name.indexOf('%') !== -1) {
+              name = decodeURIComponent(name);
+            }
+          } catch (e) {
+            /* 解码失败则保留原值 */
+          }
         }
         if (!name) name = fileId;
         return { ok: true, blob: blob, filename: name };
@@ -218,8 +224,21 @@
   }
 
   /**
+   * PATCH /files/{file_id}/rename
+   * body: { filename: string }
+   * 响应: FileMetadataResponse
+   */
+  function filesRename(fileId, filename, token) {
+    return request('files/' + encodeURIComponent(fileId) + '/rename', {
+      method: 'PATCH',
+      body: JSON.stringify({ filename: filename }),
+      token: token,
+    });
+  }
+
+  /**
    * DELETE /files/{file_id}
-   * 响应: 204 No Content（当前后端返回 405 禁用）
+   * 响应: { success: boolean, file_id: string, message: string }
    */
   function filesDelete(fileId, token) {
     return request('files/' + encodeURIComponent(fileId), { method: 'DELETE', token: token });
@@ -385,14 +404,17 @@
 
   /**
    * POST /ai/search
-   * 请求: SearchRequest { query, limit? } 默认 limit=20
+   * 请求: SearchRequest { query, limit?, search_mode? } search_mode: filename | vector | mixed
    * 响应: SearchResponse { results: SearchResult[], total, mode }
    */
-  function aiSearch(query, limit, token) {
+  function aiSearch(query, limit, token, searchMode) {
+    var body = { query: query, limit: limit == null ? 20 : limit };
+    if (searchMode && searchMode !== 'mixed') body.search_mode = searchMode;
     return request('ai/search', {
       method: 'POST',
-      body: JSON.stringify({ query: query, limit: limit == null ? 20 : limit }),
+      body: JSON.stringify(body),
       token: token,
+      timeoutMs: 90000,
     });
   }
 
@@ -502,6 +524,7 @@
       get: filesGet,
       download: filesDownload,
       preview: filesPreview,
+      rename: filesRename,
       delete: filesDelete,
       upload: filesUpload,
       uploadResumable: filesUploadResumable,

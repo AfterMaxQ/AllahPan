@@ -24,7 +24,7 @@ VERSION = "1.0.0"
 BUILD = "1"
 AUTHOR = "AllahPan Team"
 
-PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+PROJECT_ROOT = Path(SPECPATH)
 
 BACKEND_DIR = PROJECT_ROOT / "backend"
 FRONTEND_DIR = PROJECT_ROOT / "frontend_desktop"
@@ -47,7 +47,7 @@ jose_hidden = [
     "jose",
     "jose.exceptions",
     "jose.backends",
-    "jose.backends.crypt",
+    "jose.backends.cryptography_backend",
     "cryptography.x509",
     "cryptography.hazmat.primitives",
     "cryptography.hazmat.backends",
@@ -194,6 +194,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(BACKEND_DIR / "app"), "backend/app"),
+        (str(BACKEND_DIR / "ollama"), "backend/ollama"),
         (str(FRONTEND_DIR), "frontend_desktop"),
         (str(FRONTEND_DIR / "theme"), "frontend_desktop/theme"),
     ],

@@ -49,9 +49,11 @@ class SearchRequest(BaseModel):
     属性:
         query: 搜索查询关键字（文件名匹配）
         limit: 返回结果数量限制，默认为20
+        search_mode: 搜索模式，filename=仅文件名，vector=仅语义/图片，mixed=混合（默认）
     """
     query: str
     limit: int = 20
+    search_mode: str = "mixed"  # "filename" | "vector" | "mixed"
 
 
 class SearchResult(BaseModel):
@@ -64,12 +66,14 @@ class SearchResult(BaseModel):
         filetype: 文件类型
         is_ai_parsed: 是否已AI解析（用于语义搜索）
         size: 文件大小（字节）
+        upload_time: 上传时间（可选，供前端展示）
     """
     file_id: str
     filename: str
     filetype: str
     is_ai_parsed: bool
     size: int
+    upload_time: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
@@ -174,23 +178,28 @@ async def search_files(
             )
 
         results_dict = {}
+        mode_param = (request.search_mode or "mixed").strip().lower()
+        if mode_param not in ("filename", "vector", "mixed"):
+            mode_param = "mixed"
         search_mode = "filename"
 
-        filename_results = file_repo.search_files_by_filename(request.query)
-        for file_meta in filename_results:
-            results_dict[file_meta.file_id] = {
-                "file_id": file_meta.file_id,
-                "filename": file_meta.filename,
-                "filetype": file_meta.filetype,
-                "is_ai_parsed": file_meta.is_ai_parsed,
-                "size": file_meta.size,
-            }
+        # 按文件名搜索（文件名/字符搜索）
+        if mode_param in ("filename", "mixed"):
+            filename_results = file_repo.search_files_by_filename(request.query)
+            for file_meta in filename_results:
+                results_dict[file_meta.file_id] = {
+                    "file_id": file_meta.file_id,
+                    "filename": file_meta.filename,
+                    "filetype": file_meta.filetype,
+                    "is_ai_parsed": file_meta.is_ai_parsed,
+                    "size": file_meta.size,
+                    "upload_time": getattr(file_meta, "upload_time", None),
+                }
+            if filename_results:
+                search_mode = "filename" if mode_param == "filename" else "mixed"
 
-        if len(results_dict) == 0:
-            logger.info("文件名搜索无匹配，直接返回空结果（跳过向量搜索）")
-            return SearchResponse(results=[], total=0, mode="filename")
-
-        if len(results_dict) < request.limit:
+        # 仅当需要向量时且文件名未达上限时做语义/图片搜索
+        if mode_param == "vector" or (mode_param == "mixed" and len(results_dict) < request.limit):
             if await ollama.is_available():
                 try:
                     query_vector = await ollama.embed_text(request.query)
@@ -214,12 +223,22 @@ async def search_files(
                                 "filetype": metadata.get("filetype", "unknown"),
                                 "is_ai_parsed": True,
                                 "size": metadata.get("file_size", 0),
+                                "upload_time": metadata.get("upload_time"),
                             }
-                    search_mode = "mixed"
+                        if mode_param == "vector":
+                            search_mode = "vector"
+                        else:
+                            search_mode = "mixed"
                 except Exception as e:
-                    logger.warning(f"向量搜索失败，使用文件名搜索结果: {e}")
-            else:
-                logger.info("Ollama服务不可用，使用文件名搜索")
+                    logger.warning(f"向量搜索失败: {e}")
+                    if mode_param == "vector":
+                        results_dict.clear()
+            elif mode_param == "vector":
+                results_dict.clear()
+
+        if len(results_dict) == 0 and mode_param != "mixed":
+            logger.info("当前模式无匹配，返回空结果")
+            return SearchResponse(results=[], total=0, mode=mode_param)
 
         results = list(results_dict.values())[:request.limit]
 

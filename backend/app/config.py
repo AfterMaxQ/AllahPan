@@ -113,11 +113,13 @@ MAX_UPLOAD_SIZE = int(os.environ.get("ALLAHPAN_MAX_UPLOAD_MB", "100")) * 1024 * 
 
 # ==================== CORS配置 ====================
 
-# 允许的前端来源，开发环境可用通配符，生产环境应配置具体域名
-CORS_ALLOWED_ORIGINS = os.environ.get(
+# 允许的前端来源；远程通过 Tunnel 访问时需包含公网域名（如 https://allahpan.cn）
+CORS_ORIGINS_STR = os.environ.get(
     "ALLAHPAN_CORS_ORIGINS",
-    "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173"
-).split(",")
+    "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173,"
+    "https://allahpan.cn,http://allahpan.cn"
+)
+CORS_ALLOWED_ORIGINS = [o.strip() for o in CORS_ORIGINS_STR.split(",") if o.strip()]
 
 
 # ==================== 服务配置 ====================

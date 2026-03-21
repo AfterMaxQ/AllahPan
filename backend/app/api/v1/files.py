@@ -937,18 +937,121 @@ def preview_file(
     )
 
 
-@router.delete("/{file_id}")
-def delete_file(
+class RenameFileRequest(BaseModel):
+    """重命名请求体。"""
+    filename: str
+
+
+@router.patch("/{file_id}/rename")
+def rename_file(
     file_id: str,
+    body: RenameFileRequest,
+    file_repo: "FileRepository" = Depends(get_file_repo),
     current_user: AuthUser = Depends(get_current_user),
 ):
     """
-    删除文件接口（当前禁用）。
+    重命名文件接口。
 
-    系统设计为无用户侧删除功能，此接口固定返回 405，
-    与桌面前端/Web 前端的“不支持删除”策略一致。
+    仅修改显示文件名及磁盘上的文件名，不改变 file_id。
+    新文件名不得包含路径分隔符，且需在存储目录内。
     """
-    raise HTTPException(
-        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
-        detail="系统不支持删除文件",
+    logger.info(f"文件重命名请求，文件ID: {file_id}, 新名: {body.filename}, 用户: {current_user.username}")
+    new_name = (body.filename or "").strip().replace("\\", "/")
+    if not new_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件名为空")
+    if "/" in new_name or new_name in (".", ".."):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件名不能包含路径")
+
+    file_metadata = file_repo.get_file_metadata_by_id(file_id)
+    if file_metadata is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件不存在")
+
+    old_path = Path(file_metadata.filepath)
+    if not old_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文件已丢失")
+
+    new_path = old_path.parent / new_name
+    try:
+        new_path.resolve().relative_to(STORAGE_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="非法路径")
+    if new_path.exists() and new_path != old_path:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="目标文件名已存在")
+
+    try:
+        old_path.rename(new_path)
+    except OSError as e:
+        logger.error(f"重命名物理文件失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="重命名失败",
+        )
+
+    file_metadata.filename = new_name
+    file_metadata.filepath = str(new_path.resolve())
+    if not file_repo.update_file_metadata(file_metadata):
+        try:
+            new_path.rename(old_path)
+        except OSError:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="更新元数据失败",
+        )
+
+    logger.info(f"文件重命名成功，file_id: {file_id}, 新名: {new_name}")
+    return FileMetadataResponse(
+        file_id=file_metadata.file_id,
+        filename=file_metadata.filename,
+        filepath=file_metadata.filepath,
+        size=file_metadata.size,
+        filetype=file_metadata.filetype,
+        is_ai_parsed=file_metadata.is_ai_parsed,
+        upload_time=file_metadata.upload_time,
     )
+
+
+@router.delete("/{file_id}")
+def delete_file(
+    file_id: str,
+    file_repo: "FileRepository" = Depends(get_file_repo),
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """
+    删除文件接口。
+
+    删除指定文件，级联删除文件元数据（SQLite）和语义向量（ChromaDB）。
+    文件本身由 DirectoryWatcher 的异步任务在实际存储层删除。
+
+    参数:
+        file_id: 要删除的文件唯一标识符
+        file_repo: 文件仓库（通过依赖注入获取）
+        current_user: 当前认证用户（通过依赖注入获取）
+
+    返回:
+        dict: 包含操作结果的响应对象
+
+    异常:
+        HTTPException: 当文件不存在时抛出404错误
+    """
+    logger.info(f"删除文件请求，文件ID: {file_id}")
+
+    file_metadata = file_repo.get_file_metadata_by_id(file_id)
+    if file_metadata is None:
+        logger.warning(f"文件不存在，文件ID: {file_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文件不存在",
+        )
+
+    success = file_repo.delete_file_metadata(file_id)
+
+    if not success:
+        logger.error(f"文件删除失败，文件ID: {file_id}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="文件删除失败",
+        )
+
+    logger.info(f"文件删除成功，文件ID: {file_id}")
+    return {"success": True, "file_id": file_id, "message": "文件删除成功"}

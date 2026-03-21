@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- 可选：由后端或构建注入 API 根地址，如 <meta name="allahpan-api-base" content="https://api.example.com/api/v1"> -->
     <meta name="allahpan-api-base" content="">
-    <title>AllahPan - 家庭私有网盘</title>
+    <title>AllahPan - 私有网盘</title>
     <script>
         (function () {
             var meta = document.querySelector('meta[name="allahpan-api-base"]');
@@ -188,6 +188,31 @@
             padding: 20px 30px;
             margin-bottom: 20px;
             box-shadow: var(--shadow);
+        }
+
+        .search-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .search-tab {
+            padding: 8px 16px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background: var(--bg-color);
+            color: var(--text-secondary);
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .search-tab:hover {
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+        }
+        .search-tab.active {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+            color: white;
         }
 
         .search-input-wrapper {
@@ -586,13 +611,6 @@
         }
         .loading-state .loading { margin-right: 8px; vertical-align: middle; }
 
-        .tunnel-panel { margin-bottom: 20px; }
-        .tunnel-panel .status-row { margin-bottom: 10px; }
-        .tunnel-panel .form-input { margin-top: 4px; }
-        .tunnel-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
-        .tunnel-url-link { word-break: break-all; color: var(--primary-color); }
-        .tunnel-url-link:hover { text-decoration: underline; }
-
         @media (max-width: 768px) {
             .auth-container {
                 margin: 20px;
@@ -623,9 +641,169 @@
                 flex: 1;
             }
         }
+
+        .success-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.95) 0%, rgba(6, 95, 70, 0.98) 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s ease;
+        }
+
+        .success-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .success-emoji {
+            font-size: 120px;
+            animation: successPop 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+            filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.3));
+        }
+
+        .success-text {
+            font-size: 32px;
+            font-weight: 700;
+            color: white;
+            margin-top: 20px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            animation: successTextFade 0.5s ease 0.3s forwards;
+            opacity: 0;
+        }
+
+        .success-subtext {
+            font-size: 18px;
+            color: rgba(255, 255, 255, 0.9);
+            margin-top: 10px;
+            animation: successTextFade 0.5s ease 0.5s forwards;
+            opacity: 0;
+        }
+
+        @keyframes successPop {
+            0% {
+                transform: scale(0);
+                opacity: 0;
+            }
+            50% {
+                transform: scale(1.3);
+            }
+            70% {
+                transform: scale(0.9);
+            }
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        @keyframes successTextFade {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .auth-container.fade-out {
+            animation: fadeOut 0.5s ease forwards;
+        }
+
+        @keyframes fadeOut {
+            from {
+                opacity: 1;
+                transform: translateY(0);
+            }
+            to {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+        }
+
+        .main-app.fade-in {
+            animation: fadeInUp 0.6s ease forwards;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .alert.shake {
+            animation: shake 0.6s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+        }
+
+        @keyframes shake {
+            0%, 100% {
+                transform: translateX(0);
+            }
+            10%, 30%, 50%, 70%, 90% {
+                transform: translateX(-8px);
+            }
+            20%, 40%, 60%, 80% {
+                transform: translateX(8px);
+            }
+        }
+
+        .failure-emoji {
+            font-size: 48px;
+            display: block;
+            margin-bottom: 10px;
+            animation: wobble 0.6s ease-in-out;
+        }
+
+        @keyframes wobble {
+            0%, 100% {
+                transform: rotate(0deg);
+            }
+            25% {
+                transform: rotate(-15deg);
+            }
+            75% {
+                transform: rotate(15deg);
+            }
+        }
+
+        .alert.show {
+            display: block;
+            animation: fadeInAlert 0.3s ease;
+        }
+
+        @keyframes fadeInAlert {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
     </style>
 </head>
 <body>
+    <div id="successOverlay" class="success-overlay">
+        <div class="success-emoji">🎉</div>
+        <div class="success-text">登录成功！</div>
+        <div class="success-subtext">正在进入 AllahPan...</div>
+    </div>
     <div class="container">
         <div id="authContainer" class="auth-container">
             <h1 class="auth-title" id="authTitle">登录</h1>
@@ -689,8 +867,23 @@
                 </div>
             </div>
 
+            <div id="renameModal" class="modal-overlay hidden">
+                <div class="modal-content">
+                    <div class="modal-icon">✏️</div>
+                    <div class="modal-title">重命名文件</div>
+                    <div class="form-group" style="margin:16px 0;">
+                        <label class="form-label" for="renameInput">新文件名</label>
+                        <input type="text" id="renameInput" class="form-input" placeholder="输入新文件名">
+                    </div>
+                    <div class="modal-buttons">
+                        <button class="btn btn-secondary" onclick="cancelRename()">取消</button>
+                        <button class="btn btn-primary" onclick="confirmRename()">确定</button>
+                    </div>
+                </div>
+            </div>
+
             <div class="header">
-                <div class="header-title">📁 AllahPan 家庭私有网盘</div>
+                <div class="header-title">📁 AllahPan 私有网盘</div>
                 <div class="user-info">
                     <span class="username" id="displayUsername"></span>
                     <button class="btn btn-secondary btn-sm" onclick="logout()">退出登录</button>
@@ -706,29 +899,6 @@
                 </div>
             </div>
 
-            <div id="tunnelPanel" class="status-panel tunnel-panel">
-                <div class="status-panel-title" id="tunnelPanelToggle" onclick="toggleTunnelPanel()">▼ 远程访问</div>
-                <div class="status-panel-body" id="tunnelPanelBody">
-                    <div class="status-row">状态: <span id="tunnelStatusText">—</span></div>
-                    <div class="status-row hidden" id="tunnelUrlRow">公网地址: <a id="tunnelUrlLink" href="#" target="_blank" rel="noopener" class="tunnel-url-link">—</a> <button type="button" class="btn btn-secondary btn-sm" onclick="copyTunnelUrl()">复制</button></div>
-                    <div class="status-row">
-                        <label class="form-label">Tunnel Token（Cloudflare 隧道令牌）</label>
-                        <input type="password" id="tunnelTokenInput" class="form-input" placeholder="粘贴 Token 后点击保存配置">
-                    </div>
-                    <div class="status-row">
-                        <label class="form-label">自定义域名（可选）</label>
-                        <input type="text" id="tunnelDomainInput" class="form-input" placeholder="例如 your-domain.com">
-                    </div>
-                    <div class="tunnel-actions">
-                        <button type="button" class="btn btn-primary btn-sm" id="tunnelSaveBtn" onclick="saveTunnelConfig()">保存配置</button>
-                        <button type="button" class="btn btn-primary btn-sm" id="tunnelStartBtn" onclick="startTunnel()">启动远程访问</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="tunnelStopBtn" onclick="stopTunnel()">停止远程访问</button>
-                        <button type="button" class="btn btn-secondary btn-sm" id="tunnelClearBtn" onclick="clearTunnelConfig()">清除配置</button>
-                    </div>
-                    <div class="status-row" style="margin-top:8px;font-size:12px;color:var(--text-secondary);">出门前请确保家里主机已开机、AllahPan 已运行，并在此处启动远程访问；手机浏览器访问上方公网地址即可使用网盘。</div>
-                </div>
-            </div>
-
             <div id="previewOverlay" class="preview-overlay hidden" onclick="closePreview(event)">
                 <button type="button" class="preview-close" onclick="closePreview()">关闭</button>
                 <img id="previewImage" class="preview-content hidden" alt="预览" onclick="event.stopPropagation()">
@@ -738,6 +908,10 @@
             </div>
 
             <div class="search-box">
+                <div class="search-tabs">
+                    <button type="button" class="search-tab active" id="searchTabFilename" data-mode="filename" onclick="setSearchMode('filename')">按文件名</button>
+                    <button type="button" class="search-tab" id="searchTabVector" data-mode="vector" onclick="setSearchMode('vector')">图片/语义</button>
+                </div>
                 <div class="search-input-wrapper">
                     <input
                         type="text"
@@ -790,6 +964,7 @@
         let currentPath = '';  // 当前目录路径，与后端 files/list?path= 一致
         let isSearchView = false;  // 当前是否为搜索结果（不显示目录、用 results 渲染）
         let sessionExpiredHandled = false;  // 避免 401 重复弹窗
+        let currentSearchMode = 'filename';  // 搜索模式：filename 按文件名，vector 图片/语义
 
         // 系统状态轮询
         let statusPanelInterval = null;
@@ -799,8 +974,10 @@
         let fileListPollingInterval = null;
         let isPollingFileList = false;
         let fileListPollingAttempts = 0;
-        const POLLING_INTERVAL = 2000;
-        const POLLING_MAX_ATTEMPTS = 150;  // 约 5 分钟
+        const POLLING_INTERVAL = 5000;   // 5 秒一次，避免频繁请求
+        const POLLING_MAX_ATTEMPTS = 150; // 约 12 分钟
+        let lastLoadFileListOnVisible = 0; // 用于 visibilitychange 节流
+        const VISIBLE_RELOAD_THROTTLE_MS = 5000; // 页面重新可见后 5 秒内不重复拉列表
 
         function setToken(token) {
             currentToken = token;
@@ -825,8 +1002,12 @@
                     }
                 } else {
                     if (currentToken) {
-                        Logger.info('页面恢复，刷新列表');
-                        loadFileList();
+                        var now = Date.now();
+                        if (now - lastLoadFileListOnVisible >= VISIBLE_RELOAD_THROTTLE_MS) {
+                            lastLoadFileListOnVisible = now;
+                            Logger.info('页面恢复，刷新列表');
+                            loadFileList();
+                        }
                     }
                 }
             });
@@ -912,6 +1093,42 @@
         }
 
         // 认证表单提交
+        function showLoginSuccess(username, callback) {
+            var successOverlay = document.getElementById('successOverlay');
+            var authContainer = document.getElementById('authContainer');
+            var mainApp = document.getElementById('mainApp');
+
+            successOverlay.classList.add('active');
+            authContainer.classList.add('fade-out');
+
+            setTimeout(function() {
+                authContainer.style.display = 'none';
+                authContainer.classList.remove('fade-out');
+                mainApp.classList.add('active', 'fade-in');
+                successOverlay.classList.remove('active');
+
+                setTimeout(function() {
+                    mainApp.classList.remove('fade-in');
+                    if (callback) callback();
+                }, 600);
+            }, 2200);
+        }
+
+        function showLoginFailure(message) {
+            var alertBox = document.getElementById('alertBox');
+            alertBox.innerHTML = '<span class="failure-emoji">😢</span>' + message;
+            alertBox.className = 'alert alert-error show shake';
+            alertBox.style.display = 'block';
+
+            setTimeout(function() {
+                alertBox.classList.remove('shake');
+            }, 600);
+
+            setTimeout(function() {
+                alertBox.style.display = 'none';
+            }, 4000);
+        }
+
         document.getElementById('authForm').addEventListener('submit', function (e) {
             e.preventDefault();
             var username = document.getElementById('username').value;
@@ -925,42 +1142,53 @@
             if (isLoginMode) {
                 API.auth.login(username, password).then(function (res) {
                     if (!res.ok) {
-                        showAlert(res.error || '登录失败');
+                        showLoginFailure(res.error || '登录失败');
                         authBtn.disabled = false;
                         authBtn.innerHTML = '登录';
                         return;
                     }
                     var data = res.data;
                     setToken(data.access_token);
-                    document.getElementById('displayUsername').textContent = data.user ? data.user.username : username;
-                    showAlert('登录成功！', 'success');
-                    setTimeout(showMainApp, 500);
+                    var displayName = data.user ? data.user.username : username;
+                    document.getElementById('displayUsername').textContent = displayName;
+                    authBtn.disabled = false;
+                    authBtn.innerHTML = '登录';
+                    showLoginSuccess(displayName, function() {
+                        startStatusPolling();
+                        loadFileList();
+                    });
                 });
             } else {
                 if (!email) {
-                    showAlert('请输入邮箱地址');
+                    showLoginFailure('请输入邮箱地址');
                     authBtn.disabled = false;
                     authBtn.innerHTML = '注册';
                     return;
                 }
                 var emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                 if (!emailRegex.test(email)) {
-                    showAlert('请输入有效的邮箱地址');
+                    showLoginFailure('请输入有效的邮箱地址');
                     authBtn.disabled = false;
                     authBtn.innerHTML = '注册';
                     return;
                 }
                 API.auth.register(username, password, email).then(function (res) {
                     if (!res.ok) {
-                        showAlert(res.error || '注册失败');
+                        showLoginFailure(res.error || '注册失败');
                         authBtn.disabled = false;
                         authBtn.innerHTML = '注册';
                         return;
                     }
-                    showAlert('注册成功！请登录', 'success');
                     authBtn.disabled = false;
                     authBtn.innerHTML = '注册';
-                    setTimeout(toggleAuthMode, 1000);
+                    var alertBox = document.getElementById('alertBox');
+                    alertBox.innerHTML = '<span class="success-emoji" style="font-size:48px;display:block;text-align:center;">✅</span>注册成功！请登录';
+                    alertBox.className = 'alert alert-success show';
+                    alertBox.style.display = 'block';
+                    setTimeout(function() {
+                        alertBox.style.display = 'none';
+                        toggleAuthMode();
+                    }, 1500);
                 });
             }
         });
@@ -1049,169 +1277,28 @@
             }
         }
 
-        // ---------- 远程访问 Tunnel ----------
-        function toggleTunnelPanel() {
-            var body = document.getElementById('tunnelPanelBody');
-            var toggle = document.getElementById('tunnelPanelToggle');
-            if (body.classList.contains('hidden')) {
-                body.classList.remove('hidden');
-                toggle.textContent = '▼ 远程访问';
-                refreshTunnelUI();
-            } else {
-                body.classList.add('hidden');
-                toggle.textContent = '▶ 远程访问';
-            }
-        }
-        function refreshTunnelUI() {
-            if (!currentToken) return;
-            API.tunnel.status(currentToken).then(function (res) {
-                if (!res.ok) {
-                    if (res.status === 401) handleSessionExpired();
-                    else {
-                        document.getElementById('tunnelStatusText').textContent = '获取状态失败';
-                        Logger.error('Tunnel 状态请求失败', res.error);
-                    }
-                    return;
-                }
-                var d = res.data;
-                var statusText = (d && d.status) || '—';
-                var isRunning = d && d.is_running;
-                var tokenConfigured = d && d.token_configured;
-                var err = (d && d.error) || '';
-                document.getElementById('tunnelStatusText').textContent = statusText + (err ? '（' + err + '）' : '');
-                var urlRow = document.getElementById('tunnelUrlRow');
-                var urlLink = document.getElementById('tunnelUrlLink');
-                if (isRunning && (d.connection_url || d.domain)) {
-                    var url = d.connection_url || ('https://' + (d.domain || ''));
-                    urlRow.classList.remove('hidden');
-                    urlLink.href = url;
-                    urlLink.textContent = url;
-                } else {
-                    urlRow.classList.add('hidden');
-                }
-                document.getElementById('tunnelStartBtn').disabled = !tokenConfigured || isRunning;
-                document.getElementById('tunnelStopBtn').disabled = !isRunning;
-            });
-        }
-        function copyTunnelUrl() {
-            var a = document.getElementById('tunnelUrlLink');
-            var url = a && a.href && a.href !== '#' ? a.href : '';
-            if (!url) { showAlert('暂无公网地址', 'error'); return; }
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(url).then(function () {
-                    showAlert('已复制到剪贴板', 'success');
-                }).catch(function () { fallbackCopy(url); });
-            } else { fallbackCopy(url); }
-            function fallbackCopy(str) {
-                var ta = document.createElement('textarea');
-                ta.value = str;
-                ta.style.position = 'fixed';
-                ta.style.opacity = '0';
-                document.body.appendChild(ta);
-                ta.select();
-                try {
-                    document.execCommand('copy');
-                    showAlert('已复制到剪贴板', 'success');
-                } catch (e) {
-                    showAlert('复制失败，请手动复制链接', 'error');
-                }
-                document.body.removeChild(ta);
-            }
-        }
-        function saveTunnelConfig() {
-            var tokenInput = document.getElementById('tunnelTokenInput');
-            var domainInput = document.getElementById('tunnelDomainInput');
-            var token = (tokenInput && tokenInput.value || '').trim();
-            if (!token) {
-                showAlert('请先粘贴 Tunnel Token', 'error');
-                return;
-            }
-            var btn = document.getElementById('tunnelSaveBtn');
-            btn.disabled = true;
-            btn.textContent = '保存中...';
-            API.tunnel.config(currentToken, { token: token, domain: (domainInput && domainInput.value || '').trim() || undefined }, currentToken).then(function (res) {
-                btn.disabled = false;
-                btn.textContent = '保存配置';
-                if (!res.ok) {
-                    showAlert(res.error || '保存配置失败', 'error');
-                    Logger.error('Tunnel 配置失败', res.error);
-                    return;
-                }
-                showAlert('配置已保存，可点击「启动远程访问」', 'success');
-                refreshTunnelUI();
-            }).catch(function (err) {
-                btn.disabled = false;
-                btn.textContent = '保存配置';
-                showAlert('请求失败', 'error');
-                Logger.error('Tunnel 配置异常', err);
-            });
-        }
-        function startTunnel() {
-            var btn = document.getElementById('tunnelStartBtn');
-            btn.disabled = true;
-            btn.textContent = '启动中...';
-            API.tunnel.start(currentToken).then(function (res) {
-                btn.disabled = false;
-                btn.textContent = '启动远程访问';
-                if (!res.ok) {
-                    showAlert(res.error || '启动失败', 'error');
-                    refreshTunnelUI();
-                    return;
-                }
-                showAlert('远程访问已启动', 'success');
-                refreshTunnelUI();
-            }).catch(function (err) {
-                btn.disabled = false;
-                btn.textContent = '启动远程访问';
-                showAlert('请求失败', 'error');
-                refreshTunnelUI();
-            });
-        }
-        function stopTunnel() {
-            var btn = document.getElementById('tunnelStopBtn');
-            btn.disabled = true;
-            btn.textContent = '停止中...';
-            API.tunnel.stop(currentToken).then(function (res) {
-                btn.disabled = false;
-                btn.textContent = '停止远程访问';
-                if (!res.ok) showAlert(res.error || '停止失败', 'error');
-                else showAlert('远程访问已停止', 'success');
-                refreshTunnelUI();
-            }).catch(function (err) {
-                btn.disabled = false;
-                btn.textContent = '停止远程访问';
-                showAlert('请求失败', 'error');
-                refreshTunnelUI();
-            });
-        }
-        function clearTunnelConfig() {
-            if (!confirm('确定要清除 Tunnel 配置吗？清除后需重新配置 Token 才能启动。')) return;
-            API.tunnel.clearConfig(currentToken).then(function (res) {
-                if (!res.ok) {
-                    showAlert(res.error || '清除失败', 'error');
-                    return;
-                }
-                showAlert('配置已清除', 'success');
-                document.getElementById('tunnelTokenInput').value = '';
-                document.getElementById('tunnelDomainInput').value = '';
-                refreshTunnelUI();
-            });
-        }
-
         // 显示主应用
-        function showMainApp() {
-            document.getElementById('authContainer').style.display = 'none';
-            document.getElementById('mainApp').classList.add('active');
-            if (currentToken && !document.getElementById('displayUsername').textContent) {
-                API.auth.me(currentToken).then(function (r) {
-                    if (r.ok && r.data && r.data.username) {
-                        document.getElementById('displayUsername').textContent = r.data.username;
-                    }
-                });
+        function showMainApp(skipInit) {
+            var mainApp = document.getElementById('mainApp');
+            var authContainer = document.getElementById('authContainer');
+            authContainer.style.display = 'none';
+            mainApp.classList.add('active', 'fade-in');
+
+            setTimeout(function() {
+                mainApp.classList.remove('fade-in');
+            }, 600);
+
+            if (!skipInit) {
+                if (currentToken && !document.getElementById('displayUsername').textContent) {
+                    API.auth.me(currentToken).then(function (r) {
+                        if (r.ok && r.data && r.data.username) {
+                            document.getElementById('displayUsername').textContent = r.data.username;
+                        }
+                    });
+                }
+                startStatusPolling();
+                loadFileList();
             }
-            startStatusPolling();
-            refreshTunnelUI();
-            loadFileList();
         }
         
         // 加载文件列表（与后端 GET /files/list?path= 一致）
@@ -1325,6 +1412,7 @@
                     '<div class="file-actions">' +
                     reparseBtn +
                     previewBtn +
+                    '<button class="btn btn-secondary btn-sm" onclick="showRenameModal(\'' + fid + '\', \'' + fname + '\')" title="重命名">✏️ 重命名</button>' +
                     '<button class="btn btn-primary btn-sm" onclick="downloadFile(\'' + fid + '\', \'' + (file.filename || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;') + '\')">⬇️ 下载</button>' +
                     '<button class="delete-btn" onclick="showDeleteConfirm(\'' + fid + '\', \'' + fname + '\')" title="删除文件">🗑️</button>' +
                     '</div></div>';
@@ -1442,6 +1530,7 @@
                 var name = res.filename;
                 if ((!name || looksLikeUuidFilename(name)) && displayFilename) name = displayFilename;
                 if (!name) name = fileId;
+                if (displayFilename && !looksLikeUuidFilename(displayFilename)) name = displayFilename;
                 var url = window.URL.createObjectURL(res.blob);
                 var a = document.createElement('a');
                 a.href = url;
@@ -1583,25 +1672,21 @@
             document.getElementById('fileInput').value = '';
             return;
         }
-        // 搜索：防抖 400ms，Enter 立即搜索
-        var searchDebounceTimer = null;
-        var SEARCH_DEBOUNCE_MS = 400;
-        document.getElementById('searchInput').addEventListener('input', function () {
-            if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
-            var q = (this.value || '').trim();
-            if (!q) return;
-            searchDebounceTimer = setTimeout(function () {
-                searchDebounceTimer = null;
-                runSearch(q);
-            }, SEARCH_DEBOUNCE_MS);
-        });
+        // 搜索：仅当用户点击「搜索」或按 Enter 时执行，输入过程中不自动搜索
         document.getElementById('searchInput').addEventListener('keydown', function (e) {
             if (e.key === 'Enter') {
-                if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
-                searchDebounceTimer = null;
+                e.preventDefault();
                 runSearch((this.value || '').trim());
             }
         });
+
+        // 切换搜索模式（按文件名 / 图片语义）
+        function setSearchMode(mode) {
+            currentSearchMode = mode === 'vector' ? 'vector' : 'filename';
+            document.querySelectorAll('.search-tab').forEach(function (el) {
+                el.classList.toggle('active', el.getAttribute('data-mode') === currentSearchMode);
+            });
+        }
 
         // 取消搜索，恢复文件列表
         function cancelSearch() {
@@ -1618,7 +1703,7 @@
             }
             searchFiles(q.trim());
         }
-        // 搜索（与后端 POST /ai/search 一致：SearchRequest { query, limit }, SearchResponse { results, total, mode }）
+        // 搜索（与后端 POST /ai/search 一致；结果防呆解析，避免 0 条显示异常）
         function searchFiles(query) {
             var q = (query || '').trim();
             if (!q) {
@@ -1631,8 +1716,8 @@
             document.getElementById('cancelSearchBtn').classList.remove('hidden');
             var container = document.getElementById('fileListContent');
             container.innerHTML = '<div class="loading-state"><span class="loading"></span>搜索中...</div>';
-            Logger.info('搜索', q);
-            API.ai.search(q, 20, currentToken).then(function (res) {
+            Logger.info('搜索', q, '模式:', currentSearchMode);
+            API.ai.search(q, 20, currentToken, currentSearchMode).then(function (res) {
                 if (!res.ok) {
                     if (res.status === 401) handleSessionExpired();
                     else {
@@ -1643,8 +1728,8 @@
                     return;
                 }
                 var data = res.data;
-                var results = (data && data.results) ? data.results : [];
-                var total = (data && data.total !== undefined) ? data.total : results.length;
+                var results = Array.isArray(data && data.results) ? data.results : [];
+                var total = (data && typeof data.total === 'number') ? data.total : results.length;
                 var mode = (data && data.mode) ? data.mode : '';
                 renderList([], results, true);
                 document.getElementById('fileCount').textContent = '找到 ' + total + ' 个结果' + (mode ? ' (' + mode + ')' : '');
@@ -1655,6 +1740,51 @@
         }
 
         let pendingDeleteFileId = null;
+        let pendingRenameFileId = null;
+
+        function showRenameModal(fileId, currentFilename) {
+            pendingRenameFileId = fileId;
+            var input = document.getElementById('renameInput');
+            if (input) {
+                input.value = currentFilename || '';
+                input.focus();
+            }
+            document.getElementById('renameModal').classList.remove('hidden');
+        }
+        function confirmRename() {
+            if (!pendingRenameFileId) return;
+            var input = document.getElementById('renameInput');
+            var newName = (input && input.value || '').trim();
+            if (!newName) {
+                showAlert('请输入新文件名', 'error');
+                return;
+            }
+            if (newName.indexOf('/') !== -1 || newName === '.' || newName === '..') {
+                showAlert('文件名不能包含路径', 'error');
+                return;
+            }
+            API.files.rename(pendingRenameFileId, newName, currentToken).then(function (res) {
+                if (!res.ok) {
+                    showAlert(res.error || '重命名失败', 'error');
+                    return;
+                }
+                showAlert('重命名成功', 'success');
+                cancelRename();
+                if (isSearchView) {
+                    searchFiles(document.getElementById('searchInput').value.trim());
+                } else {
+                    loadFileList();
+                }
+            }).catch(function (err) {
+                showAlert(err && err.message ? err.message : '重命名失败', 'error');
+            });
+        }
+        function cancelRename() {
+            pendingRenameFileId = null;
+            document.getElementById('renameModal').classList.add('hidden');
+            var input = document.getElementById('renameInput');
+            if (input) input.value = '';
+        }
 
         function showDeleteConfirm(fileId, filename) {
             pendingDeleteFileId = fileId;

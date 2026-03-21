@@ -181,16 +181,35 @@ class FilesAPI:
         
         return response.content
     
+    def rename_file(self, file_id: str, filename: str) -> Dict[str, Any]:
+        """
+        重命名文件。
+
+        参数:
+            file_id: 文件 ID
+            filename: 新文件名（不含路径）
+
+        返回:
+            更新后的文件元数据
+
+        异常:
+            APIError: 重命名失败时
+        """
+        return self._client.patch(
+            f"/files/{file_id}/rename",
+            json={"filename": filename},
+        )
+
     def delete_file(self, file_id: str) -> None:
         """
         删除文件。
-        
+
         注意：AllahPan 系统设计为无系统级删除功能，
         此接口仅用于清理已丢失的物理文件索引。
-        
+
         参数:
             file_id: 文件 ID
-            
+
         异常:
             APIError: 删除失败时
         """

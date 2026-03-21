@@ -101,7 +101,7 @@ pip install -r requirements.txt
 
 ### 3. 启动（二选一）
 
-**方式 A：统一启动器（推荐）**
+**方式 A：统一启动器**
 
 ```bash
 python launcher.py

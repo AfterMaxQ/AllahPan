@@ -632,6 +632,10 @@ class FileBrowser(QWidget):
         download_action.triggered.connect(lambda: self._on_download_action(selected))
         menu.addAction(download_action)
         
+        rename_action = QAction("✏️ 重命名", menu)
+        rename_action.triggered.connect(lambda: self._on_rename_action(selected))
+        menu.addAction(rename_action)
+        
         copy_link_action = QAction("🔗 复制链接", menu)
         copy_link_action.triggered.connect(lambda: self._on_copy_link_action(selected))
         menu.addAction(copy_link_action)
@@ -652,6 +656,35 @@ class FileBrowser(QWidget):
         """下载文件。"""
         if files:
             self.download_requested.emit(files)
+    
+    def _on_rename_action(self, files: List[FileItem]) -> None:
+        """重命名文件（仅支持单选且为文件，不含目录）。"""
+        if not files or len(files) != 1:
+            return
+        item = files[0]
+        if getattr(item, "is_dir", False):
+            QMessageBox.information(self, "重命名", "请选择文件进行重命名，目录暂不支持。")
+            return
+        from PySide6.QtWidgets import QInputDialog
+        new_name, ok = QInputDialog.getText(
+            self,
+            "重命名文件",
+            "新文件名：",
+            text=item.filename,
+        )
+        if not ok or not new_name or not new_name.strip():
+            return
+        new_name = new_name.strip().replace("\\", "/")
+        if "/" in new_name or new_name in (".", ".."):
+            QMessageBox.warning(self, "重命名", "文件名不能包含路径。")
+            return
+        try:
+            from api.files import FilesAPI
+            FilesAPI().rename_file(item.file_id, new_name)
+            self._show_toast("重命名成功")
+            self.refresh_requested.emit()
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "重命名失败", str(e))
     
     def _on_copy_link_action(self, files: List[FileItem]) -> None:
         """复制链接。"""

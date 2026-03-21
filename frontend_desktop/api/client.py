@@ -185,6 +185,34 @@ class APIClient:
         )
         return self._handle_response(response)
     
+    def patch(
+        self,
+        path: str,
+        json: Optional[Dict[str, Any]] = None,
+        timeout: Optional[float] = None,
+    ) -> Any:
+        """
+        发送 PATCH 请求。
+
+        参数:
+            path: API 路径
+            json: JSON 请求体
+            timeout: 超时时间（秒）
+
+        返回:
+            响应数据
+        """
+        client = self._get_client()
+        headers = self._get_auth_headers()
+        response = client.request(
+            "PATCH",
+            path,
+            json=json,
+            headers=headers,
+            timeout=timeout or self.DEFAULT_TIMEOUT,
+        )
+        return self._handle_response(response)
+
     def delete(
         self,
         path: str,
@@ -192,17 +220,17 @@ class APIClient:
     ) -> Any:
         """
         发送 DELETE 请求。
-        
+
         参数:
             path: API 路径
             timeout: 超时时间（秒）
-            
+
         返回:
             响应数据
         """
         client = self._get_client()
         headers = self._get_auth_headers()
-        
+
         response = client.delete(
             path,
             headers=headers,

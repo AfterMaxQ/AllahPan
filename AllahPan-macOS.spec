@@ -25,7 +25,7 @@ VERSION = "1.0.0"
 BUILD = "1"
 AUTHOR = "AllahPan Team"
 
-PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+PROJECT_ROOT = Path(SPECPATH)
 BACKEND_DIR = PROJECT_ROOT / "backend"
 FRONTEND_DIR = PROJECT_ROOT / "frontend_desktop"
 BUILD_DIR = PROJECT_ROOT / "build"
@@ -47,7 +47,7 @@ jose_hidden = [
     "jose",
     "jose.exceptions",
     "jose.backends",
-    "jose.backends.crypt",
+    "jose.backends.cryptography_backend",
     "cryptography.x509",
     "cryptography.hazmat.primitives",
     "cryptography.hazmat.backends",
@@ -75,7 +75,6 @@ uvicorn_hidden = [
     "uvicorn.logging",
     "uvicorn.middleware",
     "uvicorn.middleware.proxy_headers",
-    "uvicorn.middleware.strip_path",
 ]
 starlette_hidden = [
     "starlette",
@@ -193,10 +192,11 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(BACKEND_DIR / "app"), "backend/app"),
+        (str(BACKEND_DIR / "ollama"), "backend/ollama"),
         (str(FRONTEND_DIR), "frontend_desktop"),
         (str(FRONTEND_DIR / "theme"), "frontend_desktop/theme"),
     ],
-    hiddenimports=all_hidden_imports,
+    hiddenimports=all_hidden_imports + ["shiboken6"],
     hookspath=[],
     runtime_hooks=[],
     excludes=[
@@ -248,6 +248,7 @@ app = BUNDLE(
     a.datas,
     name=APP_NAME,
     icon=str(BUILD_DIR / "AllahPan.icns") if (BUILD_DIR / "AllahPan.icns").exists() else None,
-    info_plist=str(BUILD_DIR / "Info.plist"),
+    # PyInstaller 仅合并 dict；传 plist 路径无效。需要自定义键时用 dict。
+    info_plist={},
     bundle_identifier="com.allahpan.app",
 )

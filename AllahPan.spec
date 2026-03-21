@@ -14,7 +14,7 @@ The built .exe and all dependencies will be in dist/AllahPan/
 import sys
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_submodules
 import PyInstaller
 
 block_cipher = None
@@ -27,8 +27,8 @@ VERSION = "1.0.0"
 BUILD = "1"
 AUTHOR = "AllahPan Team"
 
-# Project root - hardcoded for reliability across all Python/PyInstaller versions
-PROJECT_ROOT = Path(r"f:\Python\AllahPan")
+# PyInstaller 执行 spec 时不提供 __file__，用 SPECPATH（spec 所在目录 = 仓库根）
+PROJECT_ROOT = Path(SPECPATH)
 
 # Data dirs
 BACKEND_DIR = PROJECT_ROOT / "backend"
@@ -37,7 +37,10 @@ BUILD_DIR = PROJECT_ROOT / "build"
 
 # 确保 Qt/PySide6 相关 hook 在导入 Qt 前执行（必须放在 BUILD_DIR 定义之后）
 _pyi_rthooks_dir = os.path.join(os.path.dirname(PyInstaller.__file__), "hooks", "rthooks")
-_runtime_hooks = [str(BUILD_DIR / "pyi_rth_qt_dll.py"), os.path.join(_pyi_rthooks_dir, "pyi_rth_pyside6.py")]
+_runtime_hooks = [
+    str(PROJECT_ROOT / "packaging" / "pyi_rth_qt_dll.py"),
+    os.path.join(_pyi_rthooks_dir, "pyi_rth_pyside6.py"),
+]
 
 # 显式收集 PySide6/Qt6 的 binaries 与 datas（DLL、平台插件等），避免因入口仅动态导入 frontend 导致 hook 未收集
 _pyside6_binaries = []
@@ -59,7 +62,7 @@ except Exception as _e:
     warnings.warn("PySide6 显式收集失败，GUI 可能缺 DLL: %s" % _e)
 
 # Qt6Core.dll 依赖 ICU（ucnv_open 等），运行时从系统加载；打包后若目标机 ICU 版本不一致会报「无法定位程序输入点 ucnv_open」。
-# 将构建机 System32 下的 ICU DLL 打进 PySide6 目录，由 pyi_rth_qt_dll 的 add_dll_directory 优先加载，避免依赖目标机系统 ICU。
+# 将构建机 System32 下的 ICU DLL 打进 PySide6 目录，由 packaging/pyi_rth_qt_dll 的 add_dll_directory 优先加载，避免依赖目标机系统 ICU。
 if sys.platform == "win32":
     _system32 = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32")
     for _icu in ("icu.dll", "icuin.dll", "icuuc.dll"):
@@ -149,20 +152,6 @@ watchdog_hidden = [
 pyside6_hidden = collect_submodules("PySide6")
 # python-multipart
 multipart_hidden = ["multipart"]
-
-
-# ==================== Collect Data Files ====================
-
-# Backend app data files
-backend_datas = collect_data_files("app")
-# Theme files (QSS strings embedded in Python, but collect in case of future file-based themes)
-theme_datas = [
-    (str(FRONTEND_DIR / "theme"), "frontend_desktop/theme"),
-]
-# Build plist files
-build_datas = [
-    (str(BUILD_DIR / "Info.plist"), "."),
-]
 
 
 # ==================== All Hidden Imports ====================
