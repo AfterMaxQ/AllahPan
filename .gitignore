@@ -42,5 +42,8 @@ Thumbs.db
 # Trae (if present)
 .trae/
 
+# 前期设计文档（本地工作文件，不纳入版本控制）
+前期的概要设计/
+
 # Optional: keep spec files tracked (AllahPan.spec, AllahPan-macOS.spec, AllahPan-Linux.spec)
 # Do not ignore *.spec so packaging config is in repo

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
     <!-- 可选：由后端或构建注入 API 根地址，如 <meta name="allahpan-api-base" content="https://api.example.com/api/v1"> -->
     <meta name="allahpan-api-base" content="">
     <title>AllahPan - 私有网盘</title>
@@ -691,12 +691,11 @@
                 padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
             }
 
-            /* 纵向占满视口，文件区内部滚动，避免整页被卡片挤没 */
+            /* flex 仅用于子块间距；不设 min-height:100dvh、列表区不 flex:1，整页由 body 滚动，行为对齐「桌面模式」宽视口 */
             .main-app.active {
                 display: flex;
                 flex-direction: column;
                 gap: var(--mobile-gap);
-                min-height: calc(100dvh - 16px - var(--safe-top) - var(--safe-bottom));
             }
 
             .header {
@@ -817,20 +816,11 @@
             .file-list {
                 padding: var(--mobile-card-pad);
                 margin-bottom: 0;
-                flex: 1 1 auto;
-                min-height: 0;
-                display: flex;
-                flex-direction: column;
             }
 
             #fileListContent {
-                flex: 1 1 auto;
-                min-height: 140px;
-                overflow-y: auto;
-                overflow-x: hidden;
-                -webkit-overflow-scrolling: touch;
-                overscroll-behavior-y: contain;
-                touch-action: pan-y;
+                overflow: visible;
+                min-height: 0;
             }
 
             .file-list-title {
@@ -893,7 +883,9 @@
                 padding: 10px;
                 margin-bottom: 8px;
                 border-radius: 10px;
-                touch-action: manipulation;
+                /* 由 #fileListContent 负责纵向滚动，条目不设 manipulation，减少部分机型上与滚动手势争抢 */
+                touch-action: auto;
+                transition: none;
             }
 
             .file-item:not(.file-item-dir)[data-can-preview="1"] {
@@ -1371,9 +1363,20 @@
         let sessionExpiredHandled = false;  // 避免 401 重复弹窗
         let currentSearchMode = 'filename';  // 搜索模式：filename 按文件名，vector 图片/语义
 
-        // 系统状态轮询
+        // 系统状态轮询（桌面 30s；移动端默认不轮询，展开「系统状态」后再 90s 一轮）
         let statusPanelInterval = null;
-        const STATUS_POLL_INTERVAL = 30000;
+        let statusSummaryInFlight = false;
+        let mobileStatusUiInited = false;
+        const STATUS_POLL_DESKTOP_MS = 30000;
+        const STATUS_POLL_MOBILE_MS = 90000;
+
+        function isNarrowMobile() {
+            try {
+                return window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+            } catch (e) {
+                return false;
+            }
+        }
 
         // 文件列表轮询相关变量
         let fileListPollingInterval = null;
@@ -1381,13 +1384,25 @@
         let fileListPollingAttempts = 0;
         const POLLING_INTERVAL = 8000;   // 未解析轮询：略拉长减轻手机端主线程与网络压力
         const POLLING_MAX_ATTEMPTS = 150; // 约 12 分钟
-        let lastLoadFileListOnVisible = 0; // 用于 visibilitychange 节流
-        const VISIBLE_RELOAD_THROTTLE_MS = 5000; // 页面重新可见后 5 秒内不重复拉列表
+        /** 最近一次成功拉取文件列表的时间（用于 visibility 节流；勿初始化为 0，否则 now-0 恒大于阈值会误触发软刷新） */
+        let lastListFetchAt = 0;
+        let pageHiddenAt = null;
+        const VISIBLE_RELOAD_THROTTLE_MS = 8000; // 回到前台后距上次拉列表至少间隔
+        const VISIBLE_MIN_HIDDEN_MS = 1500; // 后台停留不足此时长视为浏览器抖动，不软刷新
+        /** 部分 WebView 会短时间多次触发 visible，限制「因可见性」触发的软刷新频率 */
+        let lastVisibilitySoftRefreshAt = 0;
+        const VISIBILITY_SOFT_REFRESH_COOLDOWN_MS = 3500;
         /** 与上次渲染一致则跳过 DOM，避免轮询时 innerHTML 整表重绘导致列表 scroll 归零、拖动卡顿 */
         let fileListLastSnapshot = '';
         /** 合并短时间内多次 loadFileList（只保留一次在途 + 结束后补跑一次） */
         let fileListLoadLocked = false;
         let fileListLoadPending = false;
+        /** 任意 files/list 请求在途（含软刷新、轮询），避免与 loadFileList 叠乘 */
+        let fileListNetworkInFlight = false;
+
+        function touchListFetchTime() {
+            lastListFetchAt = Date.now();
+        }
 
         function fileListSnapshotKey(path, directories, files) {
             try {
@@ -1451,18 +1466,39 @@
 
             document.addEventListener('visibilitychange', function () {
                 if (document.hidden) {
+                    pageHiddenAt = Date.now();
                     if (isPollingFileList) {
-                        Logger.info('页面隐藏，暂停轮询');
+                        Logger.info('页面隐藏，暂停文件列表轮询');
                         stopFileListPolling();
                     }
+                    stopStatusPolling();
                 } else {
-                    if (currentToken) {
+                    if (currentToken && document.getElementById('mainApp').classList.contains('active')) {
+                        startStatusPolling();
                         var now = Date.now();
-                        if (now - lastLoadFileListOnVisible >= VISIBLE_RELOAD_THROTTLE_MS) {
-                            lastLoadFileListOnVisible = now;
-                            Logger.info('页面恢复，刷新列表');
-                            loadFileList();
+                        var hid = pageHiddenAt;
+                        pageHiddenAt = null;
+                        if (hid == null) {
+                            return;
                         }
+                        if (now - hid < VISIBLE_MIN_HIDDEN_MS) {
+                            return;
+                        }
+                        if (lastListFetchAt && now - lastListFetchAt < VISIBLE_RELOAD_THROTTLE_MS) {
+                            Logger.info('页面恢复，跳过列表软刷新（距上次拉取不足 ' + (VISIBLE_RELOAD_THROTTLE_MS / 1000) + 's）');
+                            return;
+                        }
+                        if (fileListLoadLocked || fileListNetworkInFlight) {
+                            Logger.info('页面恢复，跳过软刷新（列表请求进行中）');
+                            return;
+                        }
+                        if (now - lastVisibilitySoftRefreshAt < VISIBILITY_SOFT_REFRESH_COOLDOWN_MS) {
+                            Logger.info('页面恢复，跳过软刷新（可见性冷却中）');
+                            return;
+                        }
+                        lastVisibilitySoftRefreshAt = now;
+                        Logger.info('页面恢复，软刷新列表');
+                        refreshFileListSoft();
                     }
                 }
             });
@@ -1495,12 +1531,16 @@
                 stopFileListPolling();
                 return;
             }
+            if (fileListLoadLocked || fileListNetworkInFlight) {
+                return;
+            }
             fileListPollingAttempts += 1;
             if (fileListPollingAttempts > POLLING_MAX_ATTEMPTS) {
                 stopFileListPolling();
                 Logger.info('轮询已达上限，已停止');
                 return;
             }
+            fileListNetworkInFlight = true;
             API.files.list(currentPath, currentToken).then(function (res) {
                 if (!res.ok) {
                     if (res.status === 401) {
@@ -1513,7 +1553,7 @@
                 var files = (data && data.files) ? data.files : [];
                 var directories = (data && data.directories) ? data.directories : [];
                 var total = (data && data.total !== undefined) ? data.total : files.length;
-                var hasUnparsedFiles = files.some(function (f) { return !f.is_ai_parsed; });
+                var hasUnparsedFiles = files.some(filePendingAiParse);
 
                 var snap = fileListSnapshotKey(currentPath, directories, files);
                 var wrap = document.getElementById('fileListContent');
@@ -1521,7 +1561,7 @@
                 if (snap && snap === fileListLastSnapshot) {
                     if (!hasUnparsedFiles) {
                         stopFileListPolling();
-                        Logger.info('所有文件已完成 AI 解析');
+                        Logger.info('无可等待解析的图片，停止列表轮询');
                     }
                     return;
                 }
@@ -1531,10 +1571,13 @@
                 if (wrap) wrap.scrollTop = prevTop;
                 if (!hasUnparsedFiles) {
                     stopFileListPolling();
-                    Logger.info('所有文件已完成 AI 解析');
+                    Logger.info('无可等待解析的图片，停止列表轮询');
                 }
+                touchListFetchTime();
             }).catch(function (err) {
                 Logger.error('轮询文件列表失败', err);
+            }).finally(function () {
+                fileListNetworkInFlight = false;
             });
         }
 
@@ -1699,6 +1742,10 @@
         function logout() {
             stopFileListPolling();
             stopStatusPolling();
+            mobileStatusUiInited = false;
+            pageHiddenAt = null;
+            lastListFetchAt = 0;
+            lastVisibilitySoftRefreshAt = 0;
             setToken(null);
             currentPath = '';
             isSearchView = false;
@@ -1714,19 +1761,35 @@
 
         // 系统状态面板折叠
         function toggleStatusPanel() {
-            var el = document.getElementById('statusPanel');
             var body = document.getElementById('statusPanelBody');
             var toggle = document.getElementById('statusPanelToggle');
-            if (body.classList.contains('hidden')) {
+            if (!body || !toggle) return;
+            var mobile = isNarrowMobile();
+            var expanding = body.classList.contains('hidden');
+            if (expanding) {
                 body.classList.remove('hidden');
                 toggle.textContent = '▼ 系统状态';
+                if (mobile) {
+                    refreshSystemStatus();
+                    if (!statusPanelInterval) {
+                        statusPanelInterval = setInterval(refreshSystemStatus, STATUS_POLL_MOBILE_MS);
+                        Logger.info('移动端系统状态轮询已启动，间隔 ' + (STATUS_POLL_MOBILE_MS / 1000) + ' 秒');
+                    }
+                }
             } else {
                 body.classList.add('hidden');
                 toggle.textContent = '▶ 系统状态';
+                if (mobile && statusPanelInterval) {
+                    clearInterval(statusPanelInterval);
+                    statusPanelInterval = null;
+                    Logger.info('移动端已折叠系统状态，停止轮询');
+                }
             }
         }
         function refreshSystemStatus() {
             if (!currentToken) return;
+            if (statusSummaryInFlight) return;
+            statusSummaryInFlight = true;
             API.system.summary(currentToken).then(function (res) {
                 if (!res.ok) {
                     if (res.status === 401) handleSessionExpired();
@@ -1735,31 +1798,65 @@
                 var d = res.data;
                 var panel = document.getElementById('statusPanel');
                 if (!panel) return;
-                panel.classList.remove('hidden');
                 var storage = d && d.storage;
                 var total = storage && storage.total_space ? storage.total_space : 0;
                 var used = storage && storage.used_space != null ? storage.used_space : 0;
                 var pct = total > 0 ? Math.round((used / total) * 100) : 0;
-                var bar = document.getElementById('statusStorageBar');
-                var barText = document.getElementById('statusStorageText');
-                if (bar) {
-                    bar.style.width = pct + '%';
-                    bar.className = 'status-bar-fill' + (pct >= 90 ? ' danger' : pct >= 70 ? ' warn' : '');
-                }
-                if (barText) barText.textContent = (pct + '% 已用') + (storage && storage.file_count != null ? '，' + storage.file_count + ' 个文件' : '');
                 var ollama = d && d.ollama;
-                var ollamaEl = document.getElementById('statusOllamaText');
-                if (ollamaEl) ollamaEl.textContent = ollama && ollama.is_running ? '运行中' : (ollama && ollama.status || '未运行');
+                var ollamaTxt = ollama && ollama.is_running ? '运行中' : (ollama && ollama.status || '未运行');
                 var parser = d && d.image_parser;
-                var parserEl = document.getElementById('statusParserText');
-                if (parserEl) parserEl.textContent = parser ? ('队列 ' + (parser.queue_size || 0) + '，处理中 ' + (parser.processing_count || 0)) : '—';
+                var parserTxt = parser ? ('队列 ' + (parser.queue_size || 0) + '，处理中 ' + (parser.processing_count || 0)) : '—';
+                var barTextContent = (pct + '% 已用') + (storage && storage.file_count != null ? '，' + storage.file_count + ' 个文件' : '');
+                requestAnimationFrame(function () {
+                    panel.classList.remove('hidden');
+                    var bar = document.getElementById('statusStorageBar');
+                    var barText = document.getElementById('statusStorageText');
+                    if (bar) {
+                        bar.style.width = pct + '%';
+                        bar.className = 'status-bar-fill' + (pct >= 90 ? ' danger' : pct >= 70 ? ' warn' : '');
+                    }
+                    if (barText) barText.textContent = barTextContent;
+                    var ollamaEl = document.getElementById('statusOllamaText');
+                    if (ollamaEl) ollamaEl.textContent = ollamaTxt;
+                    var parserEl = document.getElementById('statusParserText');
+                    if (parserEl) parserEl.textContent = parserTxt;
+                });
+            }).finally(function () {
+                statusSummaryInFlight = false;
             });
         }
         function startStatusPolling() {
+            var panel = document.getElementById('statusPanel');
+            var body = document.getElementById('statusPanelBody');
+            var toggle = document.getElementById('statusPanelToggle');
+
+            if (isNarrowMobile()) {
+                if (panel) panel.classList.remove('hidden');
+                if (!mobileStatusUiInited) {
+                    mobileStatusUiInited = true;
+                    if (body) body.classList.add('hidden');
+                    if (toggle) toggle.textContent = '▶ 系统状态';
+                    Logger.info('移动端：系统状态默认折叠，不请求 summary；点击标题展开后再轮询');
+                    return;
+                }
+                if (body && body.classList.contains('hidden')) {
+                    if (toggle) toggle.textContent = '▶ 系统状态';
+                    return;
+                }
+                if (!statusPanelInterval) {
+                    statusPanelInterval = setInterval(refreshSystemStatus, STATUS_POLL_MOBILE_MS);
+                    Logger.info('移动端系统状态轮询已启动（详情已展开），间隔 ' + (STATUS_POLL_MOBILE_MS / 1000) + ' 秒');
+                    refreshSystemStatus();
+                }
+                return;
+            }
+
             if (statusPanelInterval) return;
+            if (body) body.classList.remove('hidden');
+            if (toggle) toggle.textContent = '▼ 系统状态';
             refreshSystemStatus();
-            statusPanelInterval = setInterval(refreshSystemStatus, STATUS_POLL_INTERVAL);
-            Logger.info('系统状态轮询已启动，间隔 ' + (STATUS_POLL_INTERVAL / 1000) + ' 秒');
+            statusPanelInterval = setInterval(refreshSystemStatus, STATUS_POLL_DESKTOP_MS);
+            Logger.info('系统状态轮询已启动，间隔 ' + (STATUS_POLL_DESKTOP_MS / 1000) + ' 秒');
         }
         function stopStatusPolling() {
             if (statusPanelInterval) {
@@ -1803,6 +1900,7 @@
                 return;
             }
             fileListLoadLocked = true;
+            fileListNetworkInFlight = true;
             var container = document.getElementById('fileListContent');
             container.innerHTML = '<div class="loading-state"><span class="loading"></span>加载中...</div>';
             Logger.info('加载文件列表', currentPath || '(根目录)');
@@ -1828,15 +1926,17 @@
                 updateBreadcrumb();
                 if (container) container.scrollTop = 0;
 
-                var hasUnparsedFiles = files.some(function (f) { return !f.is_ai_parsed; });
+                var hasUnparsedFiles = files.some(filePendingAiParse);
                 if (hasUnparsedFiles) {
-                    Logger.info('检测到未解析文件，启动轮询');
+                    Logger.info('检测到未解析图片，启动列表轮询');
                     startFileListPolling();
                 }
+                touchListFetchTime();
             }).catch(function (err) {
                 Logger.error('加载文件列表异常', err);
                 container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div>网络错误，请重试</div></div>';
             }).finally(function () {
+                fileListNetworkInFlight = false;
                 fileListLoadLocked = false;
                 if (fileListLoadPending) {
                     fileListLoadPending = false;
@@ -1847,6 +1947,14 @@
 
         /** 删除/重命名等操作后刷新列表：不清空搜索、不插「加载中」占位，并尽量保持滚动位置 */
         function refreshFileListSoft() {
+            if (fileListLoadLocked) {
+                Logger.debug('软刷新跳过：全量 loadFileList 进行中');
+                return;
+            }
+            if (fileListNetworkInFlight) {
+                Logger.debug('软刷新跳过：已有 files/list 在途');
+                return;
+            }
             var scrollY = window.scrollY != null ? window.scrollY : window.pageYOffset;
             var scrollX = window.scrollX != null ? window.scrollX : window.pageXOffset;
             var listEl = document.getElementById('fileListContent');
@@ -1881,6 +1989,7 @@
                 return;
             }
             Logger.info('软刷新文件列表', currentPath || '(根目录)');
+            fileListNetworkInFlight = true;
             API.files.list(currentPath, currentToken).then(function (res) {
                 if (!res.ok) {
                     if (res.status === 401) handleSessionExpired();
@@ -1896,13 +2005,16 @@
                 renderList(directories, files, false);
                 document.getElementById('fileCount').textContent = total + ' 个文件';
                 updateBreadcrumb();
-                var hasUnparsedFiles = files.some(function (f) { return !f.is_ai_parsed; });
+                var hasUnparsedFiles = files.some(filePendingAiParse);
                 if (hasUnparsedFiles) startFileListPolling();
                 else stopFileListPolling();
                 restoreScroll();
+                touchListFetchTime();
             }).catch(function (err) {
                 Logger.error('软刷新列表异常', err);
                 showAppToast('刷新失败，请重试', 'error');
+            }).finally(function () {
+                fileListNetworkInFlight = false;
             });
         }
 
@@ -1990,6 +2102,15 @@
             }).join('');
             container.innerHTML = html;
             fileCountEl.textContent = total + ' 个文件';
+        }
+
+        /** 未解析但可能由后台异步变为已解析的类型（与可触发 AI 解析的图片一致）；.py 等不应触发列表轮询 */
+        function filePendingAiParse(file) {
+            if (!file || file.is_ai_parsed) return false;
+            var t = (file.filetype || '').toLowerCase();
+            var n = file.filename || '';
+            if (t.indexOf('image/') === 0) return true;
+            return /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(n);
         }
 
         function escapeHtmlAttr(s) {

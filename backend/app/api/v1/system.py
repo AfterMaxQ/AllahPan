@@ -11,6 +11,8 @@ Tunnel状态等系统监控功能。
 """
 
 import shutil
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -34,6 +36,12 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
+
+# GET /summary 聚合磁盘、Ollama、Tunnel 等，开销大；短 TTL 缓存减轻多标签/多设备同时轮询时的压力
+_summary_cache_lock = threading.Lock()
+_summary_cache_mono: float = 0.0
+_cached_summary: Optional[Any] = None
+SUMMARY_CACHE_TTL_SEC = 10.0
 
 _watcher_instance: Optional[DirectoryWatcher] = None
 _ollama_manager_instance = None
@@ -529,13 +537,25 @@ def get_system_status_summary(
     返回:
         SystemStatusSummary: 包含所有系统状态的摘要对象
     """
+    global _summary_cache_mono, _cached_summary
     logger.debug(f"查询系统状态摘要，用户: {current_user.username}")
-    
+    now = time.monotonic()
+    with _summary_cache_lock:
+        if _cached_summary is not None and (now - _summary_cache_mono) < SUMMARY_CACHE_TTL_SEC:
+            logger.debug("系统状态摘要缓存命中")
+            return _cached_summary
+
     # 获取存储信息（避免异常导致 500，影响前端定时刷新）
     try:
         if STORAGE_DIR.exists():
             total, used, free = shutil.disk_usage(STORAGE_DIR)
-            file_count = len(list(STORAGE_DIR.glob("*"))) if STORAGE_DIR.is_dir() else 0
+            if STORAGE_DIR.is_dir():
+                try:
+                    file_count = sum(1 for _ in STORAGE_DIR.iterdir())
+                except OSError:
+                    file_count = 0
+            else:
+                file_count = 0
         else:
             total = used = free = file_count = 0
         storage = StorageInfo(
@@ -617,14 +637,18 @@ def get_system_status_summary(
             total_processed=0, total_failed=0, is_running=False,
         )
     
-    logger.info("系统状态摘要获取成功")
-    return SystemStatusSummary(
+    result = SystemStatusSummary(
         storage=storage,
         ollama=ollama,
         tunnel=tunnel,
         watcher=watcher,
         image_parser=image_parser_status,
     )
+    with _summary_cache_lock:
+        _summary_cache_mono = time.monotonic()
+        _cached_summary = result
+    logger.info("系统状态摘要获取成功")
+    return result
 
 
 def _path_size_bytes(path: Path) -> int:
