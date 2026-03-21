@@ -28,6 +28,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Header
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 # 用于判断文件名是否为“UUID 或 UUID.扩展名”，此类名称在下载时替换为友好名
 _UUID_FILENAME_RE = re.compile(
@@ -357,23 +358,28 @@ async def upload_chunk(
     
     chunk_dir = _get_chunk_dir(upload_id)
     chunk_path = chunk_dir / f"chunk_{chunk_index:04d}"
-    
-    with open(chunk_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    
-    with FileLock(_progress_lock_path(upload_id)):
-        progress_data = _get_upload_progress(upload_id)
-        if not progress_data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="上传会话不存在或已过期"
-            )
-        if chunk_index not in progress_data["received_chunks"]:
-            progress_data["received_chunks"].append(chunk_index)
-            progress_data["received_chunks"].sort()
-        progress_data["last_chunk_at"] = datetime.now().isoformat()
-        _save_upload_progress(upload_id, progress_data)
-    
+
+    def _write_chunk_sync() -> Optional[dict]:
+        with open(chunk_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        with FileLock(_progress_lock_path(upload_id)):
+            pd = _get_upload_progress(upload_id)
+            if not pd:
+                return None
+            if chunk_index not in pd["received_chunks"]:
+                pd["received_chunks"].append(chunk_index)
+                pd["received_chunks"].sort()
+            pd["last_chunk_at"] = datetime.now().isoformat()
+            _save_upload_progress(upload_id, pd)
+        return pd
+
+    progress_data = await run_in_threadpool(_write_chunk_sync)
+    if progress_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="上传会话不存在或已过期",
+        )
+
     received = len(progress_data["received_chunks"])
     total = progress_data["total_chunks"]
     progress_percent = (received / total) * 100 if total > 0 else 0
@@ -437,6 +443,82 @@ async def get_upload_progress(
         progress=progress_percent,
         is_complete=is_complete,
     )
+
+
+def _finalize_resumable_upload_sync(
+    upload_id: str,
+    user_id: str,
+    progress_data: dict,
+    file_id: str,
+    display_name: str,
+    stored_path: Path,
+    temp_path: Path,
+    chunk_dir: Path,
+    total: int,
+) -> FileMetadata:
+    """
+    合并分片、校验、落盘、写入元数据并清理上传进度。
+    在线程池中执行，避免大文件合并长时间阻塞 asyncio 事件循环。
+    """
+    with open(temp_path, "wb") as dest:
+        for i in range(total):
+            chunk_path = chunk_dir / f"chunk_{i:04d}"
+            with open(chunk_path, "rb") as src:
+                shutil.copyfileobj(src, dest)
+    actual_size = temp_path.stat().st_size
+    if actual_size != progress_data["file_size"]:
+        logger.warning(
+            "文件大小不匹配，预期: %s, 实际: %s，upload_id: %s",
+            progress_data["file_size"],
+            actual_size,
+            upload_id,
+        )
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+        _delete_upload_progress(upload_id)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"文件大小校验失败，预期 {progress_data['file_size']} 字节，实际 {actual_size} 字节",
+        )
+
+    try:
+        os.replace(temp_path, stored_path)
+    except OSError as e:
+        logger.error("重命名临时文件失败，upload_id: %s, 错误: %s", upload_id, e)
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+        _delete_upload_progress(upload_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="保存最终文件失败",
+        )
+
+    file_metadata = FileMetadata(
+        filename=display_name,
+        filepath=str(stored_path),
+        size=actual_size,
+        filetype=progress_data.get("content_type", "application/octet-stream"),
+        userid=user_id,
+        is_ai_parsed=False,
+        file_id=file_id,
+    )
+    file_repo = get_file_repo()
+    created = file_repo.create_file_metadata(file_metadata)
+
+    progress_data["is_complete"] = True
+    progress_data["file_id"] = file_id
+    progress_data["completed_at"] = datetime.now().isoformat()
+    with FileLock(_progress_lock_path(upload_id)):
+        _save_upload_progress(upload_id, progress_data)
+        _delete_upload_progress(upload_id)
+
+    return created
 
 
 @router.post("/upload/complete/{upload_id}", response_model=UploadCompleteResponse)
@@ -511,62 +593,20 @@ async def complete_upload(
     chunk_dir = _get_chunk_dir(upload_id)
 
     try:
-        with open(temp_path, "wb") as dest:
-            for i in range(total):
-                chunk_path = chunk_dir / f"chunk_{i:04d}"
-                with open(chunk_path, "rb") as src:
-                    shutil.copyfileobj(src, dest)
-        actual_size = temp_path.stat().st_size
-        if actual_size != progress_data["file_size"]:
-            logger.warning(
-                f"文件大小不匹配，预期: {progress_data['file_size']}, 实际: {actual_size}，upload_id: {upload_id}"
-            )
-            if temp_path.exists():
-                try:
-                    temp_path.unlink()
-                except OSError:
-                    pass
-            _delete_upload_progress(upload_id)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"文件大小校验失败，预期 {progress_data['file_size']} 字节，实际 {actual_size} 字节",
-            )
-
-        try:
-            os.replace(temp_path, stored_path)
-        except OSError as e:
-            logger.error(f"重命名临时文件失败，upload_id: {upload_id}, 错误: {e}")
-            if temp_path.exists():
-                try:
-                    temp_path.unlink()
-                except OSError:
-                    pass
-            _delete_upload_progress(upload_id)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="保存最终文件失败",
-            )
-
-        file_metadata = FileMetadata(
-            filename=display_name,
-            filepath=str(stored_path),
-            size=actual_size,
-            filetype=progress_data.get("content_type", "application/octet-stream"),
-            userid=current_user.id,
-            is_ai_parsed=False,
-            file_id=file_id,
+        created = await run_in_threadpool(
+            _finalize_resumable_upload_sync,
+            upload_id,
+            current_user.id,
+            progress_data,
+            file_id,
+            display_name,
+            stored_path,
+            temp_path,
+            chunk_dir,
+            total,
         )
-        file_repo = get_file_repo()
-        created = file_repo.create_file_metadata(file_metadata)
 
-        progress_data["is_complete"] = True
-        progress_data["file_id"] = file_id
-        progress_data["completed_at"] = datetime.now().isoformat()
-        with FileLock(_progress_lock_path(upload_id)):
-            _save_upload_progress(upload_id, progress_data)
-            _delete_upload_progress(upload_id)
-
-        if file_metadata.filetype.startswith("image/"):
+        if created.filetype.startswith("image/"):
             image_parser = get_image_parser_queue()
             if image_parser:
                 await image_parser.add_to_queue(file_id)
@@ -690,13 +730,17 @@ async def upload_file(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="非法路径")
     stored_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(stored_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    def _save_upload_body() -> int:
+        with open(stored_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return stored_path.stat().st_size
+
+    file_size = await run_in_threadpool(_save_upload_body)
 
     file_metadata = FileMetadata(
         filename=display_name,
         filepath=str(stored_path),
-        size=stored_path.stat().st_size,
+        size=file_size,
         filetype=file.content_type or "application/octet-stream",
         userid=current_user.id,
         is_ai_parsed=False,
@@ -746,7 +790,7 @@ def _list_directory_from_disk(
     except ValueError:
         return [], []
     directories: list[dict] = []
-    files_meta: list[FileMetadata] = []
+    file_rows: list[tuple] = []  # (entry, abs_path)
     for entry in sorted(target.iterdir()):
         if entry.name.startswith("."):
             continue
@@ -758,27 +802,32 @@ def _list_directory_from_disk(
         if not entry.is_file():
             continue
         abs_path = str(entry.resolve())
-        existing = file_repo.get_file_metadata_by_filepath(abs_path)
+        file_rows.append((entry, abs_path))
+
+    path_map = file_repo.get_file_metadata_by_filepaths([p for _, p in file_rows])
+    files_meta: list[FileMetadata] = []
+    for entry, abs_path in file_rows:
+        existing = path_map.get(abs_path)
         if existing:
             files_meta.append(existing)
-        else:
-            try:
-                size = entry.stat().st_size
-                mt, _ = mimetypes.guess_type(entry.name)
-                filetype = mt or "application/octet-stream"
-                new_meta = FileMetadata(
-                    filename=entry.name,
-                    filepath=abs_path,
-                    size=size,
-                    filetype=filetype,
-                    userid=current_user.id,
-                    is_ai_parsed=False,
-                )
-                created = file_repo.create_file_metadata(new_meta)
-                files_meta.append(created)
-                logger.info(f"惰性入库文件: {entry.name}, file_id={created.file_id}")
-            except Exception as e:
-                logger.warning(f"惰性入库失败，跳过文件 {abs_path}: {e}")
+            continue
+        try:
+            size = entry.stat().st_size
+            mt, _ = mimetypes.guess_type(entry.name)
+            filetype = mt or "application/octet-stream"
+            new_meta = FileMetadata(
+                filename=entry.name,
+                filepath=abs_path,
+                size=size,
+                filetype=filetype,
+                userid=current_user.id,
+                is_ai_parsed=False,
+            )
+            created = file_repo.create_file_metadata(new_meta)
+            files_meta.append(created)
+            logger.info(f"惰性入库文件: {entry.name}, file_id={created.file_id}")
+        except Exception as e:
+            logger.warning(f"惰性入库失败，跳过文件 {abs_path}: {e}")
     return directories, files_meta
 
 
@@ -892,7 +941,7 @@ def download_file(
     异常:
         HTTPException: 当文件不存在或已丢失时抛出404错误
     """
-    logger.info(f"文件下载请求，文件ID: {file_id}, 用户: {current_user.username}")
+    logger.debug("文件下载请求，文件ID: %s, 用户: %s", file_id, current_user.username)
     file_metadata = file_repo.get_file_metadata_by_id(file_id)
 
     if file_metadata is None:
@@ -911,7 +960,7 @@ def download_file(
         )
 
     display_name = _download_display_filename(file_metadata.filename)
-    logger.info(f"文件下载成功，文件ID: {file_id}, 下载名: {display_name}")
+    logger.debug("文件下载响应，文件ID: %s", file_id)
     return FileResponse(
         path=file_path,
         filename=display_name,
@@ -942,7 +991,7 @@ def preview_file(
     异常:
         HTTPException: 当文件不存在或已丢失时抛出404错误
     """
-    logger.info(f"文件预览请求，文件ID: {file_id}, 用户: {current_user.username}")
+    logger.debug("文件预览请求，文件ID: %s, 用户: %s", file_id, current_user.username)
     file_metadata = file_repo.get_file_metadata_by_id(file_id)
 
     if file_metadata is None:
@@ -961,7 +1010,7 @@ def preview_file(
         )
 
     display_name = _download_display_filename(file_metadata.filename)
-    logger.info(f"文件预览成功，文件ID: {file_id}, 显示名: {display_name}")
+    logger.debug("文件预览响应，文件ID: %s", file_id)
     return FileResponse(
         path=file_path,
         filename=display_name,

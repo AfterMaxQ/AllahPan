@@ -10,7 +10,7 @@
 最后修改: 2026-03-19
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from app.models.file_metadata import FileMetadata
 from app.database.sqlite import SQLite
@@ -77,6 +77,10 @@ class FileRepository:
         logger.debug(f"FileRepository根据ID检索文件元数据: {file_id}")
         return self.sqlite.get_file_metadata_by_id(file_id)
 
+    def get_file_metadata_by_ids(self, file_ids: List[str]) -> Dict[str, FileMetadata]:
+        """批量按 ID 查询元数据，供向量结果合并等场景使用。"""
+        return self.sqlite.get_file_metadata_by_ids(file_ids)
+
     def get_file_metadata_by_filename(
         self,
         filename: str
@@ -108,6 +112,10 @@ class FileRepository:
         """
         logger.debug(f"FileRepository根据文件路径检索元数据: {filepath}")
         return self.sqlite.get_file_metadata_by_filepath(filepath)
+
+    def get_file_metadata_by_filepaths(self, filepaths: List[str]) -> Dict[str, FileMetadata]:
+        """批量按路径查询，供列表目录等场景使用。"""
+        return self.sqlite.get_file_metadata_by_filepaths(filepaths)
 
     def get_files_by_userid(self, user_id: str) -> List[FileMetadata]:
         """
@@ -141,6 +149,12 @@ class FileRepository:
         """
         logger.debug("FileRepository获取所有可访问文件")
         return self.sqlite.get_all_file_metadata()
+
+    def get_all_file_ids(self) -> List[str]:
+        return self.sqlite.get_all_file_ids()
+
+    def get_ai_parsed_image_file_ids(self) -> List[str]:
+        return self.sqlite.get_ai_parsed_image_file_ids()
 
     def update_file_metadata(self, file_metadata: FileMetadata) -> bool:
         """
@@ -214,6 +228,18 @@ class FileRepository:
         logger.info(f"FileRepository删除用户文件完成，用户ID: {user_id}，删除数量: {deleted_count}")
         return deleted_count
 
+    def remove_vector_index(self, file_id: str) -> bool:
+        """
+        仅从 Chroma 删除向量索引（不碰 SQLite）。
+
+        用于搜索时发现「向量库有文档、元数据已无」的孤立索引时自愈清理。
+        """
+        try:
+            return self.chroma.delete_vector(file_id)
+        except Exception as e:
+            logger.warning(f"孤立向量清理失败，文件ID: {file_id}，错误: {e}")
+            return False
+
     def add_vector(
         self,
         file_id: str,
@@ -277,7 +303,7 @@ class FileRepository:
         返回:
             List[dict]: 包含匹配结果的列表，每个结果包含id、embedding、metadata和distance
         """
-        logger.info(f"FileRepository向量相似性搜索，查询向量维度: {len(query_vector)}")
+        logger.debug("FileRepository向量相似性搜索，查询向量维度: %s", len(query_vector))
         return self.chroma.search_by_vector(query_vector, n_results)
 
     def search_similar_files_by_text(
@@ -359,7 +385,7 @@ class FileRepository:
         返回:
             List[FileMetadata]: 匹配的文件元数据列表
         """
-        logger.info(f"FileRepository文件名模糊搜索，关键字: {keyword}")
+        logger.debug("FileRepository文件名模糊搜索，关键字: %s", keyword)
         return self.sqlite.search_files_by_filename(keyword)
 
     def close(self) -> None:

@@ -143,6 +143,85 @@ def is_image_file(filename: str, filetype: str) -> bool:
     return False
 
 
+def _file_id_from_vector_hit(item: dict) -> Optional[str]:
+    """从 Chroma 查询条目中解析业务 file_id（兼容 metadata 与文档 id）。"""
+    meta = item.get("metadata")
+    if not isinstance(meta, dict):
+        meta = {}
+    raw = meta.get("file_id")
+    if raw is not None:
+        s = str(raw).strip()
+        if s:
+            return s
+    doc_id = item.get("id") or ""
+    if isinstance(doc_id, str) and doc_id.startswith("file_"):
+        return doc_id[5:]
+    if doc_id:
+        return str(doc_id)
+    return None
+
+
+def _merge_vector_search_hits(
+    file_repo: FileRepository,
+    vector_results: List[dict],
+    current_user: AuthUser,
+) -> List[tuple[float, str, dict]]:
+    """
+    将向量命中与 SQLite 对齐：去掉孤立向量、按当前用户过滤、按磁盘路径去重（保留距离最小的一条）。
+
+    返回 (distance, file_id, result_row) 列表，按 distance 升序，供写入 results_dict。
+    """
+    path_key_best: dict[str, tuple[float, str, dict]] = {}
+
+    raw_ids: List[str] = []
+    for item in vector_results:
+        fid = _file_id_from_vector_hit(item)
+        if fid:
+            raw_ids.append(fid)
+    meta_map = file_repo.get_file_metadata_by_ids(raw_ids)
+
+    for item in vector_results:
+        file_id = _file_id_from_vector_hit(item)
+        if not file_id:
+            continue
+        distance = item.get("distance")
+        if distance is None:
+            distance = float("inf")
+
+        file_meta = meta_map.get(file_id)
+        if file_meta is None:
+            logger.info(
+                "向量命中但 SQLite 无对应记录，视为孤立索引并尝试清理，file_id=%s",
+                file_id,
+            )
+            file_repo.remove_vector_index(file_id)
+            continue
+        if file_meta.userid != current_user.id:
+            continue
+
+        try:
+            resolved = str(Path(file_meta.filepath).resolve())
+        except OSError:
+            resolved = file_meta.filepath
+        dedupe_key = f"{file_meta.userid}\x00{resolved}"
+
+        row = {
+            "file_id": file_meta.file_id,
+            "filename": file_meta.filename,
+            "filetype": file_meta.filetype,
+            "is_ai_parsed": file_meta.is_ai_parsed,
+            "size": file_meta.size,
+            "upload_time": getattr(file_meta, "upload_time", None),
+        }
+        prev = path_key_best.get(dedupe_key)
+        if prev is None or distance < prev[0]:
+            path_key_best[dedupe_key] = (distance, file_meta.file_id, row)
+
+    merged = list(path_key_best.values())
+    merged.sort(key=lambda t: t[0])
+    return merged
+
+
 @router.post("/search", response_model=SearchResponse)
 async def search_files(
     request: SearchRequest,
@@ -168,7 +247,8 @@ async def search_files(
     异常:
         HTTPException: 当搜索失败时抛出500错误
     """
-    logger.info(f"文件搜索请求，查询: {request.query[:50]}...")
+    q_preview = request.query[:50] + ("…" if len(request.query) > 50 else "")
+    logger.debug("文件搜索请求，查询: %s", q_preview)
     try:
         if not request.query.strip():
             logger.warning("搜索失败，查询为空")
@@ -203,28 +283,30 @@ async def search_files(
             if await ollama.is_available():
                 try:
                     query_vector = await ollama.embed_text(request.query)
-                    logger.info(f"查询向量生成完成，维度: {len(query_vector)}")
+                    logger.debug("查询向量生成完成，维度: %s", len(query_vector))
                     vector_results = file_repo.search_similar_files(
                         query_vector=query_vector,
                         n_results=request.limit,
                     )
-                    logger.info(f"向量搜索返回 {len(vector_results)} 个结果")
+                    logger.debug("向量搜索返回 %s 个结果", len(vector_results))
 
-                    for item in vector_results:
-                        metadata = item.get("metadata", {})
-                        file_id = metadata.get("file_id", item.get("id", "").replace("file_", ""))
-                        distance = item.get("distance")
-                        logger.debug(f"向量结果: file_id={file_id}, distance={distance:.4f}, filename={metadata.get('filename', 'unknown')}")
-
+                    merged_hits = _merge_vector_search_hits(
+                        file_repo, vector_results, current_user
+                    )
+                    logger.debug(
+                        "向量结果经 SQLite 校验与路径去重后 %s 条（原始 %s 条）",
+                        len(merged_hits),
+                        len(vector_results),
+                    )
+                    for distance, file_id, row in merged_hits:
+                        logger.debug(
+                            "向量结果(已对齐): file_id=%s, distance=%s, filename=%s",
+                            file_id,
+                            f"{distance:.4f}" if distance != float("inf") else "n/a",
+                            row.get("filename"),
+                        )
                         if file_id not in results_dict:
-                            results_dict[file_id] = {
-                                "file_id": file_id,
-                                "filename": metadata.get("filename", "未知文件"),
-                                "filetype": metadata.get("filetype", "unknown"),
-                                "is_ai_parsed": True,
-                                "size": metadata.get("file_size", 0),
-                                "upload_time": metadata.get("upload_time"),
-                            }
+                            results_dict[file_id] = row
                         if mode_param == "vector":
                             search_mode = "vector"
                         else:
@@ -242,7 +324,7 @@ async def search_files(
 
         results = list(results_dict.values())[:request.limit]
 
-        logger.info(f"搜索完成，找到 {len(results)} 个匹配结果，模式: {search_mode}")
+        logger.debug("搜索完成，找到 %s 个匹配结果，模式: %s", len(results), search_mode)
         return SearchResponse(
             results=[
                 SearchResult(**r) for r in results
@@ -336,7 +418,7 @@ async def parse_file(
             "parsed_at": file_metadata.upload_time,
         }
         
-        file_repo.add_vector(
+        file_repo.add_or_update_vector(
             file_id=file_id,
             vector=embedding,
             metadata=vector_metadata,

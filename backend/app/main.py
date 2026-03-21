@@ -31,6 +31,8 @@ from app.config import (
     get_storage_dir,
     OLLAMA_BASE_URL,
     ensure_jwt_secret_for_production,
+    INDEX_MAINTENANCE_ENABLED,
+    INDEX_MAINTENANCE_INTERVAL_SEC,
 )
 from app.watcher.watcher import DirectoryWatcher
 from app.services.image_parser import ImageParserQueue, set_image_parser_queue, get_image_parser_queue
@@ -116,6 +118,14 @@ async def lifespan(app: FastAPI):
         logger.info("图片解析队列启动成功")
     except Exception as e:
         logger.error(f"图片解析队列启动失败：{e}")
+
+    if INDEX_MAINTENANCE_ENABLED and INDEX_MAINTENANCE_INTERVAL_SEC > 0:
+        try:
+            from app.services.index_maintenance import start_index_maintenance_thread
+
+            start_index_maintenance_thread()
+        except Exception as e:
+            logger.error(f"向量索引维护线程启动失败：{e}")
     
     # 初始化 Ollama 引擎管理器（仅当 Ollama 服务不可用时尝试启动）
     logger.info("应用启动中，正在检查 Ollama 引擎状态...")
@@ -151,6 +161,14 @@ async def lifespan(app: FastAPI):
         logger.error(f"Tunnel 管理器初始化失败：{e}")
     
     yield
+
+    logger.info("应用关闭中，正在停止向量索引维护线程...")
+    try:
+        from app.services.index_maintenance import stop_index_maintenance_thread
+
+        stop_index_maintenance_thread()
+    except Exception as e:
+        logger.error(f"停止向量索引维护线程失败：{e}")
     
     logger.info("应用关闭中，正在停止目录监听服务...")
     if _dirWatcher:

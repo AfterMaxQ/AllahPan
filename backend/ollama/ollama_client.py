@@ -11,7 +11,8 @@ Ollama是本地AI推理框架，支持Qwen3-VL-4B等多模态模型。
 
 import base64
 import logging
-from typing import List, Optional, Dict, Any
+import time
+from typing import List, Optional, Dict, Any, Tuple
 from pathlib import Path
 
 import httpx
@@ -68,6 +69,9 @@ class OllamaClient:
         self.vision_model = vision_model
         self.timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None
+        # 短时间缓存可用性探测，减轻搜索/健康检查对 /api/tags 的突发压力
+        self._availability_cache: Optional[Tuple[float, bool]] = None
+        self._availability_ttl_sec = 5.0
     
     async def _get_client(self) -> httpx.AsyncClient:
         """
@@ -112,12 +116,19 @@ class OllamaClient:
         返回:
             bool: 服务可用返回True，否则返回False
         """
-        logger.info("检查Ollama服务可用性")
+        now = time.monotonic()
+        if self._availability_cache is not None:
+            ts, ok = self._availability_cache
+            if now - ts < self._availability_ttl_sec:
+                return ok
+        logger.debug("检查Ollama服务可用性")
         try:
             client = await self._get_client()
             response = await client.get("/api/tags")
-            logger.info(f"Ollama服务状态: {'可用' if response.status_code == 200 else '不可用'}")
-            return response.status_code == 200
+            ok = response.status_code == 200
+            logger.debug("Ollama服务状态: %s", "可用" if ok else "不可用")
+            self._availability_cache = (time.monotonic(), ok)
+            return ok
         except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as e:
             logger.warning(f"Ollama服务连接失败: {e}")
             return False
@@ -168,7 +179,7 @@ class OllamaClient:
             httpx.TimeoutException: 当请求超时时
             ValueError: 当文本为空时
         """
-        logger.info(f"开始向量化文本，长度: {len(text)}，模型: {model or self.embedding_model}")
+        logger.debug("开始向量化文本，长度: %s，模型: %s", len(text), model or self.embedding_model)
         if not text or not text.strip():
             logger.error("文本内容为空")
             raise ValueError("文本内容不能为空")
@@ -203,7 +214,7 @@ class OllamaClient:
             logger.error(f"embedding 字段类型错误，期望 list 但得到{type(embedding)}")
             raise ValueError(f"embedding 字段类型错误，期望 list 但得到{type(embedding)}")
         
-        logger.info(f"文本向量化完成，向量维度: {len(embedding)}")
+        logger.debug("文本向量化完成，向量维度: %s", len(embedding))
         return embedding
     
     async def generate_response(

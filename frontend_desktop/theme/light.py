@@ -338,6 +338,7 @@ QGroupBox::title {
     border: none;
     outline: none;
     gridline-color: #E5E5EA;
+    alternate-background-color: #FAFAFC;
 }
 
 #FileTableView::item {
@@ -345,6 +346,7 @@ QGroupBox::title {
     border: none;
     border-bottom: 1px solid #F5F5F7;
     padding: 8px 12px;
+    min-height: 36px;
 }
 
 #FileTableView::item:selected {

@@ -203,10 +203,7 @@ class FilesAPI:
 
     def delete_file(self, file_id: str) -> None:
         """
-        删除文件。
-
-        注意：AllahPan 系统设计为无系统级删除功能，
-        此接口仅用于清理已丢失的物理文件索引。
+        删除文件（与后端 DELETE /files/{file_id} 一致）。
 
         参数:
             file_id: 文件 ID

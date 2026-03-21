@@ -72,6 +72,9 @@ class ImageParserQueue:
         self._shutdown_event = asyncio.Event()
         self._total_processed = 0
         self._total_failed = 0
+        # 索引维护线程入队的「已解析但缺向量」修复任务，worker 需跳过 is_ai_parsed 早退
+        self._embedding_repair_ids: Set[str] = set()
+        self._event_loop: Optional[asyncio.AbstractEventLoop] = None
         logger.info(f"ImageParserQueue 初始化完成，worker 数量：{worker_count}")
 
     async def start(self) -> None:
@@ -80,6 +83,7 @@ class ImageParserQueue:
 
         创建指定数量的 worker 任务，扫描并加入未解析的图片，开始处理队列中的图片解析请求。
         """
+        self._event_loop = asyncio.get_running_loop()
         logger.info(f"启动 ImageParserQueue，worker 数量：{self.worker_count}")
         for i in range(self.worker_count):
             task = asyncio.create_task(self._worker(f"worker-{i}"))
@@ -169,6 +173,39 @@ class ImageParserQueue:
         logger.info(f"文件已加入解析队列：{file_id}, 队列长度：{self.queue.qsize()}")
         return True
 
+    async def enqueue_embedding_repair(self, file_id: str) -> bool:
+        """
+        元数据已 is_ai_parsed 但 Chroma 无向量时，强制重新走解析+向量化（供索引维护线程调度）。
+        """
+        file_meta = self.file_repo.get_file_metadata_by_id(file_id)
+        if file_meta is None:
+            return False
+        if not file_meta.filetype.startswith("image/"):
+            return False
+        if not file_meta.is_ai_parsed:
+            return False
+        if self.file_repo.get_vector(file_id) is not None:
+            return False
+        path = Path(file_meta.filepath)
+        if not path.is_file():
+            return False
+
+        async with self._processing_lock:
+            if file_id in self.processing:
+                return False
+            self._embedding_repair_ids.add(file_id)
+            self.processing.add(file_id)
+        await self.queue.put(file_id)
+        logger.info(
+            "索引维护：已加入向量修复队列：%s，当前队列长度：%s",
+            file_id,
+            self.queue.qsize(),
+        )
+        return True
+
+    def get_event_loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        return self._event_loop
+
     async def _worker(self, worker_name: str) -> None:
         """
         队列处理 worker。
@@ -243,9 +280,14 @@ class ImageParserQueue:
         file_meta = self.file_repo.get_file_metadata_by_id(file_id)
         if file_meta is None:
             raise ValueError(f"文件不存在：{file_id}")
-        
+
+        async with self._processing_lock:
+            repair_missing_vector = file_id in self._embedding_repair_ids
+            if repair_missing_vector:
+                self._embedding_repair_ids.discard(file_id)
+
         # 检查是否已解析（可能在工作过程中被其他 worker 解析）
-        if file_meta.is_ai_parsed:
+        if file_meta.is_ai_parsed and not repair_missing_vector:
             logger.info(f"文件已解析，跳过：{file_id}")
             return
         

@@ -15,7 +15,7 @@ from datetime import datetime
 
 from PySide6.QtCore import (
     QAbstractTableModel, QAbstractListModel,
-    QModelIndex, Qt, QUrl, QItemSelectionModel, QFileInfo
+    QModelIndex, Qt, QUrl, QItemSelectionModel, QFileInfo, Signal,
 )
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QFont, QAbstractFileIconProvider
 from PySide6.QtWidgets import QFileIconProvider
@@ -220,6 +220,8 @@ class FileTableModel(QAbstractTableModel):
     
     用于 QTableView 显示文件列表。
     """
+
+    row_check_toggled = Signal(int, bool)
     
     class Column:
         """列定义。"""
@@ -335,6 +337,7 @@ class FileTableModel(QAbstractTableModel):
             else:
                 self._selected_ids.discard(file_item.file_id)
             self.dataChanged.emit(index, index, [role])
+            self.row_check_toggled.emit(row, value == Qt.CheckState.Checked)
             return True
         
         return False
@@ -370,10 +373,6 @@ class FileTableModel(QAbstractTableModel):
     def get_files(self) -> List[FileItem]:
         """获取文件列表。"""
         return self._files
-    
-    def get_selected_files(self) -> List[FileItem]:
-        """获取选中的文件。"""
-        return [f for f in self._files if f.file_id in self._selected_ids]
     
     def get_file_by_index(self, index: QModelIndex) -> Optional[FileItem]:
         """根据索引获取文件。"""
@@ -421,6 +420,8 @@ class FileListModel(QAbstractListModel):
     
     用于 QListView（IconMode）显示文件网格。
     """
+
+    row_check_toggled = Signal(int, bool)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -480,6 +481,7 @@ class FileListModel(QAbstractListModel):
             else:
                 self._selected_ids.discard(file_item.file_id)
             self.dataChanged.emit(index, index, [role])
+            self.row_check_toggled.emit(row, value == Qt.CheckState.Checked)
             return True
         
         return False
@@ -517,6 +519,12 @@ class FileListModel(QAbstractListModel):
     def clear_selection(self) -> None:
         """清除所有选中。"""
         self._selected_ids.clear()
+        self.beginResetModel()
+        self.endResetModel()
+    
+    def select_all(self) -> None:
+        """全选所有文件。"""
+        self._selected_ids = {f.file_id for f in self._files}
         self.beginResetModel()
         self.endResetModel()
     

@@ -791,14 +791,35 @@ class MainWindow(QMainWindow):
         w.start()
     
     def _on_delete_requested(self, files: List[FileItem]) -> None:
-        """处理删除请求。根据设计文档，系统不支持文件删除功能。"""
-        QMessageBox.information(
-            self,
-            "不支持删除",
-            "AllahPan 系统不支持文件删除功能。\n"
-            "如需删除文件，请在文件管理器中手动删除本地文件，"
-            "系统会自动同步清理索引。"
-        )
+        """处理删除请求：调用后端 DELETE /files/{id}，遇错即停并刷新列表。"""
+        to_delete = [f for f in files if not getattr(f, "is_dir", False)]
+        if not to_delete:
+            return
+        api = FilesAPI()
+        deleted = 0
+        for f in to_delete:
+            try:
+                api.delete_file(f.file_id)
+                deleted += 1
+            except APIError as e:
+                QMessageBox.warning(
+                    self,
+                    "删除失败",
+                    f"删除「{f.filename}」失败：\n{e}\n\n已成功删除 {deleted} 个文件。",
+                )
+                self._load_files()
+                return
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.warning(
+                    self,
+                    "删除失败",
+                    f"删除「{f.filename}」时出错：\n{e}\n\n已成功删除 {deleted} 个文件。",
+                )
+                self._load_files()
+                return
+        if deleted:
+            QMessageBox.information(self, "删除完成", f"已删除 {deleted} 个文件。")
+        self._load_files()
     
     def _on_upload_completed(self, task_id: str, result: dict) -> None:
         """处理上传完成。"""

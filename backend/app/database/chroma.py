@@ -321,6 +321,62 @@ class ChromaDB:
 
         return self.search_by_vector(query_vector, n_results)
 
+    def iter_index_pages(
+        self,
+        page_size: int = 256,
+        include_metadatas: bool = True,
+    ):
+        """
+        分页遍历集合中的文档，默认不包含 embedding，降低内存与 IO。
+
+        每页产出 (doc_ids: List[str], metadatas: List[Optional[dict]])。
+        """
+        offset = 0
+        include = ["metadatas"] if include_metadatas else []
+        try:
+            while True:
+                result = self._collection.get(
+                    limit=page_size,
+                    offset=offset,
+                    include=include,
+                )
+                ids_batch = result.get("ids") or []
+                if not ids_batch:
+                    break
+                metas = result.get("metadatas") if include_metadatas else [None] * len(ids_batch)
+                if metas is None:
+                    metas = [None] * len(ids_batch)
+                yield ids_batch, metas
+                offset += len(ids_batch)
+                if len(ids_batch) < page_size:
+                    break
+        except TypeError:
+            # 旧版 chromadb 可能不支持 offset 分页，一次性拉取（仍不含 embedding）
+            logger.warning("Chroma get 不支持 offset 分页，回退为单次全量列举 id/metadata")
+            result = self._collection.get(include=include)
+            ids_batch = result.get("ids") or []
+            metas = result.get("metadatas") if include_metadatas else [None] * len(ids_batch)
+            if metas is None:
+                metas = [None] * len(ids_batch)
+            if ids_batch:
+                yield ids_batch, metas
+
+    def delete_vectors_batch(self, file_ids: List[str]) -> int:
+        """按业务 file_id 批量删除文档（内部 id 为 file_{uuid}）。成功时返回本次请求的文档数（与 len(file_ids) 一致）。"""
+        if not file_ids:
+            return 0
+        doc_ids = [f"file_{fid}" for fid in file_ids]
+        try:
+            self._collection.delete(ids=doc_ids)
+            return len(doc_ids)
+        except Exception as e:
+            logger.warning(f"批量删除向量失败，数量 {len(doc_ids)}，错误: {e}")
+            n = 0
+            for fid in file_ids:
+                if self.delete_vector(fid):
+                    n += 1
+            return n
+
     def get_all_vectors(self) -> List[Dict[str, Any]]:
         """
         获取数据库中的所有向量。

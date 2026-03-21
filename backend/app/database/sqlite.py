@@ -147,6 +147,12 @@ class SQLite:
                 FOREIGN KEY (userid) REFERENCES users(id)
             )
         """)
+        self.cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_file_metadata_userid ON file_metadata(userid)"
+        )
+        self.cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_file_metadata_filepath ON file_metadata(filepath)"
+        )
         self.conn.commit()
         logger.info("数据库表创建完成")
 
@@ -350,6 +356,33 @@ class SQLite:
             logger.debug(f"未找到文件元数据: {file_id}")
         return file_meta
 
+    def get_file_metadata_by_ids(self, file_ids: List[str]) -> dict[str, FileMetadata]:
+        """
+        批量按 ID 查询文件元数据（用于向量搜索等，避免 N+1 查询）。
+        未知或空 ID 会被跳过；结果以 file_id -> FileMetadata 映射返回。
+        """
+        if not file_ids:
+            return {}
+        keys = list(dict.fromkeys(
+            u for x in file_ids if (u := as_sql_text_param(x))
+        ))
+        if not keys:
+            return {}
+        out: dict[str, FileMetadata] = {}
+        chunk_size = 400
+        for i in range(0, len(keys), chunk_size):
+            chunk = keys[i : i + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            sql = f"SELECT * FROM file_metadata WHERE id IN ({placeholders})"
+            rows = self._execute_fetchall(sql, tuple(chunk))
+            for row in rows:
+                try:
+                    fm = FileMetadata.from_dict(dict(row))
+                    out[fm.file_id] = fm
+                except (KeyError, TypeError, ValueError) as e:
+                    logger.warning("批量查询中跳过无效行: %s", e)
+        return out
+
     def get_file_metadata_by_filename(
         self,
         filename: str
@@ -391,6 +424,41 @@ class SQLite:
             logger.debug(f"未找到文件元数据: {filepath}")
         return file_meta
 
+    def get_file_metadata_by_filepaths(self, filepaths: List[str]) -> dict[str, FileMetadata]:
+        """
+        批量按绝对路径查询元数据（目录列表惰性入库等场景，避免 N+1 查询）。
+        请求路径为 key；若库中路径仅大小写不同（Windows），仍能对上。
+        """
+        if not filepaths:
+            return {}
+        keys = list(dict.fromkeys(p for p in filepaths if p))
+        by_stored: dict[str, FileMetadata] = {}
+        chunk_size = 400
+        for i in range(0, len(keys), chunk_size):
+            chunk = keys[i : i + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            sql = f"SELECT * FROM file_metadata WHERE filepath IN ({placeholders})"
+            rows = self._execute_fetchall(sql, tuple(chunk))
+            for row in rows:
+                try:
+                    fm = FileMetadata.from_dict(dict(row))
+                    by_stored[fm.filepath] = fm
+                except (KeyError, TypeError, ValueError) as e:
+                    logger.warning("批量路径查询中跳过无效行: %s", e)
+
+        out: dict[str, FileMetadata] = {}
+        for p in keys:
+            m = by_stored.get(p)
+            if m is None:
+                pl = p.lower()
+                for sk, sv in by_stored.items():
+                    if sk.lower() == pl:
+                        m = sv
+                        break
+            if m is not None:
+                out[p] = m
+        return out
+
     def get_files_by_userid(self, user_id: str) -> List[FileMetadata]:
         """
         获取指定用户的所有文件。
@@ -419,6 +487,19 @@ class SQLite:
         files = [FileMetadata.from_dict(dict(row)) for row in rows]
         logger.debug(f"共获取 {len(files)} 个文件元数据")
         return files
+
+    def get_all_file_ids(self) -> List[str]:
+        """返回当前元数据表中全部文件 ID（仅 id 列，供索引对齐使用）。"""
+        rows = self._execute_fetchall("SELECT id FROM file_metadata")
+        return [str(dict(row)["id"]) for row in rows]
+
+    def get_ai_parsed_image_file_ids(self) -> List[str]:
+        """已标记 AI 解析且 MIME 为 image/* 的文件 ID 列表。"""
+        rows = self._execute_fetchall(
+            "SELECT id FROM file_metadata WHERE is_ai_parsed = 1 AND filetype LIKE ?",
+            ("image/%",),
+        )
+        return [str(dict(row)["id"]) for row in rows]
 
     def get_accessible_files(self) -> List[FileMetadata]:
         """
@@ -541,9 +622,9 @@ class SQLite:
         返回:
             List[FileMetadata]: 匹配的文件元数据列表
         """
-        logger.info(f"根据文件名搜索文件，关键字: {keyword}")
+        logger.debug("根据文件名搜索文件，关键字: %s", keyword)
         pattern = f"%{keyword}%"
         rows = self._execute_fetchall("SELECT * FROM file_metadata WHERE filename LIKE ?", (pattern,))
         files = [FileMetadata.from_dict(dict(row)) for row in rows]
-        logger.info(f"文件名搜索完成，匹配到 {len(files)} 个文件")
+        logger.debug("文件名搜索完成，匹配到 %s 个文件", len(files))
         return files

@@ -152,6 +152,13 @@ class FileBrowser(QWidget):
         self.download_button.clicked.connect(self._on_download_clicked)
         self.download_button.setEnabled(False)
         toolbar_layout.addWidget(self.download_button)
+
+        self.delete_button = QToolButton()
+        self.delete_button.setText("🗑️ 删除")
+        self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.delete_button.clicked.connect(self._on_delete_clicked)
+        self.delete_button.setEnabled(False)
+        toolbar_layout.addWidget(self.delete_button)
         
         self.refresh_button = QToolButton()
         self.refresh_button.setText("🔄 刷新")
@@ -207,6 +214,7 @@ class FileBrowser(QWidget):
         
         self.grid_model = FileListModel()
         view.setModel(self.grid_model)
+        self.grid_model.row_check_toggled.connect(self._on_grid_row_check_toggled)
         
         view.doubleClicked.connect(self._on_grid_double_clicked)
         sm = view.selectionModel()
@@ -311,6 +319,7 @@ class FileBrowser(QWidget):
         view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         view.setShowGrid(False)
         view.setSortingEnabled(True)
+        view.setAlternatingRowColors(True)
         
         vh = view.verticalHeader()
         if vh is not None:
@@ -324,6 +333,7 @@ class FileBrowser(QWidget):
         
         self.table_model = FileTableModel()
         view.setModel(self.table_model)
+        self.table_model.row_check_toggled.connect(self._on_table_row_check_toggled)
         
         header = view.horizontalHeader()
         if header is not None:
@@ -414,6 +424,8 @@ class FileBrowser(QWidget):
         new_model.sync_selection_display(saved_ids)
         self._selected_files = [f for f in self._files if f.file_id in saved_ids]
         self.download_button.setEnabled(len(self._selected_files) > 0)
+        deletable = [f for f in self._selected_files if not getattr(f, "is_dir", False)]
+        self.delete_button.setEnabled(len(deletable) > 0)
     
     def set_files(self, files: List[FileItem]) -> None:
         """
@@ -567,6 +579,19 @@ class FileBrowser(QWidget):
         selected = self.get_selected_files()
         if selected:
             self.download_requested.emit(selected)
+
+    def _on_delete_clicked(self) -> None:
+        """工具栏删除：仅删除选中的非目录项。"""
+        selected = self.get_selected_files()
+        deletable = [f for f in selected if not getattr(f, "is_dir", False)]
+        if not deletable:
+            QMessageBox.information(
+                self,
+                "删除",
+                "请选择要删除的文件（目录无法通过此处删除）。",
+            )
+            return
+        self._on_delete_action(deletable)
     
     def _on_refresh_clicked(self) -> None:
         """处理刷新按钮点击。"""
@@ -621,6 +646,8 @@ class FileBrowser(QWidget):
         model.sync_selection_display(selected_ids)
         self._selected_files = model.get_selected_files()
         self.download_button.setEnabled(len(self._selected_files) > 0)
+        deletable = [f for f in self._selected_files if not getattr(f, "is_dir", False)]
+        self.delete_button.setEnabled(len(deletable) > 0)
         self.file_selection_changed.emit(self._selected_files)
     
     def _show_context_menu(self, pos) -> None:
@@ -649,6 +676,13 @@ class FileBrowser(QWidget):
         copy_link_action = QAction("🔗 复制链接", menu)
         copy_link_action.triggered.connect(lambda: self._on_copy_link_action(selected))
         menu.addAction(copy_link_action)
+
+        deletable = [f for f in selected if not getattr(f, "is_dir", False)]
+        if deletable:
+            menu.addSeparator()
+            delete_action = QAction("🗑️ 删除", menu)
+            delete_action.triggered.connect(lambda: self._on_delete_action(deletable))
+            menu.addAction(delete_action)
         
         menu.addSeparator()
         open_storage_action = QAction("📂 在文件管理器中打开存储目录", menu)
@@ -736,12 +770,47 @@ class FileBrowser(QWidget):
         toast.show()
         QTimer.singleShot(2000, toast.hide)
     
-    def _on_delete_action(self, files: List[FileItem]) -> None:
-        """删除文件。"""
-        if len(files) == 1:
-            msg = f"确定要删除文件「{files[0].filename}」吗？\n此操作不可撤销。"
+    def _on_table_row_check_toggled(self, row: int, checked: bool) -> None:
+        """勾选列与行选择同步，避免仅勾选时后续 selection 覆盖掉勾选状态。"""
+        sm = self.list_view.selectionModel()
+        if sm is None or row < 0 or row >= self.table_model.rowCount():
+            return
+        idx = self.table_model.index(row, 0)
+        if not idx.isValid():
+            return
+        flags = QItemSelectionModel.SelectionFlag.Rows
+        if checked:
+            sm.select(idx, QItemSelectionModel.SelectionFlag.Select | flags)
         else:
-            msg = f"确定要删除选中的 {len(files)} 个文件吗？\n此操作不可撤销。"
+            sm.select(idx, QItemSelectionModel.SelectionFlag.Deselect | flags)
+
+    def _on_grid_row_check_toggled(self, row: int, checked: bool) -> None:
+        sm = self.grid_view.selectionModel()
+        if sm is None or row < 0 or row >= self.grid_model.rowCount():
+            return
+        idx = self.grid_model.index(row)
+        if not idx.isValid():
+            return
+        flags = QItemSelectionModel.SelectionFlag.Rows
+        if checked:
+            sm.select(idx, QItemSelectionModel.SelectionFlag.Select | flags)
+        else:
+            sm.select(idx, QItemSelectionModel.SelectionFlag.Deselect | flags)
+
+    def _on_delete_action(self, files: List[FileItem]) -> None:
+        """删除文件（不含目录）。"""
+        deletable = [f for f in files if not getattr(f, "is_dir", False)]
+        if not deletable:
+            QMessageBox.information(
+                self,
+                "删除",
+                "没有可删除的文件（目录无法通过此处删除）。",
+            )
+            return
+        if len(deletable) == 1:
+            msg = f"确定要删除文件「{deletable[0].filename}」吗？\n此操作不可撤销。"
+        else:
+            msg = f"确定要删除选中的 {len(deletable)} 个文件吗？\n此操作不可撤销。"
         
         reply = QMessageBox.question(
             self,
@@ -752,7 +821,7 @@ class FileBrowser(QWidget):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            self.delete_requested.emit(files)
+            self.delete_requested.emit(deletable)
     
     def set_drag_drop_enabled(self, enabled: bool) -> None:
         """

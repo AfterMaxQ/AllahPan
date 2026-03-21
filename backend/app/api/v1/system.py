@@ -107,6 +107,74 @@ class DirectoryInfo(BaseModel):
     size: int
 
 
+# GET /info、/storage 会递归统计目录体积，大库时极慢；短 TTL 缓存避免面板轮询拖垮磁盘与事件循环
+_storage_metrics_cache_lock = threading.Lock()
+_storage_metrics_cache_mono: float = 0.0
+_cached_storage_info: Optional[StorageInfo] = None
+_cached_directory_info: Optional[DirectoryInfo] = None
+STORAGE_METRICS_CACHE_TTL_SEC = 45.0
+
+
+def _dir_size_bytes(p: Path) -> int:
+    """统计目录下所有常规文件的字节数（一次遍历，供 info/storage 共用）。"""
+    total = 0
+    try:
+        for entry in p.rglob("*"):
+            if entry.is_file():
+                try:
+                    total += entry.stat().st_size
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
+def _refresh_storage_metrics_cache_unlocked() -> None:
+    """在已持有 _storage_metrics_cache_lock 时刷新 info + directory 缓存（单次目录遍历）。"""
+    global _cached_storage_info, _cached_directory_info
+    if not STORAGE_DIR.exists():
+        logger.info("存储目录不存在，返回零值存储信息")
+        _cached_storage_info = StorageInfo(
+            total_space=0,
+            used_space=0,
+            free_space=0,
+            file_count=0,
+        )
+        _cached_directory_info = DirectoryInfo(
+            path=str(STORAGE_DIR.absolute()),
+            exists=False,
+            size=0,
+        )
+        return
+
+    disk_total, _, disk_free = shutil.disk_usage(STORAGE_DIR)
+    used_space = _dir_size_bytes(STORAGE_DIR) if STORAGE_DIR.is_dir() else 0
+    try:
+        file_count = len(list(STORAGE_DIR.iterdir())) if STORAGE_DIR.is_dir() else 0
+    except OSError:
+        file_count = 0
+
+    logger.info(
+        "存储空间信息: 磁盘总=%s字节, 目录已用=%s字节, 磁盘剩余=%s字节, 文件数=%s",
+        disk_total,
+        used_space,
+        disk_free,
+        file_count,
+    )
+    _cached_storage_info = StorageInfo(
+        total_space=disk_total,
+        used_space=used_space,
+        free_space=disk_free,
+        file_count=file_count,
+    )
+    _cached_directory_info = DirectoryInfo(
+        path=str(STORAGE_DIR.absolute()),
+        exists=True,
+        size=used_space,
+    )
+
+
 @router.get("/info", response_model=StorageInfo)
 def get_storage_info(
     current_user: AuthUser = Depends(get_current_user),
@@ -124,42 +192,23 @@ def get_storage_info(
         StorageInfo: 包含存储空间信息的对象
     """
     logger.debug(f"查询存储空间信息，用户: {current_user.username}")
-    if not STORAGE_DIR.exists():
-        logger.info("存储目录不存在，返回零值存储信息")
-        return StorageInfo(
+    global _storage_metrics_cache_mono
+    now = time.monotonic()
+    with _storage_metrics_cache_lock:
+        if (
+            _cached_storage_info is not None
+            and (now - _storage_metrics_cache_mono) < STORAGE_METRICS_CACHE_TTL_SEC
+        ):
+            logger.debug("存储空间信息缓存命中")
+            return _cached_storage_info
+        _refresh_storage_metrics_cache_unlocked()
+        _storage_metrics_cache_mono = time.monotonic()
+        return _cached_storage_info or StorageInfo(
             total_space=0,
             used_space=0,
             free_space=0,
             file_count=0,
         )
-
-    def _dir_size(p: Path) -> int:
-        """统计目录下所有文件的实际占用字节数。"""
-        total = 0
-        try:
-            for entry in p.rglob("*"):
-                if entry.is_file():
-                    try:
-                        total += entry.stat().st_size
-                    except OSError:
-                        pass
-        except OSError:
-            pass
-        return total
-
-    disk_total, _, disk_free = shutil.disk_usage(STORAGE_DIR)
-    used_space = _dir_size(STORAGE_DIR) if STORAGE_DIR.is_dir() else 0
-    file_count = len(list(STORAGE_DIR.iterdir())) if STORAGE_DIR.is_dir() else 0
-
-    logger.info(
-        f"存储空间信息: 磁盘总={disk_total}字节, 目录已用={used_space}字节, 磁盘剩余={disk_free}字节, 文件数={file_count}"
-    )
-    return StorageInfo(
-        total_space=disk_total,
-        used_space=used_space,
-        free_space=disk_free,
-        file_count=file_count,
-    )
 
 
 @router.get("/storage", response_model=DirectoryInfo)
@@ -179,39 +228,22 @@ def get_storage_directory(
         DirectoryInfo: 包含目录信息的对象
     """
     logger.debug(f"查询存储目录信息，用户: {current_user.username}")
-    directory_size = _get_directory_size(STORAGE_DIR) if STORAGE_DIR.exists() else 0
-    logger.info(f"存储目录信息: 路径={STORAGE_DIR.absolute()}, 存在={STORAGE_DIR.exists()}, 大小={directory_size}字节")
-    return DirectoryInfo(
-        path=str(STORAGE_DIR.absolute()),
-        exists=STORAGE_DIR.exists(),
-        size=directory_size,
-    )
-
-
-def _get_directory_size(path: Path) -> int:
-    """
-    递归计算目录的总大小。
-    
-    该函数遍历目录中的所有文件，累加文件大小，
-    返回目录的总占用空间。
-    
-    参数:
-        path: 目录路径对象
-    
-    返回:
-        int: 目录总大小（字节）
-    """
-    logger.debug(f"计算目录大小: {path}")
-    total = 0
-    if path.is_file():
-        logger.debug(f"文件大小: {path} = {path.stat().st_size}字节")
-        return path.stat().st_size
-    for item in path.rglob("*"):
-        if item.is_file():
-            size = item.stat().st_size
-            total += size
-    logger.debug(f"目录大小计算完成: {path} = {total}字节")
-    return total
+    global _storage_metrics_cache_mono
+    now = time.monotonic()
+    with _storage_metrics_cache_lock:
+        if (
+            _cached_directory_info is not None
+            and (now - _storage_metrics_cache_mono) < STORAGE_METRICS_CACHE_TTL_SEC
+        ):
+            logger.debug("存储目录信息缓存命中")
+            return _cached_directory_info
+        _refresh_storage_metrics_cache_unlocked()
+        _storage_metrics_cache_mono = time.monotonic()
+        return _cached_directory_info or DirectoryInfo(
+            path=str(STORAGE_DIR.absolute()),
+            exists=False,
+            size=0,
+        )
 
 
 class WatcherStatus(BaseModel):
@@ -537,7 +569,7 @@ def get_system_status_summary(
     返回:
         SystemStatusSummary: 包含所有系统状态的摘要对象
     """
-    global _summary_cache_mono, _cached_summary
+    global _summary_cache_mono, _cached_summary, _storage_metrics_cache_mono
     logger.debug(f"查询系统状态摘要，用户: {current_user.username}")
     now = time.monotonic()
     with _summary_cache_lock:
@@ -545,25 +577,24 @@ def get_system_status_summary(
             logger.debug("系统状态摘要缓存命中")
             return _cached_summary
 
-    # 获取存储信息（避免异常导致 500，影响前端定时刷新）
+    # 存储指标与 GET /system/info 一致：目录实际占用 + 分区总空间/剩余（复用短 TTL 缓存，避免误用 disk_usage 的「整盘已用」）
     try:
-        if STORAGE_DIR.exists():
-            total, used, free = shutil.disk_usage(STORAGE_DIR)
-            if STORAGE_DIR.is_dir():
-                try:
-                    file_count = sum(1 for _ in STORAGE_DIR.iterdir())
-                except OSError:
-                    file_count = 0
+        now_m = time.monotonic()
+        with _storage_metrics_cache_lock:
+            if (
+                _cached_storage_info is not None
+                and (now_m - _storage_metrics_cache_mono) < STORAGE_METRICS_CACHE_TTL_SEC
+            ):
+                storage = _cached_storage_info
             else:
-                file_count = 0
-        else:
-            total = used = free = file_count = 0
-        storage = StorageInfo(
-            total_space=total,
-            used_space=used,
-            free_space=free,
-            file_count=file_count,
-        )
+                _refresh_storage_metrics_cache_unlocked()
+                _storage_metrics_cache_mono = time.monotonic()
+                storage = _cached_storage_info or StorageInfo(
+                    total_space=0,
+                    used_space=0,
+                    free_space=0,
+                    file_count=0,
+                )
     except Exception as e:
         logger.warning("获取存储信息失败: %s", e, exc_info=True)
         storage = StorageInfo(total_space=0, used_space=0, free_space=0, file_count=0)
