@@ -4,7 +4,7 @@ AI语义服务API模块。
 本模块提供AI相关的RESTful API接口，包括文件搜索、文件解析和Ollama状态查询。
 
 搜索功能说明：
-- 图片文件：使用Ollama进行语义搜索（向量匹配）
+- 图片文件：先匹配 SQLite 中 AI 生成的 description 关键词，再辅以向量检索
 - 文本文件：使用文件名匹配搜索（模糊查询）
 
 AI解析功能：
@@ -27,7 +27,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.v1.dependencies import get_current_user, get_ollama, get_file_repo, AuthUser
+from app.config import STORAGE_DIR
 from app.database.repositories.file_repository import FileRepository
+from app.models.file_metadata import FileMetadata
+from app.services.search_query_keywords import extract_search_keywords
 from ollama.ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
@@ -67,6 +70,7 @@ class SearchResult(BaseModel):
         is_ai_parsed: 是否已AI解析（用于语义搜索）
         size: 文件大小（字节）
         upload_time: 上传时间（可选，供前端展示）
+        relative_path: 相对存储根目录的所在文件夹（不含文件名），根目录文件为 null
     """
     file_id: str
     filename: str
@@ -74,6 +78,7 @@ class SearchResult(BaseModel):
     is_ai_parsed: bool
     size: int
     upload_time: Optional[str] = None
+    relative_path: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
@@ -161,6 +166,35 @@ def _file_id_from_vector_hit(item: dict) -> Optional[str]:
     return None
 
 
+def _relative_dir_under_storage(filepath_str: str) -> Optional[str]:
+    """相对网盘存储根目录的父文件夹路径（POSIX 斜杠）；文件在根目录时返回 None。"""
+    if not filepath_str or not str(filepath_str).strip():
+        return None
+    try:
+        p = Path(filepath_str).expanduser().resolve()
+        root = Path(STORAGE_DIR).expanduser().resolve()
+        rel = p.relative_to(root)
+        parent = rel.parent
+        if parent == Path("."):
+            return None
+        return str(parent).replace("\\", "/")
+    except (ValueError, OSError, RuntimeError):
+        return None
+
+
+def _search_result_row_from_metadata(file_meta: FileMetadata) -> dict:
+    """构造与 SearchResult 兼容的扁平字典。"""
+    return {
+        "file_id": file_meta.file_id,
+        "filename": file_meta.filename,
+        "filetype": file_meta.filetype,
+        "is_ai_parsed": file_meta.is_ai_parsed,
+        "size": file_meta.size,
+        "upload_time": getattr(file_meta, "upload_time", None),
+        "relative_path": _relative_dir_under_storage(file_meta.filepath),
+    }
+
+
 def _merge_vector_search_hits(
     file_repo: FileRepository,
     vector_results: List[dict],
@@ -205,14 +239,7 @@ def _merge_vector_search_hits(
             resolved = file_meta.filepath
         dedupe_key = f"{file_meta.userid}\x00{resolved}"
 
-        row = {
-            "file_id": file_meta.file_id,
-            "filename": file_meta.filename,
-            "filetype": file_meta.filetype,
-            "is_ai_parsed": file_meta.is_ai_parsed,
-            "size": file_meta.size,
-            "upload_time": getattr(file_meta, "upload_time", None),
-        }
+        row = _search_result_row_from_metadata(file_meta)
         prev = path_key_best.get(dedupe_key)
         if prev is None or distance < prev[0]:
             path_key_best[dedupe_key] = (distance, file_meta.file_id, row)
@@ -233,8 +260,8 @@ async def search_files(
     搜索文件接口。
 
     混合搜索策略：
-    - 首先进行文件名模糊匹配（所有文件类型）
-    - 对于已AI解析的图片文件，同时进行向量语义搜索
+    - 文件名模式：按文件名模糊匹配
+    - 语义相关：对已解析图片，先用 description 字段关键词命中排序，再用向量相似度补全结果
 
     参数:
         request: 搜索请求，包含查询关键字和结果数量限制
@@ -257,36 +284,72 @@ async def search_files(
                 detail="搜索查询不能为空",
             )
 
-        results_dict = {}
         mode_param = (request.search_mode or "mixed").strip().lower()
         if mode_param not in ("filename", "vector", "mixed"):
             mode_param = "mixed"
+
+        limit = max(1, int(request.limit))
+        results_order: List[dict] = []
+        seen_ids: set[str] = set()
+
+        def append_from_meta(fm: FileMetadata) -> None:
+            fid = fm.file_id
+            if fid in seen_ids:
+                return
+            seen_ids.add(fid)
+            results_order.append(_search_result_row_from_metadata(fm))
+
+        def append_from_row(row: dict) -> None:
+            fid = row.get("file_id")
+            if not fid or fid in seen_ids:
+                return
+            seen_ids.add(fid)
+            results_order.append(row)
+
         search_mode = "filename"
 
-        # 按文件名搜索（文件名/字符搜索）
         if mode_param in ("filename", "mixed"):
             filename_results = file_repo.search_files_by_filename(request.query)
             for file_meta in filename_results:
-                results_dict[file_meta.file_id] = {
-                    "file_id": file_meta.file_id,
-                    "filename": file_meta.filename,
-                    "filetype": file_meta.filetype,
-                    "is_ai_parsed": file_meta.is_ai_parsed,
-                    "size": file_meta.size,
-                    "upload_time": getattr(file_meta, "upload_time", None),
-                }
+                append_from_meta(file_meta)
+                if len(results_order) >= limit:
+                    break
             if filename_results:
                 search_mode = "filename" if mode_param == "filename" else "mixed"
 
-        # 仅当需要向量时且文件名未达上限时做语义/图片搜索
-        if mode_param == "vector" or (mode_param == "mixed" and len(results_dict) < request.limit):
+        keywords = extract_search_keywords(request.query)
+        need_semantic_fill = mode_param == "vector" or (
+            mode_param == "mixed" and len(results_order) < limit
+        )
+
+        if need_semantic_fill and keywords:
+            desc_matches = file_repo.search_images_by_description_keywords(
+                current_user.id, keywords
+            )
+            before_n = len(results_order)
+            for fm in desc_matches:
+                if len(results_order) >= limit:
+                    break
+                append_from_meta(fm)
+            if len(results_order) > before_n:
+                search_mode = "vector" if mode_param == "vector" else "mixed"
+                logger.debug(
+                    "description 关键词命中 %s 条（展示序优先）",
+                    len(results_order) - before_n,
+                )
+
+        need_vector = mode_param == "vector" or (
+            mode_param == "mixed" and len(results_order) < limit
+        )
+
+        if need_vector:
             if await ollama.is_available():
                 try:
                     query_vector = await ollama.embed_text(request.query)
                     logger.debug("查询向量生成完成，维度: %s", len(query_vector))
                     vector_results = file_repo.search_similar_files(
                         query_vector=query_vector,
-                        n_results=request.limit,
+                        n_results=limit,
                     )
                     logger.debug("向量搜索返回 %s 个结果", len(vector_results))
 
@@ -298,31 +361,29 @@ async def search_files(
                         len(merged_hits),
                         len(vector_results),
                     )
+                    before_n = len(results_order)
                     for distance, file_id, row in merged_hits:
+                        if len(results_order) >= limit:
+                            break
                         logger.debug(
                             "向量结果(已对齐): file_id=%s, distance=%s, filename=%s",
                             file_id,
                             f"{distance:.4f}" if distance != float("inf") else "n/a",
                             row.get("filename"),
                         )
-                        if file_id not in results_dict:
-                            results_dict[file_id] = row
-                        if mode_param == "vector":
-                            search_mode = "vector"
-                        else:
-                            search_mode = "mixed"
+                        append_from_row(row)
+                    if len(results_order) > before_n:
+                        search_mode = "vector" if mode_param == "vector" else "mixed"
                 except Exception as e:
-                    logger.warning(f"向量搜索失败: {e}")
-                    if mode_param == "vector":
-                        results_dict.clear()
+                    logger.warning("向量搜索失败: %s", e)
             elif mode_param == "vector":
-                results_dict.clear()
+                logger.warning("Ollama 不可用，跳过向量检索（仍保留 description 等已有结果）")
 
-        if len(results_dict) == 0 and mode_param != "mixed":
+        if len(results_order) == 0 and mode_param != "mixed":
             logger.info("当前模式无匹配，返回空结果")
             return SearchResponse(results=[], total=0, mode=mode_param)
 
-        results = list(results_dict.values())[:request.limit]
+        results = results_order[:limit]
 
         logger.debug("搜索完成，找到 %s 个匹配结果，模式: %s", len(results), search_mode)
         return SearchResponse(
@@ -423,6 +484,12 @@ async def parse_file(
             vector=embedding,
             metadata=vector_metadata,
         )
+
+        if not file_repo.update_file_description(file_id, extracted_text.strip()):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="解析成功但无法写入图片描述，请重试",
+            )
         
         file_repo.mark_as_ai_parsed(file_id)
         

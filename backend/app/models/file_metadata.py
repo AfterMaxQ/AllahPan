@@ -42,7 +42,8 @@ class FileMetadata:
         userid: str,
         is_ai_parsed: bool = False,
         file_id: Optional[str] = None,
-        upload_time: Optional[str] = None
+        upload_time: Optional[str] = None,
+        description: Optional[str] = None,
     ):
         """
         初始化FileMetadata实例。
@@ -65,6 +66,7 @@ class FileMetadata:
         self.userid = userid
         self.is_ai_parsed = is_ai_parsed
         self.upload_time = upload_time or datetime.now().isoformat()
+        self.description = description
 
     def to_dict(self) -> dict:
         """
@@ -81,7 +83,8 @@ class FileMetadata:
             "filetype": self.filetype,
             "userid": self.userid,
             "is_ai_parsed": self.is_ai_parsed,
-            "upload_time": self.upload_time
+            "upload_time": self.upload_time,
+            "description": self.description,
         }
 
     @staticmethod
@@ -106,5 +109,6 @@ class FileMetadata:
             filetype=data["filetype"],
             userid=data["userid"],
             is_ai_parsed=is_ai_parsed,
-            upload_time=data.get("upload_time")
+            upload_time=data.get("upload_time"),
+            description=data.get("description"),
         )

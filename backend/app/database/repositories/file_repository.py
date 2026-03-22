@@ -10,7 +10,7 @@
 最后修改: 2026-03-19
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from app.models.file_metadata import FileMetadata
 from app.database.sqlite import SQLite
@@ -338,7 +338,7 @@ class FileRepository:
         返回:
             bool: 更新成功返回True，否则返回False
         """
-        logger.info(f"FileRepository标记文件为已解析，文件ID: {file_id}")
+        logger.debug(f"FileRepository标记文件为已解析，文件ID: {file_id}")
         return self.sqlite.update_file_ai_status(file_id, True)
 
     def is_ai_parsed(self, file_id: str) -> bool:
@@ -371,6 +371,40 @@ class FileRepository:
         files = self.sqlite.get_unparsed_files()
         logger.debug(f"共获取 {len(files)} 个未解析文件")
         return files
+
+    def update_file_description(self, file_id: str, description: Optional[str]) -> bool:
+        """写入或清空 SQLite 中的 AI 图片描述全文。"""
+        return self.sqlite.update_file_description(file_id, description)
+
+    def search_images_by_description_keywords(
+        self,
+        user_id: str,
+        keywords: Sequence[str],
+    ) -> List[FileMetadata]:
+        """
+        按 description 关键词匹配当前用户的图片，命中数多者优先。
+        keywords 应为 extract_search_keywords 的输出。
+        """
+        from app.services.search_query_keywords import (
+            description_keyword_match_score,
+            keywords_to_like_patterns,
+        )
+
+        kw_list = [k for k in keywords if k]
+        patterns = keywords_to_like_patterns(kw_list)
+        if not patterns:
+            return []
+        rows = self.sqlite.search_image_files_by_description_like(
+            user_id, patterns
+        )
+        rows.sort(
+            key=lambda fm: (
+                -description_keyword_match_score(fm.description or "", kw_list),
+                -(fm.size or 0),
+                fm.file_id,
+            )
+        )
+        return rows
 
     def search_files_by_filename(self, keyword: str) -> List[FileMetadata]:
         """

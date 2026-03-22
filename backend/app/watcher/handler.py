@@ -12,7 +12,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+from concurrent.futures import Future as ConcurrentFuture
 from typing import Optional, TYPE_CHECKING
 
 import mimetypes
@@ -26,6 +28,7 @@ from watchdog.events import (
 
 from app.database.repositories.file_repository import FileRepository
 from app.models.file_metadata import FileMetadata
+from app.services.image_parser import get_image_parser_queue, is_image_file_for_parsing
 
 if TYPE_CHECKING:
     from app.database.sqlite import SQLite
@@ -84,6 +87,40 @@ class FileDeletionEventHandler(FileSystemEventHandler):
         self.file_repo = FileRepository(sqlite_db=self.sqlite, chroma_db=self.chroma)
         logger.info(f"FileDeletionEventHandler初始化完成，监控路径: {self.watch_path}")
 
+    def _schedule_image_parse_if_needed(
+        self,
+        file_id: str,
+        filetype: str,
+        filename: str,
+    ) -> None:
+        """将未解析图片提交到异步解析队列（Watchdog 线程安全地投递到主事件循环）。"""
+        if not is_image_file_for_parsing(filetype, filename):
+            return
+        queue = get_image_parser_queue()
+        if queue is None:
+            logger.debug("ImageParserQueue 未初始化，Watcher 跳过解析入队：%s", file_id)
+            return
+        loop = queue.get_event_loop()
+        if loop is None:
+            logger.debug("解析队列事件循环未绑定，Watcher 跳过入队：%s", file_id)
+            return
+        try:
+            running = loop.is_running()
+        except Exception:
+            running = False
+        if not running:
+            logger.debug("事件循环未运行，Watcher 跳过解析入队：%s", file_id)
+            return
+
+        def _done(fut: ConcurrentFuture) -> None:
+            try:
+                fut.result()
+            except Exception as e:
+                logger.warning("Watcher 解析入队失败 %s：%s", file_id, e)
+
+        fut = asyncio.run_coroutine_threadsafe(queue.add_to_queue(file_id), loop)
+        fut.add_done_callback(_done)
+
     def _get_file_by_path(self, file_path: str) -> Optional[dict]:
         """
         根据文件路径查找数据库中的文件记录。
@@ -127,7 +164,14 @@ class FileDeletionEventHandler(FileSystemEventHandler):
         abs_path = os.path.abspath(file_path)
         if not os.path.isfile(abs_path):
             return False
-        if self.file_repo.get_file_metadata_by_filepath(abs_path):
+        existing = self.file_repo.get_file_metadata_by_filepath(abs_path)
+        if existing is not None:
+            if not existing.is_ai_parsed:
+                self._schedule_image_parse_if_needed(
+                    existing.file_id,
+                    existing.filetype,
+                    existing.filename,
+                )
             return True
         user_id = self._get_default_user_id()
         if not user_id:
@@ -146,8 +190,17 @@ class FileDeletionEventHandler(FileSystemEventHandler):
                 userid=user_id,
                 is_ai_parsed=False,
             )
-            self.file_repo.create_file_metadata(meta)
-            logger.info(f"Watcher 新建文件入库: {filename}, file_id={meta.file_id}")
+            created = self.file_repo.create_file_metadata(meta)
+            logger.info(
+                "Watcher 新建文件入库: %s, file_id=%s",
+                filename,
+                created.file_id,
+            )
+            self._schedule_image_parse_if_needed(
+                created.file_id,
+                created.filetype,
+                created.filename,
+            )
             return True
         except Exception as e:
             logger.error(f"新建文件入库失败 {abs_path}: {e}")
@@ -262,6 +315,12 @@ class FileDeletionEventHandler(FileSystemEventHandler):
                     file_meta.filename = os.path.basename(dest_path)
                     self.file_repo.update_file_metadata(file_meta)
                     logger.info(f"文件移动已同步到 DB: {file_meta.filename}")
+                    if not file_meta.is_ai_parsed:
+                        self._schedule_image_parse_if_needed(
+                            file_meta.file_id,
+                            file_meta.filetype,
+                            file_meta.filename,
+                        )
                 except Exception as e:
                     logger.error(f"更新移动后路径失败: {e}")
             else:

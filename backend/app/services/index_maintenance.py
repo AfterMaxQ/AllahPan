@@ -15,10 +15,12 @@ import random
 import threading
 import time
 from concurrent.futures import Future as ConcurrentFuture
+from pathlib import Path
 from typing import List, Optional, Set
 
 from app.config import (
     INDEX_MAINTENANCE_CHROMA_PAGE_SIZE,
+    INDEX_MAINTENANCE_EMPTY_PARSED_TEXT_MAX,
     INDEX_MAINTENANCE_INTERVAL_SEC,
     INDEX_MAINTENANCE_ORPHAN_DELETE_BATCH,
     INDEX_MAINTENANCE_REPAIR_MAX_PER_RUN,
@@ -93,7 +95,11 @@ class IndexMaintenanceService:
 
     def _reconcile_pass(self) -> None:
         from app.api.v1.dependencies import get_file_repo
-        from app.services.image_parser import get_image_parser_queue
+        from app.services.image_parser import (
+            chroma_parsed_text_is_empty,
+            get_image_parser_queue,
+            is_image_file_for_parsing,
+        )
 
         t0 = time.monotonic()
         file_repo = get_file_repo()
@@ -103,6 +109,7 @@ class IndexMaintenanceService:
         # 本轮扫描中 Chroma 里出现的业务 file_id（与逐条 get_vector 等价，避免修复阶段 O(N) 次查询）
         chroma_file_ids: Set[str] = set()
 
+        empty_parsed_fids: Set[str] = set()
         page_size = max(32, INDEX_MAINTENANCE_CHROMA_PAGE_SIZE)
         for doc_ids, metas in file_repo.chroma.iter_index_pages(page_size=page_size):
             for i, doc_id in enumerate(doc_ids):
@@ -110,6 +117,8 @@ class IndexMaintenanceService:
                 fid = _file_id_from_chroma_doc(doc_id, meta)
                 if fid:
                     chroma_file_ids.add(fid)
+                    if fid in valid_ids and chroma_parsed_text_is_empty(meta):
+                        empty_parsed_fids.add(fid)
                 if not fid or fid in valid_ids:
                     continue
                 if fid not in seen_orphan:
@@ -154,11 +163,68 @@ class IndexMaintenanceService:
                 _schedule(fid)
                 repair_enqueued += 1
 
+        reparse_empty_enqueued = 0
+        empty_cap = max(0, INDEX_MAINTENANCE_EMPTY_PARSED_TEXT_MAX)
+        if (
+            queue is not None
+            and loop is not None
+            and empty_cap > 0
+            and empty_parsed_fids
+        ):
+
+            def _schedule_empty_parsed_repair(fid_inner: str) -> None:
+                fut = asyncio.run_coroutine_threadsafe(
+                    queue.enqueue_empty_parsed_text_repair(fid_inner),
+                    loop,
+                )
+
+                def _done(f: ConcurrentFuture, x: str = fid_inner) -> None:
+                    try:
+                        ok = f.result()
+                        if ok:
+                            logger.debug(
+                                "索引维护已排程 Chroma 空描述重解析：%s",
+                                x,
+                            )
+                    except Exception as ex:
+                        logger.warning(
+                            "索引维护排程空描述重解析失败 %s：%s",
+                            x,
+                            ex,
+                        )
+
+                fut.add_done_callback(_done)
+
+            candidates = sorted(fid for fid in empty_parsed_fids if fid in valid_ids)
+            chunk_size = 200
+            for off in range(0, len(candidates), chunk_size):
+                if reparse_empty_enqueued >= empty_cap:
+                    break
+                chunk = candidates[off : off + chunk_size]
+                meta_map = file_repo.get_file_metadata_by_ids(chunk)
+                for fid in chunk:
+                    if reparse_empty_enqueued >= empty_cap:
+                        break
+                    fm = meta_map.get(fid)
+                    if fm is None or not is_image_file_for_parsing(
+                        fm.filetype, fm.filename
+                    ):
+                        continue
+                    try:
+                        if not Path(fm.filepath).is_file():
+                            continue
+                    except OSError:
+                        continue
+
+                    _schedule_empty_parsed_repair(fid)
+                    reparse_empty_enqueued += 1
+
         elapsed = time.monotonic() - t0
         self._last_run_mono = time.monotonic()
         self._last_summary = (
             f"orphan_file_ids={len(orphan_file_ids)}, deleted_vectors={deleted_vectors}, "
             f"batch_delete_rounds={batch_delete_rounds}, repair_scheduled={repair_enqueued}, "
+            f"empty_parsed_reparse_scheduled={reparse_empty_enqueued}, "
             f"valid_files={len(valid_ids)}, chroma_docs_seen={len(chroma_file_ids)}, "
             f"{elapsed:.2f}s"
         )

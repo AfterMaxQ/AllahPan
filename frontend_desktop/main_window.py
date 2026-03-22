@@ -628,10 +628,35 @@ class MainWindow(QMainWindow):
             self._load_files()
             return
         if not is_ai:
-            current = self.file_browser.get_files()
-            filtered = [f for f in current if keyword.lower() in f.filename.lower()]
-            self.file_browser.set_files(filtered)
-            self.status_bar.set_sync_status(True, f"文件名搜索: {len(filtered)} 结果")
+            current_path = (getattr(self, "_current_path", "") or "").strip().replace("\\", "/")
+            self.file_browser.show_loading(True, "搜索中…")
+
+            def _search_under():
+                return FilesAPI().search_under(q=keyword, path=current_path or None, limit=200)
+
+            def _on_filename_ready(data: dict) -> None:
+                self.file_browser.show_loading(False)
+                files_data = data.get("files", []) or []
+                total = int(data.get("total", len(files_data)))
+                file_items = [FileItem.from_dict(f) for f in files_data]
+                if total == 0:
+                    self.file_browser.set_files([])
+                    self.file_browser.set_empty_state_override(
+                        f'未找到文件名包含 "{keyword}" 的结果',
+                        "可尝试其他关键词或切换到图片/语义搜索",
+                    )
+                else:
+                    self.file_browser.set_files(file_items)
+                self.status_bar.set_sync_status(True, f"文件名搜索: {total} 结果")
+
+            def _on_filename_failed(err: str) -> None:
+                self.file_browser.show_loading(False)
+                QMessageBox.warning(self, "搜索失败", f"文件名搜索失败:\n{err}")
+
+            w = CallableWorker(_search_under, parent=self)
+            w.finished.connect(_on_filename_ready, Qt.ConnectionType.QueuedConnection)
+            w.failed.connect(_on_filename_failed, Qt.ConnectionType.QueuedConnection)
+            w.start()
             return
 
         self.file_browser.show_loading(True, "AI 搜索中…")

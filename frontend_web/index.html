@@ -510,6 +510,18 @@
             color: var(--text-primary);
         }
 
+        .file-path-hint {
+            font-size: 12px;
+            line-height: 1.35;
+            color: var(--text-secondary);
+            opacity: 0.88;
+            margin: -2px 0 6px 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+        }
+
         .file-meta {
             font-size: 14px;
             color: var(--text-secondary);
@@ -1103,8 +1115,10 @@
                 min-width: 0;
                 display: flex;
                 flex-direction: column;
-                justify-content: center;
+                justify-content: flex-start;
+                align-items: stretch;
                 gap: 4px;
+                align-self: center;
             }
 
             .file-name {
@@ -1114,6 +1128,24 @@
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
+            }
+
+            .file-path-hint {
+                font-size: 11px;
+                margin: 0 0 4px 0;
+                opacity: 0.92;
+                /* 覆盖桌面端 nowrap：窄屏需换行，否则长路径在 flex 内易被挤成 0 宽不可见 */
+                white-space: normal;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+                line-height: 1.4;
+                max-width: 100%;
+                min-height: 1.2em;
+            }
+
+            .file-path-hint-placeholder {
+                opacity: 0.72;
+                font-style: normal;
             }
 
             .file-meta {
@@ -1496,7 +1528,7 @@
 
             <div class="search-box">
                 <div class="search-tabs">
-                    <button type="button" class="search-tab active" id="searchTabFilename" data-mode="filename" onclick="setSearchMode('filename')">按文件名</button>
+                    <button type="button" class="search-tab active" id="searchTabFilename" data-mode="filename" onclick="setSearchMode('filename')" title="包含子文件夹">当前目录</button>
                     <button type="button" class="search-tab" id="searchTabVector" data-mode="vector" onclick="setSearchMode('vector')">图片/语义</button>
                 </div>
                 <div class="search-input-wrapper">
@@ -1506,7 +1538,7 @@
                         class="search-input"
                         enterkeyhint="search"
                         autocomplete="off"
-                        placeholder="搜索文件名或语义…"
+                        placeholder="在当前文件夹及子文件夹中按文件名搜索…"
                     >
                     <button class="btn btn-primary" id="searchBtn" onclick="runSearch(document.getElementById('searchInput').value.trim())">搜索</button>
                     <button class="btn btn-secondary hidden" id="cancelSearchBtn" onclick="cancelSearch()">取消</button>
@@ -1588,6 +1620,8 @@
         /** 上次填充「上传目标」下拉时对应的浏览路径；同路径下刷新列表须保留用户已选文件夹，否则会误重置为根目录 */
         let lastUploadDestFillBrowsingPath = null;
         let isSearchView = false;  // 当前是否为搜索结果（不显示目录、用 results 渲染）
+        /** 递增以丢弃过期的搜索回调（避免取消/新搜索后旧请求覆盖界面） */
+        let searchRequestGeneration = 0;
         let sessionExpiredHandled = false;  // 避免 401 重复弹窗
         let currentSearchMode = 'filename';  // 搜索模式：filename 按文件名，vector 图片/语义
 
@@ -1609,6 +1643,35 @@
             } catch (e) {
                 return false;
             }
+        }
+
+        /** 搜索结果中的相对路径（search-under / AI search）；兼容 snake_case 与 camelCase */
+        function resolveSearchResultRelativePath(file) {
+            if (!file) return '';
+            var v = file.relative_path;
+            if (v == null || v === '') v = file.relativePath;
+            if (v == null) return '';
+            return String(v).trim();
+        }
+
+        /** 与桌面端 FileItem._normalize_is_ai_parsed 一致，避免 API 返回 0/1 字符串时 Web 与桌面显示不一致 */
+        function normalizeIsAiParsed(raw) {
+            if (raw == null) return false;
+            if (typeof raw === 'boolean') return raw;
+            if (typeof raw === 'string') {
+                var s = raw.toLowerCase();
+                return s === 'true' || s === '1' || s === 'yes' || s === 'on';
+            }
+            if (typeof raw === 'number') return raw !== 0;
+            return false;
+        }
+
+        function resetSearchUi() {
+            isSearchView = false;
+            var si = document.getElementById('searchInput');
+            if (si) si.value = '';
+            var cb = document.getElementById('cancelSearchBtn');
+            if (cb) cb.classList.add('hidden');
         }
 
         // 文件列表轮询相关变量
@@ -2223,10 +2286,12 @@
         }
         
         // 加载文件列表（与后端 GET /files/list?path= 一致）
-        function loadFileList() {
-            isSearchView = false;
-            document.getElementById('searchInput').value = '';
-            document.getElementById('cancelSearchBtn').classList.add('hidden');
+        // opts.resetSearch === false 时不清空搜索框（用于待处理的二次 load、取消搜索后已由调用方 reset 等）
+        function loadFileList(opts) {
+            opts = opts || {};
+            if (opts.resetSearch !== false) {
+                resetSearchUi();
+            }
             if (fileListLoadLocked) {
                 fileListLoadPending = true;
                 return;
@@ -2237,6 +2302,10 @@
             container.innerHTML = '<div class="loading-state"><span class="loading"></span>加载中...</div>';
             Logger.info('加载文件列表', currentPath || '(根目录)');
             API.files.list(currentPath, currentToken).then(function (res) {
+                if (isSearchView) {
+                    Logger.debug('文件列表已返回但当前为搜索视图，忽略本次列表渲染（避免盖住搜索中/结果）');
+                    return;
+                }
                 if (!res.ok) {
                     if (res.status === 401) handleSessionExpired();
                     else {
@@ -2266,13 +2335,17 @@
                 touchListFetchTime();
             }).catch(function (err) {
                 Logger.error('加载文件列表异常', err);
-                container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div>网络错误，请重试</div></div>';
+                if (!isSearchView) {
+                    container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div>网络错误，请重试</div></div>';
+                }
             }).finally(function () {
                 fileListNetworkInFlight = false;
                 fileListLoadLocked = false;
                 if (fileListLoadPending) {
                     fileListLoadPending = false;
-                    loadFileList();
+                    if (!isSearchView) {
+                        loadFileList({ resetSearch: false });
+                    }
                 }
             });
         }
@@ -2297,27 +2370,49 @@
             if (isSearchView) {
                 var q = document.getElementById('searchInput').value.trim();
                 if (!q) {
-                    loadFileList();
+                    loadFileList({ resetSearch: true });
                     return;
                 }
-                Logger.info('软刷新搜索结果', q);
-                API.ai.search(q, 20, currentToken, currentSearchMode).then(function (res) {
-                    if (!res.ok) {
-                        if (res.status === 401) handleSessionExpired();
-                        else showAppToast(res.error || '刷新列表失败', 'error');
-                        return;
-                    }
-                    var data = res.data;
-                    var results = Array.isArray(data && data.results) ? data.results : [];
-                    var total = (data && typeof data.total === 'number') ? data.total : results.length;
-                    var mode = (data && data.mode) ? data.mode : '';
-                    renderList([], results, true);
-                    document.getElementById('fileCount').textContent = '找到 ' + total + ' 个结果' + (mode ? ' (' + mode + ')' : '');
+                Logger.info('软刷新搜索结果', q, currentSearchMode);
+                function afterSearchRender(data, countLabel) {
+                    var results = (data && data.results) ? data.results : null;
+                    var files = (data && data.files) ? data.files : null;
+                    var list = results != null ? results : (files != null ? files : []);
+                    var total = (data && typeof data.total === 'number') ? data.total : list.length;
+                    renderList([], list, true);
+                    document.getElementById('fileCount').textContent = countLabel(total, data);
                     restoreScroll();
-                }).catch(function (err) {
-                    Logger.error('软刷新搜索异常', err);
-                    showAppToast('刷新失败，请重试', 'error');
-                });
+                }
+                if (currentSearchMode === 'filename') {
+                    API.files.searchUnder(currentPath, q, 200, currentToken).then(function (res) {
+                        if (!res.ok) {
+                            if (res.status === 401) handleSessionExpired();
+                            else showAppToast(res.error || '刷新列表失败', 'error');
+                            return;
+                        }
+                        afterSearchRender(res.data, function (total) {
+                            return '找到 ' + total + ' 个结果（当前文件夹及子文件夹）';
+                        });
+                    }).catch(function (err) {
+                        Logger.error('软刷新搜索异常', err);
+                        showAppToast('刷新失败，请重试', 'error');
+                    });
+                } else {
+                    API.ai.search(q, 20, currentToken, currentSearchMode).then(function (res) {
+                        if (!res.ok) {
+                            if (res.status === 401) handleSessionExpired();
+                            else showAppToast(res.error || '刷新列表失败', 'error');
+                            return;
+                        }
+                        afterSearchRender(res.data, function (total, data) {
+                            var mode = (data && data.mode) ? data.mode : '';
+                            return '找到 ' + total + ' 个结果' + (mode ? ' (' + mode + ')' : '');
+                        });
+                    }).catch(function (err) {
+                        Logger.error('软刷新搜索异常', err);
+                        showAppToast('刷新失败，请重试', 'error');
+                    });
+                }
                 return;
             }
             Logger.info('软刷新文件列表', currentPath || '(根目录)');
@@ -2424,8 +2519,9 @@
             fileSelectionMode = false;
             selectedFileMap = {};
             updateSelectionBar();
+            resetSearchUi();
             currentPath = path || '';
-            loadFileList();
+            loadFileList({ resetSearch: false });
         }
 
         /**
@@ -2640,7 +2736,7 @@
                 var icon = getFileIcon(file.filetype);
                 var size = formatFileSize(file.size || 0);
                 var date = file.upload_time ? new Date(file.upload_time).toLocaleDateString('zh-CN') : '—';
-                var isParsed = file.is_ai_parsed;
+                var isParsed = normalizeIsAiParsed(file.is_ai_parsed);
                 var fid = (file.file_id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                 var fname = (file.filename || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
                 var ftype = (file.filetype || '').toLowerCase();
@@ -2658,6 +2754,13 @@
                 var encMime = encodeURIComponent(ftype || '');
                 var encName = encodeURIComponent(file.filename || '');
                 var nameTitle = escapeHtmlAttr(file.filename || '');
+                var relPathRaw = isSearch ? resolveSearchResultRelativePath(file) : '';
+                var pathPlaceholder = isSearch && !relPathRaw && isNarrowMobile();
+                var relPathDisplay = relPathRaw || (pathPlaceholder ? '当前目录' : '');
+                var pathTitle = relPathRaw || (pathPlaceholder ? '文件位于当前浏览目录（无子文件夹）' : '');
+                var pathHintHtml = relPathDisplay
+                    ? '<div class="file-path-hint' + (pathPlaceholder ? ' file-path-hint-placeholder' : '') + '" title="' + escapeHtmlAttr(pathTitle) + '">' + escapeHtml(relPathDisplay) + '</div>'
+                    : '';
                 var rawId = file.file_id || '';
                 var isSel = selOn && rawId && selectedFileMap[rawId];
                 var selCol = selOn
@@ -2668,6 +2771,7 @@
                     selCol +
                     '<div class="file-icon" aria-hidden="true">' + icon + '</div>' +
                     '<div class="file-info"><div class="file-name" title="' + nameTitle + '">' + escapeHtml(file.filename) + '</div>' +
+                    pathHintHtml +
                     '<div class="file-meta"><span>' + size + '</span><span>' + date + '</span>' +
                     (isParsed ? '<span class="badge badge-success">AI 已解析</span>' : '<span class="badge badge-warning">未解析</span>') + '</div></div>' +
                     '<div class="file-actions">' +
@@ -2688,7 +2792,7 @@
 
         /** 未解析但可能由后台异步变为已解析的类型（与可触发 AI 解析的图片一致）；.py 等不应触发列表轮询 */
         function filePendingAiParse(file) {
-            if (!file || file.is_ai_parsed) return false;
+            if (!file || normalizeIsAiParsed(file.is_ai_parsed)) return false;
             var t = (file.filetype || '').toLowerCase();
             var n = file.filename || '';
             if (t.indexOf('image/') === 0) return true;
@@ -3034,23 +3138,31 @@
             }
         });
 
-        // 切换搜索模式（按文件名 / 图片语义）
+        function updateSearchInputPlaceholder() {
+            var el = document.getElementById('searchInput');
+            if (!el) return;
+            el.placeholder = currentSearchMode === 'vector'
+                ? '全库图片 / 语义搜索…'
+                : '在当前文件夹及子文件夹中按文件名搜索…';
+        }
+
+        // 切换搜索模式（当前目录递归文件名 / 全库图片语义）
         function setSearchMode(mode) {
             currentSearchMode = mode === 'vector' ? 'vector' : 'filename';
             document.querySelectorAll('.search-tab').forEach(function (el) {
                 el.classList.toggle('active', el.getAttribute('data-mode') === currentSearchMode);
             });
+            updateSearchInputPlaceholder();
         }
 
         // 取消搜索，恢复文件列表
         function cancelSearch() {
-            document.getElementById('searchInput').value = '';
-            document.getElementById('cancelSearchBtn').classList.add('hidden');
-            isSearchView = false;
+            searchRequestGeneration += 1;
+            resetSearchUi();
             fileSelectionMode = false;
             selectedFileMap = {};
             updateSelectionBar();
-            loadFileList();
+            loadFileList({ resetSearch: false });
         }
 
         function runSearch(q) {
@@ -3060,13 +3172,15 @@
             }
             searchFiles(q.trim());
         }
-        // 搜索（与后端 POST /ai/search 一致；结果防呆解析，避免 0 条显示异常）
+        // 搜索：按文件名 = GET /files/search-under（当前目录递归）；图片/语义 = POST /ai/search
         function searchFiles(query) {
             var q = (query || '').trim();
             if (!q) {
                 cancelSearch();
                 return;
             }
+            searchRequestGeneration += 1;
+            var searchGen = searchRequestGeneration;
             isSearchView = true;
             fileSelectionMode = false;
             selectedFileMap = {};
@@ -3076,24 +3190,67 @@
             document.getElementById('cancelSearchBtn').classList.remove('hidden');
             var container = document.getElementById('fileListContent');
             container.innerHTML = '<div class="loading-state"><span class="loading"></span>搜索中...</div>';
-            Logger.info('搜索', q, '模式:', currentSearchMode);
-            API.ai.search(q, 20, currentToken, currentSearchMode).then(function (res) {
-                if (!res.ok) {
-                    if (res.status === 401) handleSessionExpired();
-                    else {
-                        showAlert(res.error || '搜索失败', 'error');
-                        Logger.error('搜索失败', res.status, res.error);
+            Logger.info('搜索', q, '模式:', currentSearchMode, 'path:', currentPath || '(根)');
+
+            function handleSearchFailure(res) {
+                if (res.status === 401) handleSessionExpired();
+                else {
+                    showAlert(res.error || '搜索失败', 'error');
+                    Logger.error('搜索失败', res.status, res.error);
+                }
+                resetSearchUi();
+                loadFileList({ resetSearch: false });
+            }
+
+            if (currentSearchMode === 'filename') {
+                API.files.searchUnder(currentPath, q, 200, currentToken).then(function (res) {
+                    if (searchGen !== searchRequestGeneration) return;
+                    if (!isSearchView) return;
+                    if (!res.ok) {
+                        handleSearchFailure(res);
+                        return;
                     }
-                    loadFileList();
+                    var data = res.data;
+                    var files = Array.isArray(data && data.files) ? data.files : [];
+                    var total = (data && typeof data.total === 'number') ? data.total : files.length;
+                    try {
+                        renderList([], files, true);
+                    } catch (e) {
+                        Logger.error('渲染文件名搜索结果失败', e);
+                        container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div>结果渲染失败，请重试或反馈控制台错误</div></div>';
+                        return;
+                    }
+                    document.getElementById('fileCount').textContent =
+                        '找到 ' + total + ' 个结果（当前文件夹及子文件夹）';
+                }).catch(function (err) {
+                    if (searchGen !== searchRequestGeneration) return;
+                    Logger.error('搜索异常', err);
+                    container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div>搜索失败，请重试</div></div>';
+                });
+                return;
+            }
+
+            API.ai.search(q, 20, currentToken, currentSearchMode).then(function (res) {
+                if (searchGen !== searchRequestGeneration) return;
+                if (!isSearchView) return;
+                if (!res.ok) {
+                    handleSearchFailure(res);
                     return;
                 }
                 var data = res.data;
                 var results = Array.isArray(data && data.results) ? data.results : [];
                 var total = (data && typeof data.total === 'number') ? data.total : results.length;
                 var mode = (data && data.mode) ? data.mode : '';
-                renderList([], results, true);
+                try {
+                    renderList([], results, true);
+                } catch (e) {
+                    Logger.error('渲染语义搜索结果失败', e);
+                    container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div>结果渲染失败，请重试或反馈控制台错误</div></div>';
+                    return;
+                }
                 document.getElementById('fileCount').textContent = '找到 ' + total + ' 个结果' + (mode ? ' (' + mode + ')' : '');
             }).catch(function (err) {
+                if (searchGen !== searchRequestGeneration) return;
                 Logger.error('搜索异常', err);
                 container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div>搜索失败，请重试</div></div>';
             });
@@ -3223,6 +3380,8 @@
             document.getElementById('deleteModal').classList.add('hidden');
             document.querySelectorAll('#deleteModal .modal-buttons .btn').forEach(function (b) { b.disabled = false; });
         }
+
+        updateSearchInputPlaceholder();
     </script>
 </body>
 </html>

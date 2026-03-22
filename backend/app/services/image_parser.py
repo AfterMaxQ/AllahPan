@@ -18,6 +18,7 @@ from typing import Optional, Set
 from datetime import datetime
 
 from app.database.repositories.file_repository import FileRepository
+from app.config import IMAGE_PARSER_UNPARSED_SCAN_INTERVAL_SEC
 from ollama.ollama_client import OllamaClient
 
 import logging
@@ -26,6 +27,44 @@ logger = logging.getLogger(__name__)
 
 # ChromaDB 对 metadata 单值长度可能有限制，截断到安全长度
 CHROMA_METADATA_TEXT_MAX_LEN = 500
+
+_IMAGE_EXTENSIONS_FOR_PARSE = frozenset({
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".bmp",
+    ".heic",
+    ".heif",
+    ".tif",
+    ".tiff",
+})
+
+
+def is_image_file_for_parsing(filetype: Optional[str], filename: Optional[str]) -> bool:
+    """
+    是否应按图片走视觉解析。
+    mime 为 image/* 或常见图片扩展名（解决 guess_type 失败时的 application/octet-stream）。
+    """
+    ft = (filetype or "").strip().lower()
+    if ft.startswith("image/"):
+        return True
+    fn = (filename or "").strip().lower()
+    if "." not in fn:
+        return False
+    ext = fn[fn.rfind(".") :]
+    return ext in _IMAGE_EXTENSIONS_FOR_PARSE
+
+
+def chroma_parsed_text_is_empty(metadata: Optional[dict]) -> bool:
+    """Chroma 文档 metadata 中 parsed_text 缺失或仅空白则视为空（需重解析）。"""
+    if not isinstance(metadata, dict):
+        return True
+    raw = metadata.get("parsed_text")
+    if raw is None:
+        return True
+    return not str(raw).strip()
 
 
 class ImageParserQueue:
@@ -67,15 +106,18 @@ class ImageParserQueue:
         self._processing_lock: asyncio.Lock = asyncio.Lock()
         self.file_repo = file_repo
         self.ollama = ollama
-        self.worker_count = worker_count
         self._worker_tasks: list[asyncio.Task] = []
         self._shutdown_event = asyncio.Event()
         self._total_processed = 0
         self._total_failed = 0
         # 索引维护线程入队的「已解析但缺向量」修复任务，worker 需跳过 is_ai_parsed 早退
         self._embedding_repair_ids: Set[str] = set()
+        # Chroma 已有向量但 parsed_text 为空时，强制重新走视觉解析
+        self._empty_parsed_text_repair_ids: Set[str] = set()
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
-        logger.info(f"ImageParserQueue 初始化完成，worker 数量：{worker_count}")
+        self.worker_count = max(1, int(worker_count))
+        self._rescan_task: Optional[asyncio.Task] = None
+        logger.info(f"ImageParserQueue 初始化完成，worker 数量：{self.worker_count}")
 
     async def start(self) -> None:
         """
@@ -90,30 +132,53 @@ class ImageParserQueue:
             self._worker_tasks.append(task)
 
         await self._scan_and_enqueue_unparsed_images()
+        if IMAGE_PARSER_UNPARSED_SCAN_INTERVAL_SEC > 0:
+            self._rescan_task = asyncio.create_task(self._periodic_unparsed_rescan_loop())
+            logger.info(
+                "已启动未解析图片定期补扫，间隔 %s 秒",
+                IMAGE_PARSER_UNPARSED_SCAN_INTERVAL_SEC,
+            )
         logger.info("ImageParserQueue worker 已全部启动")
+
+    async def _periodic_unparsed_rescan_loop(self) -> None:
+        interval = float(IMAGE_PARSER_UNPARSED_SCAN_INTERVAL_SEC)
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=interval)
+                break
+            except asyncio.TimeoutError:
+                pass
+            if self._shutdown_event.is_set():
+                break
+            await self._scan_and_enqueue_unparsed_images()
 
     async def _scan_and_enqueue_unparsed_images(self) -> None:
         """
         扫描并加入未解析的图片到队列。
 
-        从数据库获取所有未解析的图片文件，将图片类型的文件加入解析队列。
+        统一走 add_to_queue，保证 processing 与队列状态一致，并支持扩展名识别图片。
         """
-        logger.info("开始扫描未解析的图片...")
+        logger.debug("扫描未解析图片并入队…")
         try:
             unparsed_files = self.file_repo.get_unparsed_files()
             image_files = [
-                f for f in unparsed_files
-                if f.filetype.startswith("image/")
+                f
+                for f in unparsed_files
+                if is_image_file_for_parsing(f.filetype, f.filename)
             ]
-            logger.info(f"发现 {len(image_files)} 个未解析的图片文件")
-
+            enqueued = 0
             for file_meta in image_files:
-                if file_meta.file_id not in self.processing:
-                    await self.queue.put(file_meta.file_id)
-
-            logger.info(f"已将 {self.queue.qsize()} 个未解析图片加入队列")
+                if await self.add_to_queue(file_meta.file_id):
+                    enqueued += 1
+            if image_files:
+                logger.info(
+                    "未解析图片扫描：候选 %s 个，本次新入队 %s，队列约 %s 项",
+                    len(image_files),
+                    enqueued,
+                    self.queue.qsize(),
+                )
         except Exception as e:
-            logger.error(f"扫描未解析图片失败：{e}")
+            logger.error("扫描未解析图片失败：%s", e)
 
     async def stop(self) -> None:
         """
@@ -123,7 +188,14 @@ class ImageParserQueue:
         """
         logger.info("正在停止 ImageParserQueue...")
         self._shutdown_event.set()
-        
+        if self._rescan_task is not None:
+            self._rescan_task.cancel()
+            try:
+                await self._rescan_task
+            except asyncio.CancelledError:
+                pass
+            self._rescan_task = None
+
         # 等待队列清空
         if not self.queue.empty():
             logger.info(f"等待处理队列中剩余的 {self.queue.qsize()} 个任务...")
@@ -159,7 +231,7 @@ class ImageParserQueue:
             logger.debug(f"文件已解析，无需加入队列：{file_id}")
             return False
         
-        if not file_meta.filetype.startswith("image/"):
+        if not is_image_file_for_parsing(file_meta.filetype, file_meta.filename):
             logger.debug(f"文件不是图片类型，无需加入队列：{file_id}")
             return False
         
@@ -180,7 +252,7 @@ class ImageParserQueue:
         file_meta = self.file_repo.get_file_metadata_by_id(file_id)
         if file_meta is None:
             return False
-        if not file_meta.filetype.startswith("image/"):
+        if not is_image_file_for_parsing(file_meta.filetype, file_meta.filename):
             return False
         if not file_meta.is_ai_parsed:
             return False
@@ -198,6 +270,37 @@ class ImageParserQueue:
         await self.queue.put(file_id)
         logger.info(
             "索引维护：已加入向量修复队列：%s，当前队列长度：%s",
+            file_id,
+            self.queue.qsize(),
+        )
+        return True
+
+    async def enqueue_empty_parsed_text_repair(self, file_id: str) -> bool:
+        """
+        Chroma 中已有向量但 metadata.parsed_text 为空时，重新入队做视觉解析并写回向量与 SQLite description。
+        """
+        file_meta = self.file_repo.get_file_metadata_by_id(file_id)
+        if file_meta is None:
+            return False
+        if not is_image_file_for_parsing(file_meta.filetype, file_meta.filename):
+            return False
+        path = Path(file_meta.filepath)
+        if not path.is_file():
+            return False
+        vec = self.file_repo.get_vector(file_id)
+        if vec is None:
+            return False
+        if not chroma_parsed_text_is_empty(vec.get("metadata")):
+            return False
+
+        async with self._processing_lock:
+            if file_id in self.processing:
+                return False
+            self._empty_parsed_text_repair_ids.add(file_id)
+            self.processing.add(file_id)
+        await self.queue.put(file_id)
+        logger.info(
+            "索引维护：Chroma parsed_text 为空，已加入重解析队列：%s，当前队列长度：%s",
             file_id,
             self.queue.qsize(),
         )
@@ -285,15 +388,18 @@ class ImageParserQueue:
             repair_missing_vector = file_id in self._embedding_repair_ids
             if repair_missing_vector:
                 self._embedding_repair_ids.discard(file_id)
+            repair_empty_parsed = file_id in self._empty_parsed_text_repair_ids
+            if repair_empty_parsed:
+                self._empty_parsed_text_repair_ids.discard(file_id)
 
         # 检查是否已解析（可能在工作过程中被其他 worker 解析）
-        if file_meta.is_ai_parsed and not repair_missing_vector:
+        if file_meta.is_ai_parsed and not repair_missing_vector and not repair_empty_parsed:
             logger.info(f"文件已解析，跳过：{file_id}")
             return
         
         # 检查文件类型
-        if not file_meta.filetype.startswith("image/"):
-            logger.info(f"文件不是图片类型，跳过：{file_id}")
+        if not is_image_file_for_parsing(file_meta.filetype, file_meta.filename):
+            logger.info("文件不是图片类型，跳过：%s", file_id)
             return
         
         # 检查文件是否存在
@@ -330,6 +436,9 @@ class ImageParserQueue:
             metadata=vector_metadata,
         )
         logger.info(f"向量存储完成：{file_id}")
+
+        if not self.file_repo.update_file_description(file_id, extracted_text.strip()):
+            raise RuntimeError(f"写入图片描述失败：{file_id}")
         
         # 更新文件状态为已解析
         self.file_repo.mark_as_ai_parsed(file_id)

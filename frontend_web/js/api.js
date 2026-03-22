@@ -189,10 +189,27 @@
   /**
    * GET /files/list?path=
    * 响应: FileListResponse { directories: [{ name, path }], files: FileMetadataResponse[], total }
+   * FileMetadataResponse 可含 relative_path（如 search-under 下为相对当前搜索目录的父路径）
    */
   function filesList(path, token) {
     var q = (path == null || path === '') ? '' : '?path=' + encodeURIComponent(path);
     return request('files/list' + q, { method: 'GET', token: token });
+  }
+
+  /**
+   * GET /files/search-under?q=&path=&limit=
+   * 在当前 path（相对网盘根，空为根目录）下递归按文件名子串匹配；响应同 FileListResponse（directories 为空）。
+   */
+  function filesSearchUnder(scopePath, query, limit, token) {
+    var params = new URLSearchParams();
+    params.set('q', query);
+    if (scopePath != null && scopePath !== '') {
+      params.set('path', scopePath);
+    }
+    if (limit != null && limit > 0) {
+      params.set('limit', String(limit));
+    }
+    return request('files/search-under?' + params.toString(), { method: 'GET', token: token });
   }
 
   /**
@@ -485,6 +502,7 @@
    * POST /ai/search
    * 请求: SearchRequest { query, limit?, search_mode? } search_mode: filename | vector | mixed
    * 响应: SearchResponse { results: SearchResult[], total, mode }
+   * SearchResult 含 relative_path：相对存储根目录的所在文件夹（不含文件名），根目录为 null
    */
   function aiSearch(query, limit, token, searchMode) {
     var body = { query: query, limit: limit == null ? 20 : limit };
@@ -600,6 +618,7 @@
     },
     files: {
       list: filesList,
+      searchUnder: filesSearchUnder,
       get: filesGet,
       download: filesDownload,
       preview: filesPreview,

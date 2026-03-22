@@ -75,6 +75,7 @@ class OpsDashboardPage(QWidget):
         self._data_timer.timeout.connect(self._refresh_data_async)
         self._logs_timer = QTimer(self)
         self._logs_timer.timeout.connect(self._refresh_logs_async)
+        self._logs_refresh_in_flight = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -247,9 +248,9 @@ class OpsDashboardPage(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._sync_chart_themes()
-        self._traffic_timer.start(5000)
-        self._data_timer.start(15000)
-        self._logs_timer.start(4000)
+        self._traffic_timer.start(8000)
+        self._data_timer.start(20000)
+        self._logs_timer.start(12000)
 
     def hideEvent(self, event) -> None:
         self._traffic_timer.stop()
@@ -446,9 +447,12 @@ class OpsDashboardPage(QWidget):
     def _refresh_logs_async(self, force: bool = False) -> None:
         if not force and not self._log_auto.isChecked():
             return
+        if self._logs_refresh_in_flight:
+            return
+        self._logs_refresh_in_flight = True
 
         def fetch():
-            return SystemAPI().get_logs_tail(lines=500)
+            return SystemAPI().get_logs_tail(lines=200)
 
         w = SettingsWorker(fetch, parent=self)
         w.finished.connect(self._on_logs_ready, Qt.ConnectionType.QueuedConnection)
@@ -456,9 +460,11 @@ class OpsDashboardPage(QWidget):
         w.start()
 
     def _on_logs_failed(self, err: str) -> None:
+        self._logs_refresh_in_flight = False
         self._log_view.setPlainText(f"拉取日志失败:\n{err}")
 
     def _on_logs_ready(self, data: object) -> None:
+        self._logs_refresh_in_flight = False
         if not isinstance(data, dict):
             self._log_view.setPlainText(
                 f"日志接口返回格式异常: {type(data).__name__}，请确认后端已更新。"

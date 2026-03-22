@@ -152,9 +152,11 @@ class SQLite:
                 userid TEXT NOT NULL,
                 is_ai_parsed BOOLEAN NOT NULL DEFAULT 0,
                 upload_time TEXT NOT NULL,
+                description TEXT,
                 FOREIGN KEY (userid) REFERENCES users(id)
             )
         """)
+        self._migrate_file_metadata_description_column()
         self.cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_file_metadata_userid ON file_metadata(userid)"
         )
@@ -163,6 +165,20 @@ class SQLite:
         )
         self.conn.commit()
         logger.info("数据库表创建完成")
+
+    def _migrate_file_metadata_description_column(self) -> None:
+        """为旧库追加 description 列（AI 图片描述全文，供关键词检索）。"""
+        with self._lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute("PRAGMA table_info(file_metadata)")
+                cols = {str(row[1]).lower() for row in cur.fetchall()}
+                if "description" not in cols:
+                    logger.info("迁移：为 file_metadata 添加 description 列")
+                    cur.execute("ALTER TABLE file_metadata ADD COLUMN description TEXT")
+                    self.conn.commit()
+            finally:
+                cur.close()
 
     def close(self) -> None:
         """关闭数据库连接。"""
@@ -334,13 +350,15 @@ class SQLite:
         """
         logger.info(f"开始添加文件元数据，文件名: {file_metadata.filename}")
         file_id = file_metadata.file_id
+        desc = getattr(file_metadata, "description", None)
         self._execute_write(
             """INSERT INTO file_metadata
-               (id, filename, filepath, size, filetype, userid, is_ai_parsed, upload_time)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, filename, filepath, size, filetype, userid, is_ai_parsed, upload_time, description)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (file_id, file_metadata.filename, file_metadata.filepath,
              file_metadata.size, file_metadata.filetype,
-             file_metadata.userid, file_metadata.is_ai_parsed, file_metadata.upload_time)
+             file_metadata.userid, file_metadata.is_ai_parsed, file_metadata.upload_time,
+             desc if desc else None)
         )
         logger.info(f"文件元数据添加成功，文件ID: {file_id}")
         return file_id
@@ -533,15 +551,16 @@ class SQLite:
             bool: 更新成功返回True，否则返回False
         """
         logger.info(f"开始更新文件元数据，文件ID: {file_metadata.file_id}")
+        desc = getattr(file_metadata, "description", None)
         success = self._execute_write(
             """UPDATE file_metadata
                SET filename = ?, filepath = ?, size = ?,
-                   filetype = ?, userid = ?, is_ai_parsed = ?, upload_time = ?
+                   filetype = ?, userid = ?, is_ai_parsed = ?, upload_time = ?, description = ?
                WHERE id = ?""",
             (file_metadata.filename, file_metadata.filepath,
              file_metadata.size, file_metadata.filetype,
              file_metadata.userid, file_metadata.is_ai_parsed,
-             file_metadata.upload_time, file_metadata.file_id)
+             file_metadata.upload_time, desc if desc else None, file_metadata.file_id)
         ) > 0
         if success:
             logger.info(f"文件元数据更新成功，文件ID: {file_metadata.file_id}")
@@ -606,13 +625,13 @@ class SQLite:
         返回:
             bool: 更新成功返回True，否则返回False
         """
-        logger.info(f"更新文件AI解析状态，文件ID: {file_id}，状态: {is_parsed}")
+        logger.debug(f"更新文件AI解析状态，文件ID: {file_id}，状态: {is_parsed}")
         success = self._execute_write(
             "UPDATE file_metadata SET is_ai_parsed = ? WHERE id = ?",
             (is_parsed, file_id)
         ) > 0
         if success:
-            logger.info(f"文件AI解析状态更新成功，文件ID: {file_id}")
+            logger.debug(f"文件AI解析状态更新成功，文件ID: {file_id}")
         else:
             logger.warning(f"文件AI解析状态更新失败，未找到文件: {file_id}")
         return success
@@ -636,3 +655,55 @@ class SQLite:
         files = [FileMetadata.from_dict(dict(row)) for row in rows]
         logger.debug("文件名搜索完成，匹配到 %s 个文件", len(files))
         return files
+
+    def update_file_description(self, file_id: str, description: Optional[str]) -> bool:
+        """
+        更新文件的 AI 图片描述（全文，供关键词检索；可为空则置 NULL）。
+        """
+        uid = as_sql_text_param(file_id)
+        if not uid:
+            return False
+        val: Optional[str] = None
+        if description is not None and str(description).strip():
+            val = str(description).strip()
+        success = self._execute_write(
+            "UPDATE file_metadata SET description = ? WHERE id = ?",
+            (val, uid),
+        ) > 0
+        if success:
+            logger.debug("已更新文件 description，文件ID: %s", uid)
+        else:
+            logger.warning("更新 description 失败或未找到文件，文件ID: %s", uid)
+        return success
+
+    def search_image_files_by_description_like(
+        self,
+        user_id: str,
+        like_patterns: List[str],
+    ) -> List[FileMetadata]:
+        """
+        按 description 模糊匹配检索当前用户的图片（任一 LIKE 模式命中即返回）。
+        like_patterns 须已由调用方转义并含通配符（如 %keyword%）。
+        """
+        uid = as_sql_text_param(user_id)
+        if not uid or not like_patterns:
+            return []
+        patterns = [p for p in like_patterns if p][:24]
+        if not patterns:
+            return []
+        like_expr = "description LIKE ? ESCAPE '\\'"
+        or_clauses = " OR ".join([like_expr] * len(patterns))
+        sql = f"""SELECT * FROM file_metadata
+            WHERE userid = ? AND filetype LIKE ?
+            AND description IS NOT NULL AND LENGTH(TRIM(description)) > 0
+            AND ({or_clauses})"""
+        params: Tuple[Any, ...] = (uid, "image/%", *patterns)
+        rows = self._execute_fetchall(sql, params)
+        by_id: dict[str, FileMetadata] = {}
+        for row in rows:
+            try:
+                fm = FileMetadata.from_dict(dict(row))
+                by_id[fm.file_id] = fm
+            except (KeyError, TypeError, ValueError) as e:
+                logger.warning("description 搜索跳过无效行: %s", e)
+        return list(by_id.values())

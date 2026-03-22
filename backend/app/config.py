@@ -117,6 +117,10 @@ OLLAMA_TIMEOUT = int(os.environ.get("ALLAHPAN_OLLAMA_TIMEOUT", "300"))
 
 # 图片解析队列并发 worker 数，默认 1 减轻 Ollama 负载、减少 ReadTimeout
 IMAGE_PARSER_WORKER_COUNT = int(os.environ.get("ALLAHPAN_IMAGE_PARSER_WORKERS", "1"))
+# 定期扫描未解析图片并补入队列（秒，0=关闭）；兜底 Watcher 早于队列就绪、或漏入队
+IMAGE_PARSER_UNPARSED_SCAN_INTERVAL_SEC = int(
+    os.environ.get("ALLAHPAN_IMAGE_PARSER_UNPARSED_SCAN_SEC", "180")
+)
 
 # 向量索引定期对齐线程：清理 Chroma 孤立文档、回填「已解析但缺向量」的图片（设 0 关闭）
 INDEX_MAINTENANCE_INTERVAL_SEC = int(os.environ.get("ALLAHPAN_INDEX_MAINTENANCE_INTERVAL_SEC", "300"))
@@ -131,6 +135,10 @@ INDEX_MAINTENANCE_CHROMA_PAGE_SIZE = int(os.environ.get("ALLAHPAN_INDEX_MAINTENA
 INDEX_MAINTENANCE_ORPHAN_DELETE_BATCH = int(os.environ.get("ALLAHPAN_INDEX_MAINTENANCE_ORPHAN_BATCH", "128"))
 # 每轮最多入队多少张「缺向量」修复任务，避免拖垮 Ollama
 INDEX_MAINTENANCE_REPAIR_MAX_PER_RUN = int(os.environ.get("ALLAHPAN_INDEX_MAINTENANCE_REPAIR_MAX", "5"))
+# 每轮最多入队多少张「Chroma 元数据 parsed_text 为空」的重解析任务
+INDEX_MAINTENANCE_EMPTY_PARSED_TEXT_MAX = int(
+    os.environ.get("ALLAHPAN_INDEX_MAINTENANCE_EMPTY_PARSED_MAX", "5")
+)
 
 
 # ==================== JWT配置 ====================

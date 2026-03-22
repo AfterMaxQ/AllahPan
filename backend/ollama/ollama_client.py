@@ -315,17 +315,20 @@ class OllamaClient:
         logger.info(f"开始解析图片内容，路径: {image_path}")
         model = model or self.vision_model
         
-        system_prompt = """你是一个图片分析助手。任务是简要描述图片内容。直接输出结果。"""
+        system_prompt = "你是图片分析助手。只输出正文，不要标题或 Markdown。"
 
-        prompt = """分析这张图片：有重点的文字内容则转录。否则用30字内描述图片内容。"""
-        
+        prompt = (
+            "用约100字以内中文概括画面要点（人物/场景/物体/氛围）。"
+            "若有清晰可读文字，简要转录关键信息。"
+        )
+
         result = await self.generate_response(
             prompt=prompt,
             images=[image_path],
             model=model,
             system=system_prompt,
             temperature=0.3,
-            max_tokens=4096,
+            max_tokens=320,
         )
         logger.info(f"图片内容解析完成，提取文本长度: {len(result)}")
         return result

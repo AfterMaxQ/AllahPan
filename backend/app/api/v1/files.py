@@ -25,7 +25,7 @@ from filelock import FileLock
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Header
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form, Header
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -232,6 +232,7 @@ class FileMetadataResponse(BaseModel):
         filetype: 文件MIME类型
         is_ai_parsed: 是否已进行AI解析
         upload_time: 上传时间
+        relative_path: 相对某次列表/搜索根目录的所在文件夹（不含文件名）；默认 null
     """
     file_id: str
     filename: str
@@ -240,6 +241,7 @@ class FileMetadataResponse(BaseModel):
     filetype: str
     is_ai_parsed: bool
     upload_time: str
+    relative_path: Optional[str] = None
 
 
 class DirectoryEntry(BaseModel):
@@ -992,6 +994,119 @@ def list_files(
         ],
         total=len(files_list),
     )
+
+
+@router.get("/search-under", response_model=FileListResponse)
+def search_files_under_directory(
+    q: str = Query(..., min_length=1, max_length=256, description="文件名匹配子串"),
+    path: Optional[str] = "",
+    limit: int = Query(200, ge=1, le=500),
+    file_repo: "FileRepository" = Depends(get_file_repo),
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """
+    在当前目录（含所有子文件夹）内递归查找文件名包含关键字 q 的文件。
+    与 list 一致：磁盘为事实来源，未在 DB 中的文件会惰性入库。
+    """
+    norm_path = (path or "").strip().replace("\\", "/").strip("/")
+    root_resolved = STORAGE_DIR.resolve()
+    target = (STORAGE_DIR / norm_path).resolve() if norm_path else root_resolved
+    try:
+        target.relative_to(root_resolved)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="非法路径",
+        )
+    if not target.is_dir():
+        return FileListResponse(directories=[], files=[], total=0)
+
+    needle = q.strip()
+    needle_cf = needle.casefold()
+    hits: list[tuple[Path, Optional[str]]] = []
+    for p in target.rglob("*"):
+        if len(hits) >= limit:
+            break
+        if not p.is_file() or p.name.startswith("."):
+            continue
+        if needle_cf not in p.name.casefold():
+            continue
+        try:
+            p.resolve().relative_to(root_resolved)
+        except ValueError:
+            continue
+        rel_parent = p.parent.relative_to(target)
+        scope_rel = (
+            None if rel_parent == Path(".") else str(rel_parent).replace("\\", "/")
+        )
+        hits.append((p, scope_rel))
+
+    hits.sort(key=lambda t: ((t[1] or "").casefold(), t[0].name.casefold()))
+
+    if not hits:
+        return FileListResponse(directories=[], files=[], total=0)
+
+    abs_paths = [str(p.resolve()) for p, _ in hits]
+    path_map = file_repo.get_file_metadata_by_filepaths(abs_paths)
+    files_out: list[FileMetadataResponse] = []
+
+    for p, scope_rel in hits:
+        abs_path = str(p.resolve())
+        existing = path_map.get(abs_path)
+        if existing is None:
+            pl = abs_path.lower()
+            for sk, sv in path_map.items():
+                if sk.lower() == pl:
+                    existing = sv
+                    break
+        if existing is not None:
+            files_out.append(
+                FileMetadataResponse(
+                    file_id=existing.file_id,
+                    filename=existing.filename,
+                    filepath=existing.filepath,
+                    size=existing.size,
+                    filetype=existing.filetype,
+                    is_ai_parsed=existing.is_ai_parsed,
+                    upload_time=existing.upload_time,
+                    relative_path=scope_rel,
+                )
+            )
+            continue
+        try:
+            size = p.stat().st_size
+            mt, _ = mimetypes.guess_type(p.name)
+            filetype = mt or "application/octet-stream"
+            new_meta = FileMetadata(
+                filename=p.name,
+                filepath=abs_path,
+                size=size,
+                filetype=filetype,
+                userid=current_user.id,
+                is_ai_parsed=False,
+            )
+            created = file_repo.create_file_metadata(new_meta)
+            logger.info(
+                "搜索惰性入库: %s, file_id=%s",
+                p.name,
+                created.file_id,
+            )
+            files_out.append(
+                FileMetadataResponse(
+                    file_id=created.file_id,
+                    filename=created.filename,
+                    filepath=created.filepath,
+                    size=created.size,
+                    filetype=created.filetype,
+                    is_ai_parsed=created.is_ai_parsed,
+                    upload_time=created.upload_time,
+                    relative_path=scope_rel,
+                )
+            )
+        except Exception as e:
+            logger.warning("搜索命中但惰性入库失败，跳过 %s: %s", abs_path, e)
+
+    return FileListResponse(directories=[], files=files_out, total=len(files_out))
 
 
 @router.get("/{file_id}", response_model=FileMetadataResponse)

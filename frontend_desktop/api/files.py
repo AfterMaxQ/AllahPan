@@ -44,7 +44,21 @@ class FilesAPI:
             params["path"] = path
         # 后端处理图片解析时可能较慢，给文件列表请求更长超时
         return self._client.get("/files/list", params=params, timeout=90.0)
-    
+
+    def search_under(
+        self,
+        q: str,
+        path: Optional[str] = None,
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        """
+        在当前目录（含子文件夹）内按文件名子串递归搜索，与网页端 GET /files/search-under 一致。
+        """
+        params: Dict[str, Any] = {"q": q, "limit": int(limit)}
+        if path is not None and str(path).strip() != "":
+            params["path"] = path
+        return self._client.get("/files/search-under", params=params, timeout=90.0)
+
     def get_file(self, file_id: str) -> Dict[str, Any]:
         """
         获取单个文件元数据。
