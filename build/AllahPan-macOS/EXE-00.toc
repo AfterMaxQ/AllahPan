@@ -54,7 +54,7 @@
  [],
  False,
  False,
- 1774166269,
+ 1774168431,
  [('runw',
    '/Users/chilinlei/Desktop/AllahPan/.venv/lib/python3.12/site-packages/PyInstaller/bootloader/Darwin-64bit/runw',
    'EXECUTABLE')],

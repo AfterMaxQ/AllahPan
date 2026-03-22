@@ -70,8 +70,12 @@ class SQLite:
             db_path: 数据库文件完整路径（默认: 'allahpan.db'）
         """
         import os
-        db_path = os.path.abspath(db_path)
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        from pathlib import Path
+
+        db_path = str(Path(db_path).expanduser().resolve())
+        parent = os.path.dirname(db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         logger.info(f"初始化SQLite数据库连接，数据库文件: {db_path}")
         self.db_name = db_path
         self._lock = threading.RLock()
@@ -82,6 +86,10 @@ class SQLite:
             self.conn.execute("PRAGMA busy_timeout = 30000")
             self.conn.execute("PRAGMA journal_mode = WAL")
             self.conn.execute("PRAGMA foreign_keys = ON")
+            try:
+                self.conn.execute("PRAGMA temp_store = MEMORY")
+            except sqlite3.Error:
+                pass
             self._create_tables()
         logger.info(f"SQLite数据库连接初始化完成")
 

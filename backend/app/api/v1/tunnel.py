@@ -325,8 +325,8 @@ def clear_tunnel_config(
     
     # 清除配置
     try:
-        from app.services.tunnel_manager import TunnelManager
-        config_file = TunnelManager.TUNNEL_CONFIG_FILE
+        from app.services.tunnel_manager import _tunnel_config_file
+        config_file = _tunnel_config_file()
         if config_file.exists():
             config_file.unlink()
         logger.info("Tunnel 配置已清除")

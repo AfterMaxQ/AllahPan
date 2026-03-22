@@ -17,7 +17,23 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# 与后端共用用户数据根路径（开发时注入 ../backend；打包后 PYTHONPATH 含 backend）
+_fd_root = Path(__file__).resolve().parent
+_backend_candidate = _fd_root.parent / "backend"
+if _backend_candidate.is_dir():
+    _bp = str(_backend_candidate.resolve())
+    if _bp not in sys.path:
+        sys.path.insert(0, _bp)
+
+try:
+    from app.user_dirs import get_allahpan_user_root
+except ImportError:
+
+    def get_allahpan_user_root() -> Path:
+        return Path.home() / ".allahpan"
+
 __all__ = [
+    "get_allahpan_user_root",
     "APP_NAME", "APP_VERSION", "APP_DESCRIPTION",
     "sync_api_url_from_environ",
     "API_HOST", "API_PORT", "API_BASE_URL",
@@ -63,8 +79,8 @@ def resolve_app_icon_path() -> Optional[Path]:
     return None
 
 
-# 与 launcher.py 中 _apply_persistent_server_settings 使用的路径一致
-SERVER_SETTINGS_PATH = Path.home() / ".allahpan" / "server_settings.json"
+# 与 launcher.py、backend config 中 server_settings 路径一致
+SERVER_SETTINGS_PATH = get_allahpan_user_root() / "server_settings.json"
 
 # ==================== API 配置 ====================
 def sync_api_url_from_environ() -> None:
@@ -405,7 +421,7 @@ import base64
 import getpass
 import hashlib
 
-_AUTH_FILE = (Path.home() / ".allahpan" / "auth.json")
+_AUTH_FILE = get_allahpan_user_root() / "auth.json"
 _AUTH_ENC_VERSION = 1  # 存储格式版本，便于日后迁移
 
 _auth_token: Optional[str] = None

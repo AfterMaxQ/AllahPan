@@ -4,6 +4,10 @@
 本模块提供AllahPan项目的所有配置参数，支持环境变量覆盖。
 统一管理数据库路径、存储路径、Ollama配置、JWT配置等。
 
+用户数据根目录由 app.user_dirs.get_allahpan_user_root() 解析，可通过环境变量
+ALLAHPAN_USER_DATA_ROOT 覆盖；打包或从 macOS .app 内运行时，数据库与向量库
+写入该目录下的 data/，与应用程序包分离，便于升级重装。
+
 作者: AllahPan团队
 创建日期: 2026-03-19
 最后修改: 2026-03-19
@@ -14,6 +18,9 @@ import os
 import sys
 from pathlib import Path
 from typing import Optional
+
+from app.user_dirs import get_allahpan_user_root, should_store_data_outside_bundle
+from app.runtime_env import ensure_sqlite_temp_environment
 
 
 # ==================== Frozen 模式检测 ====================
@@ -27,15 +34,13 @@ _MEIPASS = getattr(sys, "_MEIPASS", "")
 # ==================== 路径配置 ====================
 
 # 数据目录根路径
-# Frozen 模式: 写入用户目录，避免写入 MEIPASS 只读临时目录
+# 打包或从 macOS .app 内运行时写入用户数据目录，避免写入 bundle / MEIPASS
 _APP_DIR = Path(__file__).resolve().parent
 _BACKEND_ROOT = _APP_DIR.parent
 _PROJECT_ROOT = _BACKEND_ROOT.parent
 
-if _FROZEN:
-    # 打包后使用用户目录下的 .allahpan 文件夹
-    _USER_DATA_ROOT = Path.home() / ".allahpan"
-    _USER_DATA_ROOT.mkdir(parents=True, exist_ok=True)
+if should_store_data_outside_bundle():
+    _USER_DATA_ROOT = get_allahpan_user_root()
     DATA_DIR = _USER_DATA_ROOT / "data"
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 else:
@@ -58,9 +63,9 @@ WEB_FRONTEND_DIR = _web_dir if _web_dir.exists() else None
 DB_NAME = os.environ.get("ALLAHPAN_DB_NAME", "allahpan.db")
 DB_PATH = DATA_DIR / DB_NAME
 
-# 文件存储目录：环境变量 > ~/.allahpan/server_settings.json 中的 storage_dir > 默认 ~/Documents/AllahPan/files
+# 文件存储目录：环境变量 > server_settings.json 中的 storage_dir > 默认 ~/Documents/AllahPan/files
 _DEFAULT_STORAGE = Path.home() / "Documents" / "AllahPan" / "files"
-_PERSISTENT_SETTINGS = Path.home() / ".allahpan" / "server_settings.json"
+_PERSISTENT_SETTINGS = get_allahpan_user_root() / "server_settings.json"
 
 
 def _storage_dir_from_settings_file() -> Optional[Path]:
@@ -75,14 +80,18 @@ def _storage_dir_from_settings_file() -> Optional[Path]:
     raw = str(data.get("storage_dir") or "").strip()
     if not raw:
         return None
-    return Path(raw)
+    return Path(raw).expanduser()
 
 
-if os.environ.get("ALLAHPAN_STORAGE_DIR"):
-    STORAGE_DIR = Path(os.environ["ALLAHPAN_STORAGE_DIR"])
+_env_sd = os.environ.get("ALLAHPAN_STORAGE_DIR", "").strip()
+if _env_sd:
+    STORAGE_DIR = Path(os.path.expanduser(_env_sd))
 else:
     _from_file = _storage_dir_from_settings_file()
     STORAGE_DIR = _from_file if _from_file is not None else _DEFAULT_STORAGE
+
+ensure_sqlite_temp_environment()
+
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 # ChromaDB向量数据库路径

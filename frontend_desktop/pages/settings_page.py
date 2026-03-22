@@ -41,8 +41,12 @@ from config import ThemeMode
 from theme import LIGHT_QSS, DARK_QSS
 
 
+def _user_root_display() -> str:
+    return str(config.get_allahpan_user_root())
+
+
 def _load_server_settings_dict() -> dict:
-    """读取 ~/.allahpan/server_settings.json，失败或格式不对时返回空 dict。"""
+    """读取用户数据目录下的 server_settings.json，失败或格式不对时返回空 dict。"""
     p = config.SERVER_SETTINGS_PATH
     if not p.is_file():
         return {}
@@ -136,13 +140,13 @@ class LogViewerDialog(QDialog):
         """加载日志。"""
         log_dir = Path.home() / ".allahpan" / "logs"
         if not log_dir.exists():
-            self.log_text.setPlainText("暂无日志文件\n\n日志文件位于: ~/.allahpan/logs/")
+            self.log_text.setPlainText(f"暂无日志文件\n\n日志文件位于: {_user_root_display()}/logs/")
             return
         
         log_files = sorted(log_dir.glob("*.log"), key=lambda x: x.stat().st_mtime, reverse=True)
         
         if not log_files:
-            self.log_text.setPlainText("暂无日志文件\n\n日志文件位于: ~/.allahpan/logs/")
+            self.log_text.setPlainText(f"暂无日志文件\n\n日志文件位于: {_user_root_display()}/logs/")
             return
         
         # 读取最新的日志文件
@@ -418,7 +422,7 @@ class SettingsPage(QWidget):
         group_layout.addRow("", save_srv_btn)
 
         tip = QLabel(
-            "保存后写入 ~/.allahpan/server_settings.json。请完全退出并重新启动 AllahPan（或 exe）后生效。\n"
+            f"保存后写入 {_user_root_display()}/server_settings.json。请完全退出并重新启动 AllahPan（或 exe）后生效。\n"
             "手机/其他电脑在同一局域网内，用浏览器打开上方地址即可使用网页端；桌面前端仅在本机使用。\n"
             "若无法访问，请检查本机防火墙是否放行对应 TCP 端口。"
         )
@@ -475,7 +479,7 @@ class SettingsPage(QWidget):
             QMessageBox.information(
                 self,
                 "已保存",
-                "已写入 ~/.allahpan/server_settings.json。\n请完全退出并重新启动 AllahPan 后生效。",
+                f"已写入 {_user_root_display()}/server_settings.json。\n请完全退出并重新启动 AllahPan 后生效。",
             )
         except OSError as e:
             QMessageBox.warning(self, "保存失败", str(e))
@@ -583,7 +587,7 @@ class SettingsPage(QWidget):
         log_viewer_btn.clicked.connect(self._on_view_logs)
         group_layout.addRow("日志查看:", log_viewer_btn)
         
-        log_dir_label = QLabel("~/.allahpan/logs/")
+        log_dir_label = QLabel(f"{_user_root_display()}/logs/")
         log_dir_label.setStyleSheet("font-family: monospace; color: #86868B;")
         group_layout.addRow("日志目录:", log_dir_label)
         
@@ -686,7 +690,7 @@ class SettingsPage(QWidget):
                     QMessageBox.information(
                         self,
                         "提示",
-                        "存储路径已写入 ~/.allahpan/server_settings.json。\n"
+                        f"存储路径已写入 {_user_root_display()}/server_settings.json。\n"
                         "请完全退出并重启后端（或整个 AllahPan）后生效。",
                     )
     

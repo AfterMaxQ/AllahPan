@@ -44,7 +44,12 @@ class ChromaDB:
     COLLECTION_NAME = "file_vectors"
     DEFAULT_SIMILARITY_THRESHOLD = 1.43
 
-    def __init__(self, persist_path: str = "./data/chroma_vectors", ollama_base_url: str = "http://localhost:11434", similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD):
+    def __init__(
+        self,
+        persist_path: Optional[str] = None,
+        ollama_base_url: str = "http://localhost:11434",
+        similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+    ):
         """
         初始化ChromaDB连接，使用持久化存储。
         
@@ -52,10 +57,13 @@ class ChromaDB:
         数据会持久化到指定路径，确保应用重启后数据不丢失。
         
         参数:
-            persist_path: 向量数据持久化目录路径（默认: './data/chroma_vectors'）
+            persist_path: 向量数据持久化目录路径（默认与 app.config.get_chroma_path() 一致）
             ollama_base_url: Ollama服务地址（默认: 'http://localhost:11434'）
         """
         import os
+        if persist_path is None:
+            from app.config import get_chroma_path
+            persist_path = str(get_chroma_path())
         abs_path = os.path.abspath(persist_path)
         logger.info(f"初始化ChromaDB向量数据库连接，路径: {abs_path}")
         self.db_name = abs_path

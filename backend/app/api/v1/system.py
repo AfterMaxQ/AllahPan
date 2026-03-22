@@ -29,6 +29,7 @@ from app.config import (
 )
 from app.watcher.watcher import DirectoryWatcher
 from app.services.image_parser import get_image_parser_queue
+from app.user_dirs import get_allahpan_user_root
 
 import logging
 
@@ -742,9 +743,9 @@ def get_logs_tail(
     lines: int = 300,
     current_user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """运维：读取 ~/.allahpan/logs 下最近修改的 .log 文件末尾若干行。"""
+    """运维：读取用户数据目录下 logs/ 中最近修改的 .log 文件末尾若干行。"""
     n = max(1, min(int(lines), 2000))
-    log_dir = Path.home() / ".allahpan" / "logs"
+    log_dir = get_allahpan_user_root() / "logs"
     if not log_dir.is_dir():
         return {"path": None, "lines": [], "raw": "", "message": "日志目录不存在"}
     log_files = sorted(log_dir.glob("*.log"), key=lambda x: x.stat().st_mtime, reverse=True)

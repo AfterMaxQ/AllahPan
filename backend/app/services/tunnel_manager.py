@@ -30,7 +30,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
 
+from app.user_dirs import get_allahpan_user_root
+
 logger = logging.getLogger(__name__)
+
+
+def _tunnel_config_file() -> Path:
+    return get_allahpan_user_root() / "tunnel_config.json"
 
 
 class TunnelStatus(Enum):
@@ -64,10 +70,6 @@ class TunnelManager:
     
     DEFAULT_CLOUDFLARED_PORT = 7844
     DEFAULT_METRICS_PORT = 9080
-    
-    # 状态文件路径
-    CONFIG_DIR = Path.home() / ".allahpan"
-    TUNNEL_CONFIG_FILE = CONFIG_DIR / "tunnel_config.json"
     
     def __init__(
         self,
@@ -186,9 +188,9 @@ class TunnelManager:
     
     def _load_saved_config(self) -> Dict[str, Any]:
         """从配置文件加载保存的设置。"""
-        if self.TUNNEL_CONFIG_FILE.exists():
+        if _tunnel_config_file().exists():
             try:
-                with open(self.TUNNEL_CONFIG_FILE, "r", encoding="utf-8") as f:
+                with open(_tunnel_config_file(), "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
                 logger.warning(f"加载 Tunnel 配置文件失败: {e}")
@@ -216,13 +218,13 @@ class TunnelManager:
             bool: 保存成功返回 True
         """
         try:
-            self.TUNNEL_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _tunnel_config_file().parent.mkdir(parents=True, exist_ok=True)
             config = {
                 "token": token or self.tunnel_token,
                 "domain": domain or self.domain,
                 "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
-            with open(self.TUNNEL_CONFIG_FILE, "w", encoding="utf-8") as f:
+            with open(_tunnel_config_file(), "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
             logger.info("Tunnel 配置已保存")
             return True

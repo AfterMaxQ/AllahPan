@@ -78,14 +78,33 @@ else:
     BACKEND_DIR = PROJECT_ROOT / "backend"
     FRONTEND_DIR = PROJECT_ROOT / "frontend_desktop"
 
-DATA_DIR = PROJECT_ROOT / "data" if not _FROZEN else (Path.home() / ".allahpan" / "data")
+# 与 backend.app.user_dirs 一致，便于启动器日志/PID 与数据库同根目录
+try:
+    _bd = str(BACKEND_DIR.resolve())
+    if _bd not in sys.path:
+        sys.path.insert(0, _bd)
+    from app.user_dirs import get_allahpan_user_root, should_store_data_outside_bundle  # noqa: E402
+except Exception:  # noqa: BLE001 — 打包不完整时回退
 
-# 与桌面端设置页写入的路径一致；环境变量优先于文件（便于脚本/CI 覆盖）
-SERVER_SETTINGS_PATH = Path.home() / ".allahpan" / "server_settings.json"
+    def get_allahpan_user_root() -> Path:
+        return Path.home() / ".allahpan"
+
+    def should_store_data_outside_bundle() -> bool:
+        return bool(_FROZEN)
+
+
+DATA_DIR = (
+    (get_allahpan_user_root() / "data")
+    if should_store_data_outside_bundle()
+    else (PROJECT_ROOT / "data")
+)
+
+# 与桌面端设置页、后端 config 写入的路径一致；环境变量优先于文件（便于脚本/CI 覆盖）
+SERVER_SETTINGS_PATH = get_allahpan_user_root() / "server_settings.json"
 
 
 def _apply_persistent_server_settings() -> None:
-    """从 ~/.allahpan/server_settings.json 应用 api_host / api_port / ollama_port / storage_dir（仅当对应环境变量未设置）。"""
+    """从用户数据目录下 server_settings.json 应用 api_host / api_port / ollama_port / storage_dir（仅当对应环境变量未设置）。"""
     p = SERVER_SETTINGS_PATH
     if not p.is_file():
         return
@@ -184,11 +203,11 @@ def ensure_api_listen_port() -> int:
     os.environ["ALLAHPAN_HOST"] = API_HOST
     return chosen
 
-LOG_DIR = Path.home() / ".allahpan" / "logs"
+LOG_DIR = get_allahpan_user_root() / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / "launcher.log"
 
-PID_DIR = Path.home() / ".allahpan" / "pids"
+PID_DIR = get_allahpan_user_root() / "pids"
 PID_DIR.mkdir(parents=True, exist_ok=True)
 
 OLLAMA_MANAGER_ENABLED = True
@@ -660,6 +679,12 @@ def main():
             OllamaHelper.start_server()
         # 主线程先注入路径并预加载 app，避免部分环境下子线程 import 找不到 app
         ensure_backend_import_path()
+        try:
+            from app.runtime_env import ensure_sqlite_temp_environment
+
+            ensure_sqlite_temp_environment()
+        except Exception:
+            logging.debug("ensure_sqlite_temp_environment 预初始化跳过", exc_info=True)
         try:
             import importlib
 

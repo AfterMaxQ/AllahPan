@@ -30,7 +30,7 @@ import config
 
 # 断点续传配置：每个任务独立状态文件，避免多任务并发写同一文件
 CHUNK_SIZE = 5 * 1024 * 1024  # 5MB per chunk
-RESUME_STATE_DIR = Path.home() / ".allahpan" / "upload_resume"
+RESUME_STATE_DIR = config.get_allahpan_user_root() / "upload_resume"
 
 
 class UploadTaskStatus(Enum):
