@@ -12,9 +12,11 @@ Build command:
 import sys
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_all
 
 block_cipher = None
+
+_jose_datas, _jose_binaries, _jose_collect_hidden = collect_all("jose")
 
 
 # ==================== Configuration ====================
@@ -46,6 +48,9 @@ pydantic_hidden = [
 ]
 jose_hidden = [
     "jose",
+    "jose.jwt",
+    "jose.jws",
+    "jose.jwk",
     "jose.exceptions",
     "jose.backends",
     "jose.backends.cryptography_backend",
@@ -134,6 +139,7 @@ all_hidden_imports = (
         "cryptography.x509",
         "cryptography.hazmat.primitives",
         "ollama",
+        "filelock",
         "python_multipart",
         "watchdog",
         "watchdog.watchmedo",
@@ -192,15 +198,16 @@ all_hidden_imports = (
 a = Analysis(
     [str(PROJECT_ROOT / "launcher.py")],
     pathex=[str(PROJECT_ROOT)],
-    binaries=[],
+    binaries=list(_jose_binaries),
     datas=[
         (str(BACKEND_DIR / "app"), "backend/app"),
         (str(BACKEND_DIR / "ollama"), "backend/ollama"),
         (str(FRONTEND_DIR), "frontend_desktop"),
         (str(FRONTEND_DIR / "theme"), "frontend_desktop/theme"),
         (str(FRONTEND_WEB_DIR), "frontend_web"),
-    ],
-    hiddenimports=all_hidden_imports,
+    ]
+    + list(_jose_datas),
+    hiddenimports=all_hidden_imports + list(_jose_collect_hidden),
     hookspath=[],
     runtime_hooks=[],
     excludes=[

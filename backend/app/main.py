@@ -212,6 +212,8 @@ app = FastAPI(
     version="1.0.0",
     description="AllahPan家庭私有网盘API",
     lifespan=lifespan,
+    # 避免 POST 因尾斜杠 301/302 重定向被客户端变成 GET，导致 /api/v1/auth/register 等返回 404
+    redirect_slashes=False,
 )
 
 logger.info("FastAPI应用初始化完成")

@@ -19,6 +19,7 @@ from typing import Optional
 
 __all__ = [
     "APP_NAME", "APP_VERSION", "APP_DESCRIPTION",
+    "sync_api_url_from_environ",
     "API_HOST", "API_PORT", "API_BASE_URL",
     "API_AUTH_LOGIN", "API_AUTH_REGISTER", "API_AUTH_ME",
     "API_FILES_LIST", "API_FILES_UPLOAD", "API_FILES_DETAIL",
@@ -66,9 +67,44 @@ def resolve_app_icon_path() -> Optional[Path]:
 SERVER_SETTINGS_PATH = Path.home() / ".allahpan" / "server_settings.json"
 
 # ==================== API 配置 ====================
-API_HOST = os.environ.get("ALLAHPAN_HOST", "localhost")
-API_PORT = os.environ.get("ALLAHPAN_PORT", "8000")
-API_BASE_URL = f"http://{API_HOST}:{API_PORT}/api/v1"
+def sync_api_url_from_environ() -> None:
+    """
+    根据当前环境变量刷新 API 基址与各端点常量。
+
+    打包后 launcher 可能在 import config 之后才确定实际监听端口（如 8000 被占用改为 8001）；
+    若仅模块加载时读一次 env，桌面端会仍请求旧端口，表现为注册/登录 404。
+    """
+    host = (os.environ.get("ALLAHPAN_HOST") or "localhost").strip() or "localhost"
+    port = (os.environ.get("ALLAHPAN_PORT") or "8000").strip() or "8000"
+    base = f"http://{host}:{port}/api/v1"
+    g = globals()
+    g["API_HOST"] = host
+    g["API_PORT"] = port
+    g["API_BASE_URL"] = base
+    g["API_AUTH_LOGIN"] = f"{base}/auth/login"
+    g["API_AUTH_REGISTER"] = f"{base}/auth/register"
+    g["API_AUTH_ME"] = f"{base}/auth/me"
+    g["API_FILES_LIST"] = f"{base}/files/list"
+    g["API_FILES_UPLOAD"] = f"{base}/files/upload"
+    g["API_FILES_DETAIL"] = f"{base}/files"
+    g["API_AI_SEARCH"] = f"{base}/ai/search"
+    g["API_AI_STATUS"] = f"{base}/ai/status"
+    g["API_AI_PARSE"] = f"{base}/ai/parse"
+    g["API_SYSTEM_INFO"] = f"{base}/system/info"
+    g["API_SYSTEM_STORAGE"] = f"{base}/system/storage"
+    g["API_SYSTEM_WATCHER"] = f"{base}/system/watcher"
+    g["API_SYSTEM_SUMMARY"] = f"{base}/system/summary"
+    g["API_SYSTEM_OLLAMA"] = f"{base}/system/ollama"
+    g["API_TUNNEL_STATUS"] = f"{base}/tunnel/status"
+    g["API_TUNNEL_START"] = f"{base}/tunnel/start"
+    g["API_TUNNEL_STOP"] = f"{base}/tunnel/stop"
+    g["API_TUNNEL_CONFIG"] = f"{base}/tunnel/config"
+
+
+# 占位，模块加载末尾会 sync_api_url_from_environ() 填充
+API_HOST = "localhost"
+API_PORT = "8000"
+API_BASE_URL = "http://localhost:8000/api/v1"
 
 # ==================== 存储路径配置 ====================
 # 与后端 backend/app/config.py 一致：环境变量 > server_settings.json 的 storage_dir > 默认路径
@@ -97,25 +133,7 @@ else:
     _persisted = _storage_dir_from_server_settings_file()
     STORAGE_DIR = _persisted if _persisted is not None else _STORAGE_DEFAULT
 
-# API 端点
-API_AUTH_LOGIN = f"{API_BASE_URL}/auth/login"
-API_AUTH_REGISTER = f"{API_BASE_URL}/auth/register"
-API_AUTH_ME = f"{API_BASE_URL}/auth/me"
-API_FILES_LIST = f"{API_BASE_URL}/files/list"
-API_FILES_UPLOAD = f"{API_BASE_URL}/files/upload"
-API_FILES_DETAIL = f"{API_BASE_URL}/files"
-API_AI_SEARCH = f"{API_BASE_URL}/ai/search"
-API_AI_STATUS = f"{API_BASE_URL}/ai/status"
-API_AI_PARSE = f"{API_BASE_URL}/ai/parse"
-API_SYSTEM_INFO = f"{API_BASE_URL}/system/info"
-API_SYSTEM_STORAGE = f"{API_BASE_URL}/system/storage"
-API_SYSTEM_WATCHER = f"{API_BASE_URL}/system/watcher"
-API_SYSTEM_SUMMARY = f"{API_BASE_URL}/system/summary"
-API_SYSTEM_OLLAMA = f"{API_BASE_URL}/system/ollama"
-API_TUNNEL_STATUS = f"{API_BASE_URL}/tunnel/status"
-API_TUNNEL_START = f"{API_BASE_URL}/tunnel/start"
-API_TUNNEL_STOP = f"{API_BASE_URL}/tunnel/stop"
-API_TUNNEL_CONFIG = f"{API_BASE_URL}/tunnel/config"
+sync_api_url_from_environ()
 
 # ==================== 窗口配置 ====================
 WINDOW_MIN_WIDTH = 1200

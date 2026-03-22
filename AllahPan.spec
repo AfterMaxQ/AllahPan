@@ -14,10 +14,12 @@ The built .exe and all dependencies will be in dist/AllahPan/
 import sys
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_all
 import PyInstaller
 
 block_cipher = None
+
+_jose_datas, _jose_binaries, _jose_collect_hidden = collect_all("jose")
 
 
 # ==================== Configuration ====================
@@ -194,6 +196,7 @@ all_hidden_imports = (
         "cryptography.hazmat.primitives",
         # AI
         "ollama",
+        "filelock",
         # File operations
         "python_multipart",
         "watchdog",
@@ -253,7 +256,7 @@ all_hidden_imports = (
 a = Analysis(
     [str(PROJECT_ROOT / "launcher.py")],
     pathex=[str(PROJECT_ROOT)],
-    binaries=_pyside6_binaries,
+    binaries=_pyside6_binaries + list(_jose_binaries),
     datas=[
         # Backend application code
         (str(BACKEND_DIR / "app"), "backend/app"),
@@ -264,8 +267,10 @@ a = Analysis(
         (str(FRONTEND_DIR / "theme"), "frontend_desktop/theme"),
         # Web SPA：由 FastAPI 同端口托管，供局域网/远程浏览器访问
         (str(FRONTEND_WEB_DIR), "frontend_web"),
-    ] + _pyside6_datas,
-    hiddenimports=all_hidden_imports + ["shiboken6"],
+    ]
+    + _pyside6_datas
+    + list(_jose_datas),
+    hiddenimports=all_hidden_imports + ["shiboken6"] + list(_jose_collect_hidden),
     hookspath=[os.path.join(os.path.dirname(PyInstaller.__file__), "hooks")],
     hooksconfig={},
     runtime_hooks=_runtime_hooks,

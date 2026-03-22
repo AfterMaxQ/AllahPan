@@ -17,6 +17,8 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPalette, QColor, QFont, QIcon
 
 import config
+from api.client import close_api_client
+
 from theme import LIGHT_QSS, DARK_QSS
 from main_window import MainWindow
 
@@ -117,6 +119,10 @@ def main() -> int:
     返回:
         int: 应用程序退出码
     """
+    # 打包启动器可能在设置 ALLAHPAN_* 之后才加载本模块；再同步一次并丢弃已缓存的 httpx 客户端，避免连错端口 404
+    config.sync_api_url_from_environ()
+    close_api_client()
+
     app = QApplication(sys.argv)
     
     setup_application(app)

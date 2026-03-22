@@ -128,18 +128,68 @@ python run.py
 
 ---
 
-## 统一启动器（不打包，推荐日常家用）
+## 一键启动：命令行从项目根目录启动后端 + 桌面前端
 
-在仓库根目录、已激活虚拟环境：
+开发或日常在本机使用时，可在 **仓库根目录**（与 `launcher.py` 同级）用 **一条命令** 同时启动 **FastAPI 后端** 与 **PySide6 桌面客户端**（无需再开两个终端分别 `uvicorn` / `python run.py`）。
+
+### 操作步骤
+
+1. **进入项目根目录**（克隆后的 `AllahPan` 文件夹）。
+2. **激活虚拟环境**（与上文「克隆与安装依赖」一致）。
+3. **执行一键启动**：
+
+**Windows（PowerShell，已在根目录且已 `activate`）：**
 
 ```powershell
 python launcher.py
 ```
 
-- 同进程内拉起 **后端 + PySide6 桌面**，行为与 Windows 打包目录版一致。
-- 后端默认监听 **`0.0.0.0`**，便于局域网访问；网页由后端托管时访问 **`http://<局域网IP>:<端口>/`**。
+**macOS / Linux（Bash/zsh，已在根目录且已 `source .venv/bin/activate`）：**
+
+```bash
+python3 launcher.py
+```
+
+许多 macOS 终端里 **没有名为 `python` 的命令**（会出现 `zsh: command not found: python`），此时请始终使用 **`python3`**，或 **不依赖 activate**、直接指定虚拟环境里的解释器（最稳妥）：
+
+```bash
+./.venv/bin/python3 launcher.py
+```
+
+若刚创建/修复过 `.venv`，zsh 仍报错可尝试执行一次 `rehash`。若系统里 `python3` 不是 3.10+，请只用 `./.venv/bin/python3`，确保走本仓库要求的 Python 版本。
+
+### 启动后会发生什么
+
+- 启动器会先检查 `backend/app`、`frontend_desktop` 等目录是否存在；若本机 **未运行 Ollama**，会尝试执行 `ollama serve`（可用 `--no-ollama` 跳过）。
+- **后端**：子进程运行 `uvicorn app.main:app`（默认 `0.0.0.0`、端口见环境变量或 `~/.allahpan/server_settings.json`）；若首选端口被占用，会自动递增端口（除非设置 `ALLAHPAN_STRICT_PORT=1`）。
+- **桌面端**：子进程运行 `frontend_desktop/run.py`，并通过环境变量 `ALLAHPAN_HOST` / `ALLAHPAN_PORT` 连接刚启动的后端。
+- **停止**：在运行 `launcher.py` 的终端按 **`Ctrl+C`**，会一并清理已拉起的子进程。
+
+### 常用子命令（均在项目根目录执行）
+
+下表中的 `python` 在 **macOS** 上请按需换成 **`python3`** 或 **`./.venv/bin/python3`**（与上一节一致）。
+
+| 命令 | 说明 |
+|------|------|
+| `python launcher.py` | 启动后端 + 桌面（默认） |
+| `python launcher.py --backend` | 仅启动后端（适合只要 API / 浏览器走 `:8000`） |
+| `python launcher.py --gui` | 仅启动桌面（需后端已在运行） |
+| `python launcher.py --status` | 查看 API / GUI / Ollama 状态 |
+| `python launcher.py --stop` | 停止由启动器记录的服务 |
+| `python launcher.py --no-ollama` | 不自动启动 Ollama |
+| `python launcher.py -v` | 更详细的日志输出 |
+
+日志文件：`~/.allahpan/logs/launcher.log`（Windows 为用户目录下 `.allahpan\logs\launcher.log`）。
+
+### 与「仅浏览器」的区别
+
+一键启动器拉起的是 **桌面客户端**。若你 **只需要浏览器** 访问网盘页，且接受 **单端口**，通常只需启动后端并打开 `http://<本机IP>:8000/`（见上文「仅启动后端」及「Web 前端 → 后端托管」）。此时可用 `python3 launcher.py --backend`（或 `./.venv/bin/python3 launcher.py --backend`）代替完整一键。
+
+### 其它说明
+
+- 行为与 **未打包** 场景下「后端子进程 + 桌面子进程」一致；**PyInstaller 打包后的 .app / exe** 则在单进程内起后端线程 + 主线程 GUI（与根目录脚本路径不同，此处不展开）。
 - **监听地址、端口、Ollama** 可在桌面 **设置 → 本机服务与局域网 Web** 中修改，写入 `~/.allahpan/server_settings.json`（Windows 为用户目录下同名路径），**完全退出应用后重新打开**生效。
-- 防火墙需放行对应 **TCP 端口**。
+- 局域网访问时，防火墙需放行对应 **TCP 端口**。
 
 ---
 
@@ -229,7 +279,22 @@ xattr -cr dist/AllahPan.app
 
 ### DMG（可选）
 
-`.dmg` 只是磁盘映像，用于把 **`AllahPan.app`** 和「拖到应用程序」说明放在一起，便于分发；可用「磁盘工具」创建空白映像并拖入 `.app`，再导出为只读 DMG。不制作 DMG 也不影响 `.app` 本身使用。
+`.dmg` 用于分发：映像内应包含 **`AllahPan.app`** 以及指向系统 **`/Applications`** 的替身，用户拖入即可完成安装。
+
+一键生成（需先成功构建 `.app`）：
+
+```bash
+chmod +x packaging/build_macos_dmg.sh
+./packaging/build_macos_dmg.sh
+```
+
+或在构建应用时顺带生成 DMG：
+
+```bash
+BUILD_DMG=1 ./packaging/build_macos_app.sh
+```
+
+**注意**：应用包目录名必须是 **`AllahPan.app`**（带 `.app` 后缀）。若只有名为 `AllahPan` 的文件夹（无后缀），macOS 不会把它当应用程序，会出现空白图标、双击无反应；请使用当前仓库中的 `AllahPan-macOS.spec` 重新打包。
 
 ---
 

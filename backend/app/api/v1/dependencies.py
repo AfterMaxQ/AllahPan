@@ -18,10 +18,9 @@ from typing import Optional, TYPE_CHECKING
 
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-try:
-    from jose.jwt import JWTError, jwt
-except ImportError:
-    from jose import JWTError, jwt
+# python-jose：encode/decode 在子模块 jose.jwt 上，应 import 模块本身，不能 from jose.jwt import jwt
+from jose import jwt
+from jose.exceptions import JWTError
 from pydantic import BaseModel
 
 import bcrypt

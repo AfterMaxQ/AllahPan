@@ -13,8 +13,11 @@ The built .app bundle will be in dist/AllahPan.app/
 import sys
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_all
 import PyInstaller
+
+# PyInstaller 常把 jose 拆到 Frameworks 仅余 __init__.py，导致 jose.jwt 丢失而闪退；整包收集可避免
+_jose_datas, _jose_binaries, _jose_collect_hidden = collect_all("jose")
 
 block_cipher = None
 
@@ -53,6 +56,9 @@ pydantic_hidden = [
 ]
 jose_hidden = [
     "jose",
+    "jose.jwt",
+    "jose.jws",
+    "jose.jwk",
     "jose.exceptions",
     "jose.backends",
     "jose.backends.cryptography_backend",
@@ -144,6 +150,7 @@ all_hidden_imports = (
         "cryptography.x509",
         "cryptography.hazmat.primitives",
         "ollama",
+        "filelock",
         "python_multipart",
         "watchdog",
         "watchdog.watchmedo",
@@ -197,15 +204,16 @@ all_hidden_imports = (
 a = Analysis(
     [str(PROJECT_ROOT / "launcher.py")],
     pathex=[str(PROJECT_ROOT)],
-    binaries=[],
+    binaries=list(_jose_binaries),
     datas=[
         (str(BACKEND_DIR / "app"), "backend/app"),
         (str(BACKEND_DIR / "ollama"), "backend/ollama"),
         (str(FRONTEND_DIR), "frontend_desktop"),
         (str(FRONTEND_DIR / "theme"), "frontend_desktop/theme"),
         (str(FRONTEND_WEB_DIR), "frontend_web"),
-    ],
-    hiddenimports=all_hidden_imports + ["shiboken6"],
+    ]
+    + list(_jose_datas),
+    hiddenimports=all_hidden_imports + ["shiboken6"] + list(_jose_collect_hidden),
     hookspath=[os.path.join(os.path.dirname(PyInstaller.__file__), "hooks")],
     runtime_hooks=_runtime_hooks,
     excludes=[
@@ -250,13 +258,16 @@ exe = EXE(
     icon=str(BUILD_DIR / "AllahPan.icns") if (BUILD_DIR / "AllahPan.icns").exists() else None,
 )
 
+# BUNDLE 的 name 必须包含「.app」后缀。若只写 "AllahPan"，PyInstaller 会生成 dist/AllahPan/
+#（无 .app），macOS 不会把它当作应用程序：Finder 显示空白/通用图标，双击无反应。
 app = BUNDLE(
     exe,
     a.binaries,
     a.zipfiles,
     a.datas,
-    name=APP_NAME,
+    name=f"{APP_NAME}.app",
     icon=str(BUILD_DIR / "AllahPan.icns") if (BUILD_DIR / "AllahPan.icns").exists() else None,
+    version=VERSION,
     # PyInstaller 仅合并 dict；传 plist 路径无效。需要自定义键时用 dict。
     info_plist={},
     bundle_identifier="com.allahpan.app",

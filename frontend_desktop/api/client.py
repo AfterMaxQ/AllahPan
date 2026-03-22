@@ -87,7 +87,8 @@ class APIClient:
             self._client = httpx.Client(
                 base_url=self.base_url,
                 timeout=httpx.Timeout(self.DEFAULT_TIMEOUT),
-                follow_redirects=True,
+                # POST 跟随 301/302 时易被改为 GET，注册/登录会落到无 GET 的路由上表现为 404
+                follow_redirects=False,
             )
         return self._client
     
@@ -117,7 +118,11 @@ class APIClient:
             raise APIError(401, "认证失败，请重新登录")
         
         if response.status_code == 404:
-            raise APIError(404, "请求的资源不存在")
+            url = str(getattr(response, "request", None) and response.request.url or "")
+            msg = "请求的资源不存在（404）"
+            if url:
+                msg += f"，URL: {url}"
+            raise APIError(404, msg)
         
         if response.status_code >= 400:
             try:

@@ -15,15 +15,20 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-PYTHON="${PYTHON:-python3.12}"
-if ! command -v "$PYTHON" &>/dev/null; then
-  PYTHON="python3"
-fi
-
 VENV="$ROOT/.venv"
-if [[ -f "$VENV/bin/activate" ]]; then
+# 必须优先用项目 .venv，否则易误用 CommandLineTools 的 python3（无依赖、打包出来无法运行）
+if [[ -x "$VENV/bin/python" ]]; then
+  PYTHON="$VENV/bin/python"
+elif [[ -f "$VENV/bin/activate" ]]; then
   # shellcheck source=/dev/null
   source "$VENV/bin/activate"
+  PYTHON="${PYTHON:-python}"
+fi
+if [[ -z "${PYTHON:-}" ]] || ! command -v "$PYTHON" &>/dev/null; then
+  PYTHON="${PYTHON:-python3.12}"
+  if ! command -v "$PYTHON" &>/dev/null; then
+    PYTHON="python3"
+  fi
 fi
 
 echo ">>> 使用解释器: $($PYTHON -c 'import sys; print(sys.executable)')"
@@ -86,11 +91,23 @@ fix_macos_meipass_symlink() {
   ln -sfn ../Frameworks "$macos_dir/_internal"
   echo ">>> 已创建 $bundle/Contents/MacOS/_internal -> ../Frameworks（兼容 bootloader 路径）"
 }
-for _bundle in "$ROOT/dist/AllahPan.app" "$ROOT/dist/AllahPan"; do
+# 旧版 spec 曾生成 dist/AllahPan（无 .app）；迁移为正确包名，避免 Finder 不识别
+if [[ -d "$ROOT/dist/AllahPan/Contents" ]] && [[ ! -d "$ROOT/dist/AllahPan.app" ]]; then
+  echo ">>> 将 dist/AllahPan 重命名为 dist/AllahPan.app（macOS 需要 .app 后缀才能作为应用启动）"
+  mv "$ROOT/dist/AllahPan" "$ROOT/dist/AllahPan.app"
+fi
+
+for _bundle in "$ROOT/dist/AllahPan.app"; do
   if [[ -d "$_bundle/Contents" ]]; then
     fix_macos_meipass_symlink "$_bundle"
   fi
 done
 
-echo ">>> 完成: $ROOT/dist/AllahPan.app 或 $ROOT/dist/AllahPan（与 BUNDLE name 一致）"
-echo "    首次运行若被拦截: xattr -cr dist/AllahPan.app  # 或 dist/AllahPan"
+echo ">>> 完成: $ROOT/dist/AllahPan.app"
+echo "    制作带「应用程序」文件夹的 DMG: BUILD_DMG=1 ./packaging/build_macos_app.sh"
+echo "    或: ./packaging/build_macos_dmg.sh"
+echo "    首次运行若被拦截: xattr -cr dist/AllahPan.app"
+
+if [[ "${BUILD_DMG:-}" == "1" ]]; then
+  "$ROOT/packaging/build_macos_dmg.sh"
+fi

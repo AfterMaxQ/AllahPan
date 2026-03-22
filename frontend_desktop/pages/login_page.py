@@ -155,7 +155,10 @@ class LoginPage(QWidget):
         self.error_label = QLabel()
         self.error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.error_label.setStyleSheet("color: #FF3B30; font-size: 13px;")
+        self.error_label.setWordWrap(True)
+        self.error_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.error_label.setVisible(False)
+        self.error_label.setMinimumWidth(300)
         card_layout.addWidget(self.error_label)
         
         main_layout.addWidget(card_container)
