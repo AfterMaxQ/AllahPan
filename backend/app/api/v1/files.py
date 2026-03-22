@@ -25,7 +25,7 @@ from filelock import FileLock
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Header
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Header
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -55,6 +55,125 @@ from app.services.image_parser import get_image_parser_queue
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_rel_segments(path: Optional[str]) -> list[str]:
+    """
+    将相对路径规范为路径段列表（相对 STORAGE 根）。
+    去除空段、首尾空白；拒绝 . 与 ..；拒绝含反斜杠、空字符的段名。
+    """
+    if path is None:
+        return []
+    s = str(path).strip()
+    if not s:
+        return []
+    parts: list[str] = []
+    for seg in s.replace("\\", "/").split("/"):
+        seg = seg.strip()
+        if not seg:
+            continue
+        if seg in (".", ".."):
+            raise ValueError("invalid path segment")
+        if "\\" in seg or "\x00" in seg:
+            raise ValueError("invalid path segment")
+        parts.append(seg)
+    return parts
+
+
+def _ensure_parent_dirs_under_storage(storage_root: Path, file_path: Path) -> None:
+    """
+    确保 file_path 的父目录链在 storage_root 下存在且均为目录。
+    若路径上某节点已存在但不是目录（例如同名文件），返回 409。
+    """
+    root_resolved = storage_root.resolve()
+    try:
+        parent = file_path.parent.resolve()
+        parent.relative_to(root_resolved)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="非法路径",
+        )
+    cur = root_resolved
+    rel = parent.relative_to(root_resolved)
+    for part in rel.parts:
+        cur = cur / part
+        if cur.exists():
+            if not cur.is_dir():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"路径冲突：「{part}」已存在且不是文件夹，无法在此创建目录",
+                )
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.error("创建上传目标目录失败: %s, %s", parent, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="无法创建目标文件夹",
+        )
+
+
+def _resolve_upload_destination(
+    storage_root: Path,
+    upload_filename: Optional[str],
+    relative_parent: Optional[str],
+) -> tuple[Path, str]:
+    """
+    计算落盘绝对路径与入库用的「显示文件名」（仅 basename）。
+
+    当提供 relative_parent（显式表单 / JSON 字段）时：
+    许多浏览器（尤其 iOS Safari）会在 multipart 里丢弃或改写 filename 中的目录，
+    因此只信任 relative_parent 作为父目录，upload_filename 仅取最后一段作文件名。
+
+    未提供 relative_parent 时：兼容旧客户端，从 upload_filename 中解析「目录/文件名」。
+    """
+    root_resolved = storage_root.resolve()
+    raw = (upload_filename or "unknown").strip().replace("\\", "/")
+
+    try:
+        parent_parts = _normalize_rel_segments(relative_parent)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="非法的 relative_parent 路径",
+        )
+
+    if parent_parts:
+        display = raw.rsplit("/", 1)[-1].strip() if raw else "unknown"
+        if not display or display in (".", ".."):
+            display = "unknown"
+        stored = storage_root.joinpath(*parent_parts, display)
+    else:
+        if "/" in raw:
+            rel_s, display = raw.rsplit("/", 1)
+            display = display.strip() or "unknown"
+            try:
+                inner = _normalize_rel_segments(rel_s)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="非法路径",
+                )
+            if display in (".", ".."):
+                display = "unknown"
+            stored = storage_root.joinpath(*inner, display) if inner else storage_root / display
+        else:
+            display = raw.strip() or "unknown"
+            if display in (".", ".."):
+                display = "unknown"
+            stored = storage_root / display
+
+    try:
+        stored = stored.resolve()
+        stored.relative_to(root_resolved)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="非法路径",
+        )
+
+    return stored, display
 
 
 def _delete_physical_file_under_storage(filepath_str: str) -> None:
@@ -161,6 +280,8 @@ class ChunkUploadInit(BaseModel):
     file_size: int
     chunk_size: int = CHUNK_SIZE
     content_type: str = "application/octet-stream"
+    # 相对 STORAGE_DIR 的父目录（不含文件名）；与 filename 同时使用时优先于 filename 内的路径（兼容 iOS 等剥路径行为）
+    relative_parent: Optional[str] = None
 
 
 class ChunkUploadInitResponse(BaseModel):
@@ -285,6 +406,7 @@ async def init_chunk_upload(
     upload_id = str(uuid.uuid4())
     total_chunks = (request.file_size + request.chunk_size - 1) // request.chunk_size
     
+    rp = (request.relative_parent or "").strip() or None
     progress_data = {
         "upload_id": upload_id,
         "filename": request.filename,
@@ -295,6 +417,7 @@ async def init_chunk_upload(
         "received_chunks": [],
         "user_id": current_user.id,
         "created_at": datetime.now().isoformat(),
+        "relative_parent": rp,
     }
     _save_upload_progress(upload_id, progress_data)
     
@@ -573,22 +696,21 @@ async def complete_upload(
         )
     
     file_id = str(uuid.uuid4())
-    raw_name = (progress_data.get("filename") or "unknown").strip().replace("\\", "/")
-    if "/" in raw_name:
-        rel_path, display_name = raw_name.rsplit("/", 1)
-        rel_path = rel_path.strip("/")
+    rel_parent_raw = progress_data.get("relative_parent")
+    if isinstance(rel_parent_raw, str):
+        rel_parent_raw = rel_parent_raw.strip() or None
     else:
-        rel_path, display_name = "", raw_name
-    if not display_name:
-        display_name = "unknown"
-    stored_path = (STORAGE_DIR / rel_path / display_name) if rel_path else (STORAGE_DIR / display_name)
-    stored_path = stored_path.resolve()
+        rel_parent_raw = None
     try:
-        stored_path.relative_to(STORAGE_DIR.resolve())
-    except ValueError:
+        stored_path, display_name = _resolve_upload_destination(
+            STORAGE_DIR,
+            progress_data.get("filename"),
+            rel_parent_raw,
+        )
+    except HTTPException:
         _delete_upload_progress(upload_id)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="非法路径")
-    stored_path.parent.mkdir(parents=True, exist_ok=True)
+        raise
+    _ensure_parent_dirs_under_storage(STORAGE_DIR, stored_path)
     temp_path = STORAGE_DIR / f"{file_id}.tmp"
     chunk_dir = _get_chunk_dir(upload_id)
 
@@ -691,6 +813,7 @@ async def cancel_upload(
 
 @router.post("/upload", response_model=FileMetadataResponse, status_code=status.HTTP_201_CREATED)
 async def upload_file(
+    relative_parent: Optional[str] = Form(default=None),
     file: UploadFile = File(...),
     file_repo: "FileRepository" = Depends(get_file_repo),
     current_user: AuthUser = Depends(get_current_user),
@@ -700,9 +823,14 @@ async def upload_file(
     
     该接口接收用户上传的文件，将其保存到本地存储目录，
     并在数据库中创建文件元数据记录。
+
+    可选表单字段 relative_parent：相对网盘根目录的父路径（UTF-8，如 js/大）。
+    移动端浏览器常在 multipart 的 filename 中丢弃目录，应同时传此字段；
+    未传时仍支持将「目录/文件名」写在 filename 内的旧行为。
     
     参数:
         file: 上传的文件对象（FastAPI自动解析）
+        relative_parent: 可选，目标父目录相对路径
         file_repo: 文件仓库（通过依赖注入获取）
         current_user: 当前认证用户（通过依赖注入获取）
     
@@ -712,23 +840,16 @@ async def upload_file(
     异常:
         HTTPException: 当文件保存失败时抛出500错误
     """
-    logger.info(f"文件上传请求，文件名: {file.filename}, 用户: {current_user.username}")
+    if relative_parent is not None:
+        relative_parent = relative_parent.strip() or None
+    logger.info(
+        f"文件上传请求，文件名: {file.filename}, relative_parent: {relative_parent!r}, 用户: {current_user.username}"
+    )
     file_id = str(uuid.uuid4())
-    raw_name = (file.filename or "unknown").strip().replace("\\", "/")
-    if "/" in raw_name:
-        rel_path, display_name = raw_name.rsplit("/", 1)
-        rel_path = rel_path.strip("/")
-    else:
-        rel_path, display_name = "", raw_name
-    if not display_name:
-        display_name = "unknown"
-    stored_path = STORAGE_DIR / rel_path / display_name if rel_path else STORAGE_DIR / display_name
-    stored_path = stored_path.resolve()
-    try:
-        stored_path.relative_to(STORAGE_DIR.resolve())
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="非法路径")
-    stored_path.parent.mkdir(parents=True, exist_ok=True)
+    stored_path, display_name = _resolve_upload_destination(
+        STORAGE_DIR, file.filename, relative_parent
+    )
+    _ensure_parent_dirs_under_storage(STORAGE_DIR, stored_path)
 
     def _save_upload_body() -> int:
         with open(stored_path, "wb") as buffer:

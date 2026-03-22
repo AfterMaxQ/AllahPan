@@ -44,6 +44,36 @@
    * 从后端错误响应中提取可读消息
    * 后端 FastAPI 可能返回 detail 为 string 或 array（校验错误）
    */
+  /**
+   * 规范化上传目标相对路径（禁止 . 与 .. 段），与后端 STORAGE_DIR 下相对路径一致
+   */
+  /**
+   * 规范化上传父路径；与后端 _normalize_rel_segments 一致（段内 trim，跳过空段）。
+   * @returns {string} 合法路径；空串表示无父路径；null 表示含非法段（. 或 ..），调用方须报错勿静默当根目录。
+   */
+  function normalizeRelativeUploadPath(dir) {
+    if (dir == null || dir === '') return '';
+    var s = String(dir).trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    if (!s) return '';
+    var raw = s.split('/');
+    var parts = [];
+    for (var i = 0; i < raw.length; i++) {
+      var p = String(raw[i]).trim();
+      if (!p) continue;
+      if (p === '..' || p === '.') return null;
+      parts.push(p);
+    }
+    if (parts.length === 0) return '';
+    return parts.join('/');
+  }
+
+  function basenameOnly(name) {
+    if (!name) return 'unnamed';
+    var s = String(name).replace(/\\/g, '/');
+    var i = s.lastIndexOf('/');
+    return (i >= 0 ? s.slice(i + 1) : s) || 'unnamed';
+  }
+
   function getErrorMessage(body, fallback) {
     if (!body || typeof body !== 'object') return fallback || '请求失败';
     var d = body.detail;
@@ -273,14 +303,26 @@
    * body: FormData，字段名 file
    * 响应: 201 FileMetadataResponse
    * onProgress(loaded, total) 可选
+   * @param {string} [relativePath] - 相对网盘根目录的目标文件夹，如 "照片/旅行"
    */
-  function filesUpload(file, token, onProgress) {
+  function filesUpload(file, token, onProgress, relativePath) {
     var base = getBaseUrl().replace(/\/$/, '');
     var url = base + '/files/upload';
+    var dir = normalizeRelativeUploadPath(relativePath);
+    var baseName = basenameOnly(file.name);
     return new Promise(function (resolve, reject) {
+      if (relativePath != null && String(relativePath).trim() !== '' && dir === null) {
+        resolve({ ok: false, status: 0, error: '上传路径不合法：路径中不能包含单独的 . 或 .. 作为一段' });
+        return;
+      }
       var xhr = new XMLHttpRequest();
       var formData = new FormData();
-      formData.append('file', file);
+      /* 必须先追加 relative_parent 再追加 file：部分浏览器/代理在 file 之后的表单字段不会被正确解析，导致父路径丢失、文件落到根目录 */
+      if (dir) {
+        formData.append('relative_parent', dir);
+      }
+      /* multipart 的 filename 在 iOS Safari 等环境下会丢失路径，父目录由 relative_parent 传递 */
+      formData.append('file', file, baseName);
 
       xhr.upload.addEventListener('progress', function (e) {
         if (e.lengthComputable && typeof onProgress === 'function') {
@@ -318,24 +360,37 @@
    * @param {File} file
    * @param {string} token
    * @param {function(number, number)} onProgress - onProgress(loaded, total)
+   * @param {string} [relativePath] - 相对网盘根目录的目标文件夹
    * @returns {Promise<{ok: boolean, status: number, data?: object, error?: string}>}
    */
-  function filesUploadResumable(file, token, onProgress) {
+  function filesUploadResumable(file, token, onProgress, relativePath) {
     var base = getBaseUrl().replace(/\/$/, '');
     var t = token || global.currentToken || '';
     var chunkSize = RESUMABLE_CHUNK_SIZE;
     var totalChunks = Math.ceil(file.size / chunkSize);
     if (totalChunks < 1) totalChunks = 1;
+    var rp = normalizeRelativeUploadPath(relativePath);
+    if (relativePath != null && String(relativePath).trim() !== '' && rp === null) {
+      return Promise.resolve({
+        ok: false,
+        status: 0,
+        error: '上传路径不合法：路径中不能包含单独的 . 或 .. 作为一段',
+      });
+    }
+    var initBody = {
+      filename: basenameOnly(file.name),
+      file_size: file.size,
+      chunk_size: chunkSize,
+      content_type: file.type || 'application/octet-stream',
+    };
+    if (rp) {
+      initBody.relative_parent = rp;
+    }
 
     return request('files/upload/init', {
       method: 'POST',
       token: t,
-      body: JSON.stringify({
-        filename: file.name,
-        file_size: file.size,
-        chunk_size: chunkSize,
-        content_type: file.type || 'application/octet-stream',
-      }),
+      body: JSON.stringify(initBody),
     }).then(function (initRes) {
       if (!initRes.ok) {
         return { ok: false, status: initRes.status || 0, error: initRes.error || '初始化分片上传失败' };

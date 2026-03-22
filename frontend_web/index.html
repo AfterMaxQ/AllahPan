@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <!-- 可选：由后端或构建注入 API 根地址，如 <meta name="allahpan-api-base" content="https://api.example.com/api/v1"> -->
     <meta name="allahpan-api-base" content="">
     <title>AllahPan - 私有网盘</title>
@@ -38,6 +38,8 @@
             --mobile-card-pad: 12px;
             --safe-bottom: env(safe-area-inset-bottom, 0px);
             --safe-top: env(safe-area-inset-top, 0px);
+            /* 由 JS 根据 visualViewport 实时更新，等于 iOS Safari 键盘高度 */
+            --viewportpadding-bottom: 0px;
         }
 
         body {
@@ -47,6 +49,13 @@
             min-height: 100dvh;
             color: var(--text-primary);
             -webkit-tap-highlight-color: rgba(79, 70, 229, 0.15);
+        }
+
+        /* iOS Safari 键盘弹出时：禁止 body 级橡皮筋滚动，由 mainApp 内部滚动 */
+        body.keyboard-open {
+            overflow: hidden;
+            position: fixed;
+            inset: 0;
         }
 
         .container {
@@ -312,6 +321,72 @@
             box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
         }
 
+        .upload-dest-panel {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 16px 18px;
+            margin-bottom: 12px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+        }
+
+        .upload-dest-panel .upload-dest-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+
+        .upload-dest-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px 12px;
+        }
+
+        .upload-dest-row label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
+        .upload-dest-select-wrap {
+            flex: 1 1 200px;
+            min-width: 0;
+        }
+
+        #uploadDestSelect {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            font-size: 14px;
+            background: var(--bg-color);
+            color: var(--text-primary);
+        }
+
+        #uploadDestExtraPath {
+            flex: 1 1 220px;
+            min-width: 0;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            font-size: 14px;
+        }
+
+        #uploadDestExtraPath::placeholder {
+            color: var(--text-secondary);
+            opacity: 0.85;
+        }
+
+        .upload-dest-hint {
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.4;
+            word-break: break-all;
+        }
+
         .upload-area {
             background: var(--card-bg);
             border-radius: 12px;
@@ -344,6 +419,18 @@
         .upload-hint {
             font-size: 14px;
             color: var(--text-secondary);
+        }
+
+        .upload-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 16px;
+        }
+
+        .upload-actions .btn {
+            min-width: 120px;
         }
 
         .file-list {
@@ -757,6 +844,19 @@
                 display: flex;
                 flex-direction: column;
                 gap: var(--mobile-gap);
+                /* 键盘弹出时：保持底部留白等于键盘高度，防止内容被遮挡 */
+                padding-bottom: var(--viewportpadding-bottom);
+                box-sizing: border-box;
+            }
+
+            /* 滚动锚点：输入框聚焦时滚动至此，确保不被键盘遮挡 */
+            #scrollAnchor {
+                display: block;
+                height: 1px;
+                width: 1px;
+                pointer-events: none;
+                visibility: hidden;
+                flex-shrink: 0;
             }
 
             .header {
@@ -890,6 +990,17 @@
             .upload-hint {
                 font-size: 12px;
                 line-height: 1.45;
+            }
+
+            .upload-actions {
+                margin-top: 12px;
+                gap: 8px;
+            }
+
+            .upload-actions .btn {
+                min-width: 0;
+                flex: 1 1 calc(50% - 4px);
+                min-height: 44px;
             }
 
             .file-list {
@@ -1380,6 +1491,9 @@
                 <div id="previewUnsupported" class="preview-content hidden" style="color:#fff;padding:20px;max-width:400px;">该类型暂不支持在线预览，请下载后查看。</div>
             </div>
 
+            <!-- 键盘弹出时的滚动锚点 -->
+            <div id="scrollAnchor" aria-hidden="true"></div>
+
             <div class="search-box">
                 <div class="search-tabs">
                     <button type="button" class="search-tab active" id="searchTabFilename" data-mode="filename" onclick="setSearchMode('filename')">按文件名</button>
@@ -1399,12 +1513,35 @@
                 </div>
             </div>
 
-            <div class="upload-area" id="uploadArea" role="button" tabindex="0" aria-label="上传文件，点击选择">
+            <div class="upload-dest-panel" id="uploadDestPanel">
+                <div class="upload-dest-title">上传目标</div>
+                <div class="upload-dest-row">
+                    <label for="uploadDestSelect">目录</label>
+                    <div class="upload-dest-select-wrap">
+                        <select id="uploadDestSelect" aria-label="选择上传到的目录"></select>
+                    </div>
+                    <input
+                        type="text"
+                        id="uploadDestExtraPath"
+                        autocomplete="off"
+                        placeholder="子路径（可选）：已有文件夹或新建名，多级用 /，如 发票/2025"
+                        aria-label="相对上方目录的子路径，不存在时自动创建"
+                    >
+                </div>
+                <div class="upload-dest-hint" id="uploadDestHint">将上传到：根目录</div>
+            </div>
+
+            <div class="upload-area" id="uploadArea" aria-label="上传区域，可拖拽文件">
                 <div class="upload-icon" aria-hidden="true">☁️</div>
-                <div class="upload-text">点击选择文件上传</div>
-                <div class="upload-hint desktop-only">或将文件拖到此区域（电脑端）· 支持常见格式</div>
-                <div class="upload-hint mobile-only">从相册或「文件」选取，可多选</div>
+                <div class="upload-text">上传文件或整个文件夹（保留目录结构）</div>
+                <div class="upload-hint desktop-only">可将文件拖到此处；文件夹请使用下方「选择文件夹」</div>
+                <div class="upload-hint mobile-only">手机端请选择文件；完整文件夹上传需在电脑浏览器使用</div>
+                <div class="upload-actions">
+                    <button type="button" class="btn btn-primary btn-sm" id="btnPickFiles">选择文件</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="btnPickFolder" title="保留所选文件夹内的子目录结构">选择文件夹</button>
+                </div>
                 <input type="file" id="fileInput" style="display: none;" multiple onchange="handleFileSelect(event)">
+                <input type="file" id="folderInput" style="display: none;" webkitdirectory directory multiple onchange="handleFolderSelect(event)">
                 
                 <div class="progress-container" id="uploadProgress">
                     <div class="progress-bar">
@@ -1448,6 +1585,8 @@
         let isLoginMode = true;
         let currentToken = null;
         let currentPath = '';  // 当前目录路径，与后端 files/list?path= 一致
+        /** 上次填充「上传目标」下拉时对应的浏览路径；同路径下刷新列表须保留用户已选文件夹，否则会误重置为根目录 */
+        let lastUploadDestFillBrowsingPath = null;
         let isSearchView = false;  // 当前是否为搜索结果（不显示目录、用 results 渲染）
         let sessionExpiredHandled = false;  // 避免 401 重复弹窗
         let currentSearchMode = 'filename';  // 搜索模式：filename 按文件名，vector 图片/语义
@@ -1584,6 +1723,72 @@
                 });
             }
 
+            var uploadDestSel = document.getElementById('uploadDestSelect');
+            var uploadDestExtra = document.getElementById('uploadDestExtraPath');
+            function onUploadDestChanged() {
+                updateUploadDestHint();
+            }
+            if (uploadDestSel) uploadDestSel.addEventListener('change', onUploadDestChanged);
+            if (uploadDestExtra) uploadDestExtra.addEventListener('input', onUploadDestChanged);
+
+            // ==================== iOS Safari 键盘自适应 ====================
+            // 使用 visualViewport API（iOS Safari 13.4+）监听键盘弹出，实时：
+            // 1. 更新 CSS 变量 --viewportpadding-bottom 为键盘高度，保持底部不被遮挡
+            // 2. 对 input/textarea 聚焦时滚动锚点到可视区，避免被键盘盖住
+            (function () {
+                var isIOS = /iPad|iPhone|iPod/.test(navigator.platform)
+                    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+                if (!isIOS) return;
+                if (typeof visualViewport === 'undefined') return;
+
+                var scrollAnchor = document.getElementById('scrollAnchor');
+                var scrollTimeout = null;
+                /** 上一帧是否视为键盘弹出；避免在普通页面滚动时误触发 scrollIntoView 把整页拉回顶部 */
+                var keyboardLikelyOpen = false;
+
+                function handleViewportResize() {
+                    var vv = visualViewport;
+                    if (!vv) return;
+                    var h = Math.round(window.innerHeight - vv.height - vv.offsetTop);
+                    var nowKeyboard = h > 20;
+                    if (nowKeyboard) {
+                        document.documentElement.style.setProperty('--viewportpadding-bottom', h + 'px');
+                        document.body.classList.add('keyboard-open');
+                    } else {
+                        document.documentElement.style.setProperty('--viewportpadding-bottom', '0px');
+                        document.body.classList.remove('keyboard-open');
+                    }
+                    /* 仅在「键盘从关→开」时滚到锚点；勿监听 vv.scroll（用户滑到页底也会触发，导致跳回顶） */
+                    if (nowKeyboard && !keyboardLikelyOpen) {
+                        clearTimeout(scrollTimeout);
+                        scrollTimeout = setTimeout(function () {
+                            if (scrollAnchor) {
+                                scrollAnchor.scrollIntoView({ block: 'start', behavior: 'smooth', inline: 'nearest' });
+                            }
+                        }, 60);
+                    }
+                    keyboardLikelyOpen = nowKeyboard;
+                }
+
+                visualViewport.addEventListener('resize', handleViewportResize);
+
+                // 通用：聚焦任意 input/textarea 时滚动到锚点（非 iOS 也受益）
+                function scrollToAnchor() {
+                    clearTimeout(scrollTimeout);
+                    scrollTimeout = setTimeout(function () {
+                        if (scrollAnchor) {
+                            scrollAnchor.scrollIntoView({ block: 'start', behavior: 'smooth', inline: 'nearest' });
+                        }
+                    }, 80);
+                }
+                document.addEventListener('focusin', function (e) {
+                    var t = e.target;
+                    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.contentEditable === 'true')) {
+                        scrollToAnchor();
+                    }
+                }, { passive: true });
+            })();
+
             document.addEventListener('visibilitychange', function () {
                 if (document.hidden) {
                     pageHiddenAt = Date.now();
@@ -1677,7 +1882,9 @@
 
                 var snap = fileListSnapshotKey(currentPath, directories, files);
                 var wrap = document.getElementById('fileListContent');
-                var prevTop = wrap ? wrap.scrollTop : 0;
+                var winY = window.scrollY != null ? window.scrollY : window.pageYOffset;
+                var winX = window.scrollX != null ? window.scrollX : window.pageXOffset;
+                var prevListTop = wrap ? wrap.scrollTop : 0;
                 if (snap && snap === fileListLastSnapshot) {
                     if (!hasUnparsedFiles) {
                         stopFileListPolling();
@@ -1688,7 +1895,7 @@
                 if (snap) fileListLastSnapshot = snap;
                 renderList(directories, files, false);
                 document.getElementById('fileCount').textContent = total + ' 个文件';
-                if (wrap) wrap.scrollTop = prevTop;
+                restoreScrollAfterListRender(winX, winY, prevListTop);
                 if (!hasUnparsedFiles) {
                     stopFileListPolling();
                     Logger.info('无可等待解析的图片，停止列表轮询');
@@ -1872,6 +2079,7 @@
             updateSelectionBar();
             setToken(null);
             currentPath = '';
+            lastUploadDestFillBrowsingPath = null;
             isSearchView = false;
             resetSessionExpiredFlag();
             document.getElementById('mainApp').classList.remove('active');
@@ -2220,6 +2428,168 @@
             loadFileList();
         }
 
+        /**
+         * 根据当前路径与列表中的子目录填充「上传目标」下拉框。
+         * 进入新目录时默认对齐 currentPath；在同一目录下因刷新/轮询重绘时保留用户已选的上传文件夹，避免始终被打回根目录。
+         */
+        function fillUploadDestSelect(subdirs) {
+            var sel = document.getElementById('uploadDestSelect');
+            if (!sel) return;
+            var hadOptions = sel.options && sel.options.length > 0;
+            var previousValue = hadOptions ? sel.value : undefined;
+            var browsingUnchanged = lastUploadDestFillBrowsingPath === currentPath;
+
+            sel.innerHTML = '';
+            function addOpt(value, label) {
+                var o = document.createElement('option');
+                o.value = value;
+                o.textContent = label;
+                sel.appendChild(o);
+            }
+            addOpt('', '根目录');
+            var parts = (currentPath || '').split('/').filter(Boolean);
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts.slice(0, i + 1).join('/');
+                addOpt(p, p.split('/').join(' › '));
+            }
+            var seen = {};
+            seen[''] = true;
+            (subdirs || []).forEach(function (d) {
+                var p = (d && d.path) ? String(d.path) : '';
+                if (!p || seen[p]) return;
+                seen[p] = true;
+                var nm = (d && d.name) ? String(d.name) : p;
+                addOpt(p, '📁 ' + nm + '（子文件夹）');
+            });
+
+            lastUploadDestFillBrowsingPath = currentPath;
+
+            if (browsingUnchanged && hadOptions) {
+                var j;
+                for (j = 0; j < sel.options.length; j++) {
+                    if (sel.options[j].value === previousValue) {
+                        sel.selectedIndex = j;
+                        updateUploadDestHint();
+                        return;
+                    }
+                }
+            }
+            syncUploadDestSelectValue();
+            updateUploadDestHint();
+        }
+
+        function syncUploadDestSelectValue() {
+            var sel = document.getElementById('uploadDestSelect');
+            if (!sel) return;
+            var target = currentPath || '';
+            var i;
+            for (i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === target) {
+                    sel.selectedIndex = i;
+                    updateUploadDestHint();
+                    return;
+                }
+            }
+            if (target) {
+                var o = document.createElement('option');
+                o.value = target;
+                o.textContent = target.split('/').join(' › ');
+                sel.appendChild(o);
+                sel.value = target;
+            } else {
+                sel.value = '';
+            }
+            updateUploadDestHint();
+        }
+
+        /**
+         * 可选子路径框的校验（与后端段规则一致：trim 段、禁止单独的 . / ..）。
+         * @returns {{ ok: boolean, error?: string }}
+         */
+        function validateUploadExtraPath() {
+            var el = document.getElementById('uploadDestExtraPath');
+            var raw = el ? String(el.value || '').trim() : '';
+            if (!raw) return { ok: true };
+            if (sanitizePathSegments(raw) === null) {
+                return { ok: false, error: '子路径不合法：不能包含单独的 . 或 .. 作为路径段' };
+            }
+            return { ok: true };
+        }
+
+        /** 合并下拉目录与可选子路径，得到相对网盘根的父路径（不含文件名）；不存在目录时由后端创建 */
+        function getEffectiveUploadRelativePath() {
+            var sel = document.getElementById('uploadDestSelect');
+            var extraEl = document.getElementById('uploadDestExtraPath');
+            var base = sel ? String(sel.value || '').trim() : '';
+            base = base.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+            var extraRaw = extraEl ? String(extraEl.value || '').trim() : '';
+            if (!extraRaw) {
+                return base;
+            }
+            var extraNorm = sanitizePathSegments(extraRaw);
+            if (extraNorm === null) {
+                return base;
+            }
+            if (!extraNorm) {
+                return base;
+            }
+            return base ? (base + '/' + extraNorm) : extraNorm;
+        }
+
+        function updateUploadDestHint() {
+            var hint = document.getElementById('uploadDestHint');
+            if (!hint) return;
+            hint.style.color = '';
+            var el = document.getElementById('uploadDestExtraPath');
+            var raw = el ? String(el.value || '').trim() : '';
+            if (raw && sanitizePathSegments(raw) === null) {
+                hint.textContent = '子路径不合法，请修正（不能使用单独的 . 或 .. 作为一段）';
+                hint.style.color = 'var(--danger-color)';
+                return;
+            }
+            var p = getEffectiveUploadRelativePath();
+            hint.textContent = p ? ('将上传到：' + p.split('/').join(' / ')) : '将上传到：根目录';
+        }
+
+        /**
+         * 规范化用户输入的路径段：逐段 trim，跳过空段；任一段为 . 或 .. 则整段路径无效。
+         * 与后端 _normalize_rel_segments 行为对齐。
+         */
+        function sanitizePathSegments(path) {
+            var raw = String(path || '').replace(/\\/g, '/').split('/');
+            var out = [];
+            for (var i = 0; i < raw.length; i++) {
+                var seg = raw[i].trim();
+                if (!seg) continue;
+                if (seg === '..' || seg === '.') return null;
+                out.push(seg);
+            }
+            return out.join('/');
+        }
+
+        /**
+         * 文件夹上传：将「上传目标」与 File.webkitRelativePath 中的目录部分拼接。
+         * webkitRelativePath 形如「所选根文件夹名/子目录/文件名」，整段相对路径会落在所选目标之下。
+         * @returns {string|null} 目标目录相对路径；null 表示非法路径，调用方应跳过该文件。
+         */
+        function mergeFolderUploadPath(webkitRelativePath) {
+            var baseRaw = getEffectiveUploadRelativePath();
+            var base = sanitizePathSegments(baseRaw);
+            if (baseRaw && base === null) {
+                return null;
+            }
+            var wrp = String(webkitRelativePath || '').replace(/\\/g, '/');
+            if (!wrp) return base || '';
+            var lastSlash = wrp.lastIndexOf('/');
+            var dirOnly = lastSlash < 0 ? '' : wrp.slice(0, lastSlash);
+            var sub = sanitizePathSegments(dirOnly);
+            if (dirOnly && sub === null) {
+                return null;
+            }
+            if (!sub) return base || '';
+            return base ? (base + '/' + sub) : sub;
+        }
+
         function updateBreadcrumb() {
             var el = document.getElementById('breadcrumb');
             if (!el) return;
@@ -2249,6 +2619,9 @@
             if (dirs.length === 0 && list.length === 0) {
                 container.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><div>' + (isSearch ? '未找到匹配文件' : '暂无文件，请上传文件') + '</div></div>';
                 fileCountEl.textContent = '0 个文件';
+                if (!isSearch) {
+                    fillUploadDestSelect([]);
+                }
                 updateSelectionBar();
                 return;
             }
@@ -2307,6 +2680,9 @@
             }).join('');
             container.innerHTML = html;
             fileCountEl.textContent = total + ' 个文件';
+            if (!isSearch) {
+                fillUploadDestSelect(dirs);
+            }
             updateSelectionBar();
         }
 
@@ -2469,19 +2845,24 @@
             });
         }
 
-        // 上传区域：点击 / 键盘（无障碍与外接键盘）
+        // 上传：显式按钮选择文件 / 文件夹（保留目录结构）
         (function () {
-            var ua = document.getElementById('uploadArea');
             var fi = document.getElementById('fileInput');
-            ua.addEventListener('click', function () {
-                fi.click();
-            });
-            ua.addEventListener('keydown', function (e) {
-                if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
+            var fo = document.getElementById('folderInput');
+            var bf = document.getElementById('btnPickFiles');
+            var bd = document.getElementById('btnPickFolder');
+            if (bf && fi) {
+                bf.addEventListener('click', function (e) {
+                    e.stopPropagation();
                     fi.click();
-                }
-            });
+                });
+            }
+            if (bd && fo) {
+                bd.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    fo.click();
+                });
+            }
         })();
 
         // 文件选择处理（支持多选，加入队列）
@@ -2489,8 +2870,22 @@
             var files = event.target.files;
             if (!files || files.length === 0) return;
             for (var i = 0; i < files.length; i++) {
-                uploadFile(files[i]);
+                uploadFile(files[i], {});
             }
+        }
+
+        // 文件夹选择：每个 File 带 webkitRelativePath，上传到目标下并保持子目录
+        function handleFolderSelect(event) {
+            var files = event.target.files;
+            if (!files || !files.length) return;
+            var n = files.length;
+            showAppToast('已开始上传文件夹（共 ' + n + ' 个文件），将保留目录结构…', 'success');
+            for (var i = 0; i < n; i++) {
+                var f = files[i];
+                var wrp = f.webkitRelativePath || f.name;
+                uploadFile(f, { webkitRelativePath: wrp, quietBatch: true });
+            }
+            event.target.value = '';
         }
 
         // 拖拽上传
@@ -2511,7 +2906,7 @@
             var files = e.dataTransfer.files;
             if (files && files.length > 0) {
                 for (var i = 0; i < files.length; i++) {
-                    uploadFile(files[i]);
+                    uploadFile(files[i], {});
                 }
             }
         });
@@ -2526,10 +2921,23 @@
             while (uploadQueue.length > 0 && uploadActiveCount < UPLOAD_CONCURRENT_MAX) {
                 uploadActiveCount += 1;
                 var item = uploadQueue.shift();
-                doUploadOne(item.file, item.onComplete);
+                doUploadOne(item.file, item.onComplete, item);
             }
         }
-        function doUploadOne(file, onComplete) {
+        function doUploadOne(file, onComplete, item) {
+            item = item || {};
+            var pathErr = validateUploadExtraPath();
+            if (!pathErr.ok) {
+                uploadActiveCount -= 1;
+                var progressContainer = document.getElementById('uploadProgress');
+                if (uploadActiveCount <= 0 && progressContainer) {
+                    progressContainer.style.display = 'none';
+                }
+                showAlert(pathErr.error || '上传路径无效', 'error');
+                if (typeof onComplete === 'function') onComplete();
+                processUploadQueue();
+                return;
+            }
             var progressContainer = document.getElementById('uploadProgress');
             var progressFill = document.getElementById('progressFill');
             var progressText = document.getElementById('progressText');
@@ -2545,22 +2953,41 @@
                     progressText.textContent = pct + '%';
                 }
             }
+            var uploadRelPath;
+            if (item.webkitRelativePath) {
+                uploadRelPath = mergeFolderUploadPath(item.webkitRelativePath);
+                if (uploadRelPath === null) {
+                    uploadActiveCount -= 1;
+                    if (uploadActiveCount <= 0) progressContainer.style.display = 'none';
+                    var skipMsg = '路径中含有非法段（. 或 ..），已跳过：' + (item.webkitRelativePath || file.name);
+                    if (item.quietBatch) showAppToast(skipMsg, 'error');
+                    else showAlert(skipMsg, 'error');
+                    if (typeof onComplete === 'function') onComplete();
+                    processUploadQueue();
+                    return;
+                }
+            } else {
+                uploadRelPath = getEffectiveUploadRelativePath();
+            }
             var uploadPromise = (file.size > RESUMABLE_UPLOAD_THRESHOLD)
-                ? API.files.uploadResumable(file, currentToken, onProgress)
-                : API.files.upload(file, currentToken, onProgress);
+                ? API.files.uploadResumable(file, currentToken, onProgress, uploadRelPath)
+                : API.files.upload(file, currentToken, onProgress, uploadRelPath);
             uploadPromise.then(function (res) {
                 uploadActiveCount -= 1;
                 if (uploadActiveCount <= 0) progressContainer.style.display = 'none';
                 if (res.ok && (res.status === 201 || (res.data && res.data.file_id))) {
-                    showAlert('文件上传成功：' + file.name, 'success');
-                    Logger.info('文件上传成功', file.name, file.size);
+                    if (!item.quietBatch) {
+                        showAlert('文件上传成功：' + file.name, 'success');
+                    }
+                    Logger.info('文件上传成功', file.name, file.size, item.webkitRelativePath || '');
                     refreshFileListSoft();
                     if (file.type && file.type.indexOf('image/') === 0) {
                         Logger.info('图片已上传，启动 AI 解析轮询');
                         startFileListPolling();
                     }
                 } else {
-                    showAlert(res.error || '文件上传失败', 'error');
+                    var errLabel = (item.webkitRelativePath || file.name);
+                    showAlert((res.error || '文件上传失败') + ' — ' + errLabel, 'error');
                     Logger.error('上传失败', file.name, res.error);
                 }
                 if (typeof onComplete === 'function') onComplete();
@@ -2568,7 +2995,7 @@
             }).catch(function (err) {
                 uploadActiveCount -= 1;
                 if (uploadActiveCount <= 0) progressContainer.style.display = 'none';
-                showAlert(err && err.message ? err.message : '文件上传失败', 'error');
+                showAlert((err && err.message ? err.message : '文件上传失败') + ' — ' + (item.webkitRelativePath || file.name), 'error');
                 Logger.error('上传异常', file.name, err);
                 if (typeof onComplete === 'function') onComplete();
                 processUploadQueue();
@@ -2576,14 +3003,25 @@
         }
 
         // 上传文件：小文件走普通上传，大文件走断点续传；支持多文件队列，最多 2 个并发
-        function uploadFile(file) {
+        // opts.webkitRelativePath: 文件夹上传时浏览器提供的相对路径（含根文件夹名与子目录）
+        // opts.quietBatch: 批量时不逐个弹成功提示
+        function uploadFile(file, opts) {
             if (!file) return;
+            opts = opts || {};
+            var queueItem = {
+                file: file,
+                onComplete: function () {},
+                webkitRelativePath: opts.webkitRelativePath || '',
+                quietBatch: !!opts.quietBatch,
+            };
             if (uploadActiveCount < UPLOAD_CONCURRENT_MAX && uploadQueue.length === 0) {
                 uploadActiveCount += 1;
-                doUploadOne(file, function () {});
+                doUploadOne(file, function () {}, queueItem);
             } else {
-                uploadQueue.push({ file: file, onComplete: function () {} });
-                showAlert('已加入上传队列，当前队列 ' + (uploadQueue.length + uploadActiveCount) + ' 个', 'success');
+                uploadQueue.push(queueItem);
+                if (!opts.quietBatch) {
+                    showAlert('已加入上传队列，当前队列 ' + (uploadQueue.length + uploadActiveCount) + ' 个', 'success');
+                }
             }
             document.getElementById('fileInput').value = '';
             return;

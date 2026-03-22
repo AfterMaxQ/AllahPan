@@ -146,12 +146,22 @@ class ChunkUploadWorker(QThread):
             
             # 初始化上传（如果需要）
             if not self.task.upload_id:
+                raw_fn = (self.task.file_name or "").strip().replace("\\", "/")
+                if "/" in raw_fn:
+                    rp, base_fn = raw_fn.rsplit("/", 1)
+                    rp = rp.strip().strip("/") or None
+                    base_fn = base_fn.strip() or "unnamed"
+                else:
+                    rp = None
+                    base_fn = raw_fn or "unnamed"
                 init_data = {
-                    "filename": self.task.file_name,
+                    "filename": base_fn,
                     "file_size": file_size,
                     "chunk_size": chunk_size,
-                    "content_type": self._guess_content_type(self.task.file_name),
+                    "content_type": self._guess_content_type(base_fn),
                 }
+                if rp:
+                    init_data["relative_parent"] = rp
                 response = self._api_client._client.post(
                     "/files/upload/init",
                     json=init_data,

@@ -344,11 +344,21 @@ class APIClient:
                     self._file.close()
         
         wrapped_file = FileWithProgress(file_path, progress_callback, file_size)
-        files = {"file": (file_name, wrapped_file)}
-        
+        raw = (file_name or "").strip().replace("\\", "/")
+        if "/" in raw:
+            rel_parent, base_nm = raw.rsplit("/", 1)
+            rel_parent = rel_parent.strip().strip("/") or None
+            base_nm = base_nm.strip() or "unnamed"
+        else:
+            rel_parent = None
+            base_nm = raw or "unnamed"
+        files = {"file": (base_nm, wrapped_file)}
+        data = {"relative_parent": rel_parent} if rel_parent else None
+
         response = client.post(
             self._relative_api_path("/files/upload"),
             files=files,  # type: ignore[arg-type]
+            data=data,
             headers=headers,
             timeout=httpx.Timeout(self.UPLOAD_TIMEOUT),
         )

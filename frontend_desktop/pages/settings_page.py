@@ -41,6 +41,25 @@ from config import ThemeMode
 from theme import LIGHT_QSS, DARK_QSS
 
 
+def _load_server_settings_dict() -> dict:
+    """读取 ~/.allahpan/server_settings.json，失败或格式不对时返回空 dict。"""
+    p = config.SERVER_SETTINGS_PATH
+    if not p.is_file():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_server_settings_dict(data: dict) -> None:
+    """写入 server_settings.json（调用方负责合并完整字段）。"""
+    p = config.SERVER_SETTINGS_PATH
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 class SettingsWorker(QThread):
     """在后台执行可调用对象，避免阻塞设置页 UI。"""
     finished = Signal(object)
@@ -443,17 +462,16 @@ class SettingsPage(QWidget):
 
     def _on_save_server_settings(self) -> None:
         host = (self._srv_host.text() or "").strip() or "0.0.0.0"
-        data = {
-            "api_host": host,
-            "api_port": int(self._srv_port_spin.value()),
-            "ollama_port": int(self._ollama_port_spin.value()),
-        }
+        merged = _load_server_settings_dict()
+        merged.update(
+            {
+                "api_host": host,
+                "api_port": int(self._srv_port_spin.value()),
+                "ollama_port": int(self._ollama_port_spin.value()),
+            }
+        )
         try:
-            config.SERVER_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            config.SERVER_SETTINGS_PATH.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
+            _save_server_settings_dict(merged)
             QMessageBox.information(
                 self,
                 "已保存",
@@ -648,12 +666,28 @@ class SettingsPage(QWidget):
                     QMessageBox.StandardButton.No
                 )
                 if reply == QMessageBox.StandardButton.Yes:
-                    self.storage_path_label.setText(new_path)
-                    self.storage_path_changed.emit(new_path)
+                    try:
+                        resolved = str(Path(new_path).expanduser().resolve())
+                    except OSError:
+                        resolved = str(Path(new_path).expanduser())
+                    merged = _load_server_settings_dict()
+                    merged["storage_dir"] = resolved
+                    try:
+                        _save_server_settings_dict(merged)
+                    except OSError as e:
+                        QMessageBox.warning(
+                            self,
+                            "保存失败",
+                            f"无法写入存储路径配置：{e}",
+                        )
+                        return
+                    self.storage_path_label.setText(resolved)
+                    self.storage_path_changed.emit(resolved)
                     QMessageBox.information(
                         self,
                         "提示",
-                        "存储路径已修改，请在设置中更新配置后重启应用。"
+                        "存储路径已写入 ~/.allahpan/server_settings.json。\n"
+                        "请完全退出并重启后端（或整个 AllahPan）后生效。",
                     )
     
     def _on_configure_tunnel(self) -> None:

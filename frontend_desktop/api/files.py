@@ -114,19 +114,33 @@ class FilesAPI:
         import os
         
         name = file_name or os.path.basename(file_path)
-        
+        raw = (name or "").strip().replace("\\", "/")
+        if "/" in raw:
+            rel_parent, base_nm = raw.rsplit("/", 1)
+            rel_parent = rel_parent.strip().strip("/") or None
+            base_nm = base_nm.strip() or "unnamed"
+        else:
+            rel_parent = None
+            base_nm = raw or "unnamed"
+
         client = self._client
         headers = client._get_auth_headers()
-        
+        import httpx
+
+        hc = client._get_client()
+        rel = client._relative_api_path("/files/upload")
         with open(file_path, "rb") as f:
-            files = {"file": (name, f)}
-            response = client.post(
-                "/files/upload",
-                files=files,
+            files_kw = {"file": (base_nm, f)}
+            data_kw = {"relative_parent": rel_parent} if rel_parent else None
+            response = hc.post(
+                rel,
+                files=files_kw,
+                data=data_kw,
                 headers=headers,
+                timeout=httpx.Timeout(client.UPLOAD_TIMEOUT),
             )
-        
-        return response
+
+        return client._handle_response(response)
     
     def download_file(
         self,

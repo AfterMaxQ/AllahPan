@@ -14,8 +14,15 @@ import sys
 import os
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+import PyInstaller
 
 block_cipher = None
+
+# 在导入 PySide6 之前设置 Qt 插件路径（与 Windows 版 AllahPan.spec 一致，避免 macOS 上平台插件未找到）
+_pyi_rthooks_dir = os.path.join(os.path.dirname(PyInstaller.__file__), "hooks", "rthooks")
+_runtime_hooks = [
+    os.path.join(_pyi_rthooks_dir, "pyi_rth_pyside6.py"),
+]
 
 
 # ==================== Configuration ====================
@@ -199,8 +206,8 @@ a = Analysis(
         (str(FRONTEND_WEB_DIR), "frontend_web"),
     ],
     hiddenimports=all_hidden_imports + ["shiboken6"],
-    hookspath=[],
-    runtime_hooks=[],
+    hookspath=[os.path.join(os.path.dirname(PyInstaller.__file__), "hooks")],
+    runtime_hooks=_runtime_hooks,
     excludes=[
         "tkinter",
         "matplotlib",

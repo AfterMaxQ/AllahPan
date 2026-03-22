@@ -9,6 +9,7 @@
 最后修改: 2026-03-19
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -57,9 +58,31 @@ WEB_FRONTEND_DIR = _web_dir if _web_dir.exists() else None
 DB_NAME = os.environ.get("ALLAHPAN_DB_NAME", "allahpan.db")
 DB_PATH = DATA_DIR / DB_NAME
 
-# 文件存储目录（统一放在 ~/Documents/AllahPan/files，跨平台一致）
+# 文件存储目录：环境变量 > ~/.allahpan/server_settings.json 中的 storage_dir > 默认 ~/Documents/AllahPan/files
 _DEFAULT_STORAGE = Path.home() / "Documents" / "AllahPan" / "files"
-STORAGE_DIR = Path(os.environ.get("ALLAHPAN_STORAGE_DIR", str(_DEFAULT_STORAGE)))
+_PERSISTENT_SETTINGS = Path.home() / ".allahpan" / "server_settings.json"
+
+
+def _storage_dir_from_settings_file() -> Optional[Path]:
+    if not _PERSISTENT_SETTINGS.is_file():
+        return None
+    try:
+        data = json.loads(_PERSISTENT_SETTINGS.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    raw = str(data.get("storage_dir") or "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+if os.environ.get("ALLAHPAN_STORAGE_DIR"):
+    STORAGE_DIR = Path(os.environ["ALLAHPAN_STORAGE_DIR"])
+else:
+    _from_file = _storage_dir_from_settings_file()
+    STORAGE_DIR = _from_file if _from_file is not None else _DEFAULT_STORAGE
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 # ChromaDB向量数据库路径

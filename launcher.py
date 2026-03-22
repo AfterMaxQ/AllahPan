@@ -32,12 +32,36 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+
+def _pyi_macos_app_resources() -> Optional[Path]:
+    """
+    PyInstaller 在 macOS 上生成 .app 时，Analysis 的 datas 通常落在 Contents/Resources，
+    而 sys._MEIPASS 指向 Contents/MacOS/_internal；后者往往没有 backend/frontend_desktop 目录，
+    若仅用 _MEIPASS 会导致「后端目录不存在」并立即退出（Dock 图标一闪即无）。
+    """
+    if not getattr(sys, "frozen", False) or sys.platform != "darwin":
+        return None
+    exe = Path(sys.executable).resolve()
+    if exe.parent.name != "MacOS":
+        return None
+    resources = exe.parent.parent / "Resources"
+    if (resources / "backend" / "app").is_dir() and (resources / "frontend_desktop" / "run.py").is_file():
+        return resources
+    return None
+
+
 # ==================== 配置 ====================
 
 # 打包后 (PyInstaller) 使用 bundle 根目录，否则使用脚本所在目录
 _FROZEN = getattr(sys, "frozen", False)
 _MEIPASS = getattr(sys, "_MEIPASS", None)
-if _FROZEN and _MEIPASS:
+_MAC_RESOURCES = _pyi_macos_app_resources()
+
+if _FROZEN and _MAC_RESOURCES is not None:
+    PROJECT_ROOT = _MAC_RESOURCES
+    BACKEND_DIR = PROJECT_ROOT / "backend"
+    FRONTEND_DIR = PROJECT_ROOT / "frontend_desktop"
+elif _FROZEN and _MEIPASS:
     _BUNDLE_ROOT = Path(_MEIPASS)
     PROJECT_ROOT = _BUNDLE_ROOT
     BACKEND_DIR = _BUNDLE_ROOT / "backend"
@@ -61,7 +85,7 @@ SERVER_SETTINGS_PATH = Path.home() / ".allahpan" / "server_settings.json"
 
 
 def _apply_persistent_server_settings() -> None:
-    """从 ~/.allahpan/server_settings.json 应用 api_host / api_port / ollama_port（仅当对应环境变量未设置）。"""
+    """从 ~/.allahpan/server_settings.json 应用 api_host / api_port / ollama_port / storage_dir（仅当对应环境变量未设置）。"""
     p = SERVER_SETTINGS_PATH
     if not p.is_file():
         return
@@ -83,6 +107,10 @@ def _apply_persistent_server_settings() -> None:
             os.environ["ALLAHPAN_OLLAMA_URL"] = f"http://127.0.0.1:{op}"
         except (TypeError, ValueError):
             pass
+    if "ALLAHPAN_STORAGE_DIR" not in os.environ:
+        sd = str(data.get("storage_dir") or "").strip()
+        if sd:
+            os.environ["ALLAHPAN_STORAGE_DIR"] = sd
 
 
 _apply_persistent_server_settings()
@@ -91,7 +119,8 @@ _apply_persistent_server_settings()
 def ensure_backend_import_path() -> Path:
     """
     将「含 app 包的 backend 根目录」加入 sys.path。
-    打包后代码在 _MEIPASS/backend/app，必须让 sys.path 含 .../backend，否则后台线程内 import app 失败。
+    打包后代码在 _MEIPASS 或 macOS .app 的 Contents/Resources/backend/app 下，
+    必须让 sys.path 含 .../backend，否则后台线程内 import app 失败。
     """
     root = Path(BACKEND_DIR).resolve()
     s = str(root)
@@ -458,52 +487,66 @@ class Launcher:
     
     def _run_frozen_gui(self) -> int:
         """打包后：在主线程运行 Qt GUI，返回 exit code。"""
-        # 打包环境下：在导入任何 Qt 相关模块前，设置 DLL 搜索路径并预加载 Qt 依赖
+        # 打包环境下：在导入任何 Qt 相关模块前，设置插件/DLL 搜索路径（Windows / macOS 布局不同）
         if _FROZEN and _MEIPASS:
-            _m = os.path.abspath(_MEIPASS)
-            _pyside6 = os.path.join(_m, "PySide6")
-            _shiboken6 = os.path.join(_m, "shiboken6")
-            _plugins = os.path.join(_pyside6, "plugins")
-            _platforms = os.path.join(_plugins, "platforms")
-            # 可执行文件所在目录（PyInstaller 6 one-folder 时 exe 在上级，依赖在 _MEIPASS）
             _exe_dir = os.path.dirname(sys.executable)
-            _path = os.environ.get("PATH", "")
-            os.environ["PATH"] = os.pathsep.join([_exe_dir, _m, _shiboken6, _pyside6, _plugins, _platforms, _path])
-            os.environ["QT_PLUGIN_PATH"] = _plugins
-            # 使用 add_dll_directory 确保 Windows 能从 bundle 内加载 Qt/shiboken 及平台插件依赖
-            if hasattr(os, "add_dll_directory"):
+            _m = os.path.abspath(_MEIPASS)
+            if sys.platform == "darwin":
+                _exe_p = Path(sys.executable).resolve()
+                if _exe_p.parent.name == "MacOS":
+                    _fw_plugins = _exe_p.parent.parent / "Frameworks" / "PySide6" / "Qt" / "plugins"
+                    if _fw_plugins.is_dir():
+                        os.environ["QT_PLUGIN_PATH"] = str(_fw_plugins)
+                    else:
+                        _plugins = os.path.join(_m, "PySide6", "plugins")
+                        if os.path.isdir(_plugins):
+                            os.environ["QT_PLUGIN_PATH"] = _plugins
                 try:
-                    if os.path.isdir(_exe_dir):
-                        os.add_dll_directory(_exe_dir)
-                    os.add_dll_directory(_m)
-                    if os.path.isdir(_shiboken6):
-                        os.add_dll_directory(_shiboken6)
-                    if os.path.isdir(_pyside6):
-                        os.add_dll_directory(_pyside6)
-                    if os.path.isdir(_plugins):
-                        os.add_dll_directory(_plugins)
-                    if os.path.isdir(_platforms):
-                        os.add_dll_directory(_platforms)
+                    import shiboken6  # noqa: F401
                 except Exception as e:
-                    logging.warning(f"add_dll_directory 设置失败（将仅依赖 PATH）: {e}")
-            # 先导入 shiboken6，再导入前端（前端会导入 PySide6.QtWidgets），避免 DLL 加载顺序问题
-            try:
-                import shiboken6  # noqa: F401
-            except Exception as e:
-                logging.warning(f"预加载 shiboken6 失败: {e}")
-            # 用 ctypes 按依赖顺序预加载 Qt 核心 DLL，避免系统 PATH 中错误版本被优先加载导致「找不到指定的程序」
-            try:
-                import ctypes
-                _qt_dlls = [
-                    os.path.join(_pyside6, "Qt6Core.dll"),
-                    os.path.join(_pyside6, "Qt6Gui.dll"),
-                    os.path.join(_pyside6, "Qt6Widgets.dll"),
-                ]
-                for _dll in _qt_dlls:
-                    if os.path.isfile(_dll):
-                        ctypes.CDLL(_dll)
-            except Exception as e:
-                logging.debug("预加载 Qt DLL 跳过或失败（将依赖默认加载）: %s", e)
+                    logging.warning(f"预加载 shiboken6 失败: {e}")
+            elif sys.platform == "win32":
+                _pyside6 = os.path.join(_m, "PySide6")
+                _shiboken6 = os.path.join(_m, "shiboken6")
+                _plugins = os.path.join(_pyside6, "plugins")
+                _platforms = os.path.join(_plugins, "platforms")
+                _path = os.environ.get("PATH", "")
+                os.environ["PATH"] = os.pathsep.join(
+                    [_exe_dir, _m, _shiboken6, _pyside6, _plugins, _platforms, _path]
+                )
+                os.environ["QT_PLUGIN_PATH"] = _plugins
+                if hasattr(os, "add_dll_directory"):
+                    try:
+                        if os.path.isdir(_exe_dir):
+                            os.add_dll_directory(_exe_dir)
+                        os.add_dll_directory(_m)
+                        if os.path.isdir(_shiboken6):
+                            os.add_dll_directory(_shiboken6)
+                        if os.path.isdir(_pyside6):
+                            os.add_dll_directory(_pyside6)
+                        if os.path.isdir(_plugins):
+                            os.add_dll_directory(_plugins)
+                        if os.path.isdir(_platforms):
+                            os.add_dll_directory(_platforms)
+                    except Exception as e:
+                        logging.warning(f"add_dll_directory 设置失败（将仅依赖 PATH）: {e}")
+                try:
+                    import shiboken6  # noqa: F401
+                except Exception as e:
+                    logging.warning(f"预加载 shiboken6 失败: {e}")
+                try:
+                    import ctypes
+
+                    _qt_dlls = [
+                        os.path.join(_pyside6, "Qt6Core.dll"),
+                        os.path.join(_pyside6, "Qt6Gui.dll"),
+                        os.path.join(_pyside6, "Qt6Widgets.dll"),
+                    ]
+                    for _dll in _qt_dlls:
+                        if os.path.isfile(_dll):
+                            ctypes.CDLL(_dll)
+                except Exception as e:
+                    logging.debug("预加载 Qt DLL 跳过或失败（将依赖默认加载）: %s", e)
         # 确保前端可被导入
         if str(FRONTEND_DIR) not in sys.path:
             sys.path.insert(0, str(PROJECT_ROOT))
@@ -580,7 +623,7 @@ def main():
     args = parser.parse_args()
     setup_logging(args.verbose)
     if _FROZEN:
-        logging.info("AllahPan.exe 已启动 (frozen)，工作目录: %s", os.getcwd())
+        logging.info("AllahPan 已启动 (frozen)，工作目录: %s", os.getcwd())
     
     global OLLAMA_MANAGER_ENABLED
     if args.no_ollama:

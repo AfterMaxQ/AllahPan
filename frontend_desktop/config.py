@@ -11,6 +11,7 @@ AllahPan PySide6 桌面端配置模块。
 创建日期: 2026-03-19
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -70,9 +71,31 @@ API_PORT = os.environ.get("ALLAHPAN_PORT", "8000")
 API_BASE_URL = f"http://{API_HOST}:{API_PORT}/api/v1"
 
 # ==================== 存储路径配置 ====================
-# 与后端 backend/app/config.py 保持一致，统一使用 ~/Documents/AllahPan/files
+# 与后端 backend/app/config.py 一致：环境变量 > server_settings.json 的 storage_dir > 默认路径
 _STORAGE_DEFAULT = Path.home() / "Documents" / "AllahPan" / "files"
-STORAGE_DIR = Path(os.environ.get("ALLAHPAN_STORAGE_DIR", str(_STORAGE_DEFAULT)))
+
+
+def _storage_dir_from_server_settings_file() -> Optional[Path]:
+    p = SERVER_SETTINGS_PATH
+    if not p.is_file():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    raw = str(data.get("storage_dir") or "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+if os.environ.get("ALLAHPAN_STORAGE_DIR"):
+    STORAGE_DIR = Path(os.environ["ALLAHPAN_STORAGE_DIR"])
+else:
+    _persisted = _storage_dir_from_server_settings_file()
+    STORAGE_DIR = _persisted if _persisted is not None else _STORAGE_DEFAULT
 
 # API 端点
 API_AUTH_LOGIN = f"{API_BASE_URL}/auth/login"
