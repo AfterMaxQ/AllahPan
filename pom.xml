@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.allahpan</groupId>
+    <artifactId>allahpan</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+    <name>AllahPan</name>
+    <description>AllahPan 共享云盘系统</description>
+
+    <modules>
+        <module>allahpan-common</module>
+        <module>allahpan-mbg</module>
+        <module>allahpan-security</module>
+        <module>allahpan-core</module>
+        <module>allahpan-search</module>
+    </modules>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.14</version>
+        <relativePath/>
+    </parent>
+
+    <properties>
+        <java.version>17</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <skipTests>true</skipTests>
+        <mybatis-starter.version>3.0.4</mybatis-starter.version>
+        <mybatis.version>3.5.19</mybatis.version>
+        <mysql-connector.version>9.3.0</mysql-connector.version>
+        <druid.version>1.2.24</druid.version>
+        <pagehelper.version>2.1.1</pagehelper.version>
+        <hutool.version>5.8.40</hutool.version>
+        <springdoc.version>2.8.17</springdoc.version>
+        <pdfbox.version>3.0.7</pdfbox.version>
+        <poi.version>5.5.1</poi.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.allahpan</groupId>
+                <artifactId>allahpan-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.allahpan</groupId>
+                <artifactId>allahpan-mbg</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.allahpan</groupId>
+                <artifactId>allahpan-security</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>

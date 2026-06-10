@@ -1,0 +1,40 @@
+{
+  "index_patterns": ["allahpan_files*"],
+  "priority": 100,
+  "template": {
+    "settings": {
+      "index": {
+        "analysis": {
+          "tokenizer": {
+            "char_tokenizer": {
+              "type": "ngram",
+              "min_gram": 1,
+              "max_gram": 1
+            }
+          },
+          "analyzer": {
+            "char_split": {
+              "type": "custom",
+              "tokenizer": "char_tokenizer"
+            }
+          }
+        }
+      }
+    },
+    "mappings": {
+      "properties": {
+        "originText": {
+          "type": "text",
+          "analyzer": "ik_max_word",
+          "search_analyzer": "ik_smart",
+          "fields": {
+            "char": {
+              "type": "text",
+              "analyzer": "char_split"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,96 @@
+
+server:
+  port: 8088
+
+spring:
+  servlet:
+    multipart:
+      max-file-size: 512MB
+      max-request-size: 1024MB
+  datasource:
+    url: jdbc:mysql://localhost:3307/allahpan?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf-8
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    type: com.alibaba.druid.pool.DruidDataSource
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 3000
+  rabbitmq:
+    host: 127.0.0.1
+    port: 5672
+    username: guest
+    password: guest
+    connection-timeout: 10000
+
+
+mybatis:
+  mapper-locations:
+    - classpath:com/allahpan/mbg/mapper/*.xml
+    - classpath:dao/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+jwt:
+  tokenHeader: Authorization
+  tokenHead: "Bearer "
+  secret: ${JWT_SECRET:e7b2a3c94d1f5680fe912a7b4c3d8e5f6a1b7c2d3e4f5a6b7c8d9e0f1a2b3c4d5}
+  expiration: 604800  # 7天
+
+secure:
+  ignored:
+    urls:
+      - /api/auth/send-code
+      - /api/auth/login-by-code
+      - /api/auth/login-by-password
+      - /swagger-ui/**
+      - /v3/api-docs/**
+      - /doc.html
+      - /webjars/**
+      - /api/share/**
+      - /api/file/*/thumbnail
+      - /api/file/*/stream
+      - /api/file/*/download
+      - /api/file/watch
+      - /error
+
+redis:
+  database: allahpan
+  key:
+    authCode: 'authCode'
+    member: 'member'
+  expire:
+    common: 86400        # 24小时
+    authCode: 300        # 5分钟
+
+mail:
+  host: smtp.qq.com
+  port: 587
+  username: 1455726631@qq.com
+  password: ${MAIL_PASSWORD:xlryydmymdeljiff}
+  from: AllahPan <1455726631@qq.com>
+
+
+allahpan:
+  storage:
+    root-path: ${ALLAHPAN_ROOT:C:/Users/ray/AllahPan}
+    thumbnail-subdir: .thumbnails
+  watch:
+    debounce-ms: 1000
+    reconcile-interval-minutes: 5
+  file:
+    # 文件以本地磁盘为唯一存储
+    # 上传：浏览器 multipart POST → 服务器写本地磁盘 → 创建 DB 记录
+    # 本地新文件：WatchService → 创建 DB 记录
+  text:
+    max-length: 10000     # 文本提取最大字符数（DB origin_text 截断值）
+  thumbnail:
+    pdf-dpi: 150           # PDF 缩略图渲染 DPI（默认 150）
+
+ollama:
+  base-url: http://localhost:11434
+  model: qwen3.5:2b           # Qwen3.5 vision 模型 — 无 thinking 开销，6.5s OCR
+  timeout: 60                  # OCR 超时（秒），qwen3.5 速度快无需长超时
+  num-predict: 4096            # qwen3.5 无 thinking，高效输出

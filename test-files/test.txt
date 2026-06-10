@@ -1,0 +1,8 @@
+这是一个测试文本文件。
+This is a test text file.
+用于验证 TextExtractor 的纯文本提取功能。
+
+包含多行文本：
+第一行：Hello World
+第二行：你好世界
+第三行：AllahPan 云盘系统测试

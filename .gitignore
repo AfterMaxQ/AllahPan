@@ -1,0 +1,36 @@
+# === Maven ===
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+
+# === Node / Vue ===
+node_modules/
+dist/
+.vite/
+
+# === IDE ===
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === 环境变量 ===
+.env
+*.local
+
+# === 日志 ===
+logs/
+
+# === Claude ===
+.claude/
+
+# === Playwright ===
+.playwright-mcp/
