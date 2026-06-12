@@ -1,10 +1,10 @@
 package com.allahpan.component;
 
 import com.allahpan.mbg.model.File;
-import com.allahpan.service.LocalStorageService;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * 手动验证文字提取功能：PDF、PPTX、TXT
- * 不依赖 Spring Boot 容器，直接实例化 TextExtractor + mock LocalStorageService
+ * 不依赖 Spring Boot 容器，直接实例化 TextExtractor + mock MinioUtil
  */
 public class TextExtractorManualTest {
 
@@ -38,28 +38,13 @@ public class TextExtractorManualTest {
             maxLenField.setAccessible(true);
             maxLenField.set(extractor, 10000);
 
-            // 注入 mock LocalStorageService
-            var field = TextExtractor.class.getDeclaredField("localStorageService");
+            // 注入 mock MinioUtil（从本地文件读取以模拟 MinIO getObject）
+            var field = TextExtractor.class.getDeclaredField("minioUtil");
             field.setAccessible(true);
-            field.set(extractor, new LocalStorageService() {
-                @Override public void init() {}
-                @Override public Path resolve(String relativePath) { return testDir.resolve(relativePath); }
-                @Override public Path resolveThumbnail(String key) { return testDir.resolve(key); }
-                @Override public String store(String relativePath, InputStream data) throws Exception {
-                    Path p = resolve(relativePath);
-                    Files.createDirectories(p.getParent());
-                    Files.copy(data, p, StandardCopyOption.REPLACE_EXISTING);
-                    return p.toString();
+            field.set(extractor, new com.allahpan.component.MinioUtil() {
+                @Override public InputStream getObject(String objectKey) throws Exception {
+                    return Files.newInputStream(testDir.resolve(objectKey));
                 }
-                @Override public InputStream read(String relativePath) throws Exception { return Files.newInputStream(resolve(relativePath)); }
-                @Override public void delete(String relativePath) throws Exception { Files.deleteIfExists(resolve(relativePath)); }
-                @Override public void deleteThumbnail(String key) throws Exception {}
-                @Override public Path getRootDir() { return testDir; }
-                @Override public Path getThumbnailDir() { return testDir.resolve(".thumbnails"); }
-                @Override public void moveToTrash(String relativePath) throws Exception {}
-                @Override public void restoreFromTrash(String relativePath) throws Exception {}
-                @Override public void deleteFromTrash(String relativePath) throws Exception {}
-                @Override public Path getTrashDir() { return testDir.resolve(".trash"); }
             });
         } catch (Exception e) {
             throw new RuntimeException(e);

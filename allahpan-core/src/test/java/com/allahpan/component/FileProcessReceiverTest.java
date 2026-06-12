@@ -66,7 +66,7 @@ class FileProcessReceiverTest {
     // ======== RED 测试：基础设施错误不应标记文件为 -1 ========
 
     @Test
-    void shouldDegradeNotFailWhenThumbnailExhaustsRetries() {
+    void shouldDegradeNotFailWhenThumbnailExhaustsRetries() throws Exception {
         // 缩略图生成始终失败（如 MinIO 挂了）
         when(thumbnailGenerator.generate(imageFile))
                 .thenThrow(new RuntimeException("service connection refused"));
@@ -84,7 +84,7 @@ class FileProcessReceiverTest {
     }
 
     @Test
-    void shouldDegradeNotFailWhenOllamaExhaustsRetries() {
+    void shouldDegradeNotFailWhenOllamaExhaustsRetries() throws Exception {
         when(thumbnailGenerator.generate(imageFile)).thenReturn("thumb/test.jpg");
         when(textExtractor.extract(imageFile))
                 .thenThrow(new RuntimeException("Ollama 连接超时"));
@@ -99,7 +99,7 @@ class FileProcessReceiverTest {
     }
 
     @Test
-    void shouldSkipThumbnailAndContinueWhenGeneratorThrows() {
+    void shouldSkipThumbnailAndContinueWhenGeneratorThrows() throws Exception {
         // 缩略图生成器抛异常（模拟服务不可达）
         when(thumbnailGenerator.generate(imageFile))
                 .thenThrow(new RuntimeException("service connection refused"));
@@ -119,7 +119,7 @@ class FileProcessReceiverTest {
     }
 
     @Test
-    void shouldCompletePipelineWhenTextExtractorThrows() {
+    void shouldCompletePipelineWhenTextExtractorThrows() throws Exception {
         // 缩略图成功
         when(thumbnailGenerator.generate(imageFile)).thenReturn("thumb/abc.jpg");
         when(textExtractor.extract(imageFile))
@@ -136,7 +136,7 @@ class FileProcessReceiverTest {
     }
 
     @Test
-    void shouldCompleteWhenThumbnailGeneratorReturnsNull() {
+    void shouldCompleteWhenThumbnailGeneratorReturnsNull() throws Exception {
         // 非图片文件（如视频），缩略图生成返回 null
         when(thumbnailGenerator.generate(otherFile)).thenReturn(null);
 
@@ -152,7 +152,7 @@ class FileProcessReceiverTest {
     }
 
     @Test
-    void shouldCompletePipelineWhenEsIndexFails() {
+    void shouldCompletePipelineWhenEsIndexFails() throws Exception {
         // ES 索引失败（但 EsIndexService.index() 内部已经 catch 了异常）
         doNothing().when(esIndexService).index(imageFile);
 
@@ -168,7 +168,7 @@ class FileProcessReceiverTest {
     }
 
     @Test
-    void shouldNotProcessDeletedFile() {
+    void shouldNotProcessDeletedFile() throws Exception {
         imageFile.setDeleteTime(new java.util.Date());
         FileProcessMessage msg = new FileProcessMessage(1L, Stage.UPLOADED);
         receiver.handle(msg);
@@ -179,7 +179,7 @@ class FileProcessReceiverTest {
     }
 
     @Test
-    void shouldRetryWithIncreasingDelay() {
+    void shouldRetryWithIncreasingDelay() throws Exception {
         when(thumbnailGenerator.generate(imageFile))
                 .thenThrow(new RuntimeException("失败"));
 
