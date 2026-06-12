@@ -3,11 +3,11 @@ package com.allahpan.service.impl;
 import com.allahpan.common.api.ResultCode;
 import com.allahpan.common.exception.Asserts;
 import com.allahpan.component.EsIndexService;
+import com.allahpan.component.MinioUtil;
 import com.allahpan.mbg.mapper.FileMapper;
 import com.allahpan.mbg.model.File;
 import com.allahpan.mbg.model.FileExample;
 import com.allahpan.service.FileService;
-import com.allahpan.service.LocalStorageService;
 import com.github.pagehelper.PageHelper;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,8 +17,8 @@ import org.springframework.web.multipart.MultipartFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Date;
@@ -35,7 +35,7 @@ public class FileServiceImpl implements FileService {
     @Autowired
     private FileMapper fileMapper;
     @Autowired
-    private LocalStorageService localStorageService;
+    private MinioUtil minioUtil;
     @Autowired
     private EsIndexService esIndexService;
 
@@ -63,14 +63,14 @@ public class FileServiceImpl implements FileService {
         relativePath = resolveConflict(relativePath, pid);
         String finalName = relativePath.substring(relativePath.lastIndexOf('/') + 1);
 
-        // 写入本地磁盘 + 同时计算 MD5
+        // 上传到 MinIO + 同时计算 MD5
         String contentType = file.getContentType();
         if (contentType == null) contentType = "application/octet-stream";
         String md5;
         try {
             md5 = storeAndCalculateMd5(file.getInputStream(), relativePath);
         } catch (Exception e) {
-            log.error("写入本地文件失败: {}", relativePath, e);
+            log.error("上传到 MinIO 失败: {}", relativePath, e);
             Asserts.fail("文件保存失败，请重试");
             return null; // unreachable
         }
@@ -83,8 +83,8 @@ public class FileServiceImpl implements FileService {
             var dupList = fileMapper.selectByExample(md5Example);
             if (!dupList.isEmpty()) {
                 File existing = dupList.get(0);
-                // 秒传：删除刚写入的本地文件（因为复用已有文件）
-                try { localStorageService.delete(relativePath); } catch (Exception ignored) {}
+                // 秒传：删除刚上传的 MinIO 对象（因为复用已有文件）
+                try { minioUtil.removeObject(relativePath); } catch (Exception ignored) {}
                 File dup = new File();
                 dup.setUploaderId(uploaderId);
                 dup.setParentId(pid);
@@ -140,15 +140,8 @@ public class FileServiceImpl implements FileService {
         file.setCreateTime(new Date());
         file.setFilePath(buildPath(folderName, pid));
 
-        // 在本地磁盘创建文件夹
+        // MinIO 无需目录：storageKey 仅作为逻辑路径存储在 DB
         String relativePath = resolveRelativePath(pid, folderName);
-        try {
-            java.nio.file.Files.createDirectories(localStorageService.resolve(relativePath));
-        } catch (Exception e) {
-            log.warn("创建本地文件夹失败（可能已存在）: {}", relativePath, e);
-        }
-
-        // storageKey 存相对路径，方便文件直接从系统访问
         file.setStorageKey(relativePath);
         fileMapper.insert(file);
         return file;
@@ -220,24 +213,26 @@ public class FileServiceImpl implements FileService {
         }
     }
 
-    /** 将文件移至回收站（仅本地 .trash/ 目录），失败时抛出异常由调用方处理 */
+    /** 将文件移至回收站（MinIO: 复制到 trash bucket 后删除源对象），失败时抛出异常由调用方处理 */
     private void moveToTrash(File file) throws Exception {
         if (file.getStorageKey() == null) return;
-        // 非文件夹 → 移到 .trash/
+        // 非文件夹 → 复制到 trash bucket 后删除源对象
         if (file.getIsFolder() == null || file.getIsFolder() != 1) {
-            localStorageService.moveToTrash(file.getStorageKey());
+            minioUtil.copyToTrash(file.getStorageKey());
+            minioUtil.removeObject(file.getStorageKey());
         }
     }
 
-    /** 从回收站恢复文件（仅本地 .trash/ → 原位） */
+    /** 从回收站恢复文件（MinIO: trash bucket → files bucket 后删除 trash 副本） */
     private void restoreFromTrash(File file) {
         if (file.getStorageKey() == null) return;
-        // 非文件夹 → 从 .trash/ 恢复
+        // 非文件夹 → 从 trash bucket 恢复到 files bucket
         if (file.getIsFolder() == null || file.getIsFolder() != 1) {
             try {
-                localStorageService.restoreFromTrash(file.getStorageKey());
+                minioUtil.restoreFromTrash(file.getStorageKey());
+                minioUtil.removeFromTrash(file.getStorageKey());
             } catch (Exception e) {
-                log.warn("从本地回收站恢复失败: {}", file.getStorageKey(), e);
+                log.warn("从 MinIO 回收站恢复失败: {}", file.getStorageKey(), e);
             }
         }
     }
@@ -247,37 +242,13 @@ public class FileServiceImpl implements FileService {
         return fileMapper.selectByPrimaryKey(fileId);
     }
 
-    /** 启动时清理孤儿垃圾记录：DB 有 deleteTime 但 .trash/ 中无对应物理文件 */
+    /**
+     * 启动时清理孤儿垃圾记录（MinIO 存储无需物理文件检查，trash bucket 对象持久可靠）。
+     * 保留空实现供未来扩展。
+     */
     @PostConstruct
     public void cleanupOrphanedTrash() {
-        int pageNum = 1;
-        int checked = 0;
-        int deleted = 0;
-        java.nio.file.Path trashDir = localStorageService.getTrashDir();
-        while (true) {
-            FileExample example = new FileExample();
-            example.createCriteria().andDeleteTimeIsNotNull();
-            PageHelper.startPage(pageNum, 200, false);
-            List<File> batch = fileMapper.selectByExample(example);
-            if (batch.isEmpty()) break;
-            for (File f : batch) {
-                checked++;
-                // 文件夹无物理文件，跳过
-                if (f.getIsFolder() != null && f.getIsFolder() == 1) continue;
-                if (f.getStorageKey() == null) continue;
-                // 检查 .trash/<storageKey> 是否存在
-                if (!java.nio.file.Files.exists(trashDir.resolve(f.getStorageKey()))) {
-                    fileMapper.deleteByPrimaryKey(f.getId());
-                    deleted++;
-                    log.info("清理孤儿垃圾记录: {} (id={})", f.getStorageKey(), f.getId());
-                }
-            }
-            if (batch.size() < 200) break;
-            pageNum++;
-        }
-        if (deleted > 0) {
-            log.info("清理孤儿垃圾记录完成: 检查 {} 条, 删除 {} 条", checked, deleted);
-        }
+        log.debug("MinIO 存储模式：跳过孤儿垃圾记录清理（trash bucket 对象持久可靠）");
     }
 
     @Override
@@ -289,19 +260,7 @@ public class FileServiceImpl implements FileService {
                 .andUploaderIdEqualTo(userId);
         example.setOrderByClause("delete_time DESC");
         PageHelper.startPage(pageNum, pageSize);
-        List<File> dbList = fileMapper.selectByExample(example);
-        // 过滤掉 .trash/ 中无物理文件的非文件夹记录
-        List<File> result = new ArrayList<>();
-        java.nio.file.Path trashDir = localStorageService.getTrashDir();
-        for (File f : dbList) {
-            if (f.getIsFolder() != null && f.getIsFolder() == 1) {
-                result.add(f);
-            } else if (f.getStorageKey() != null
-                    && java.nio.file.Files.exists(trashDir.resolve(f.getStorageKey()))) {
-                result.add(f);
-            }
-        }
-        return result;
+        return fileMapper.selectByExample(example);
     }
 
     @Override
@@ -350,22 +309,22 @@ public class FileServiceImpl implements FileService {
         Asserts.isTrue(file != null, "文件不存在");
         Asserts.isTrue(file.getDeleteTime() != null, "只能永久删除垃圾站中的文件");
 
-        // 从回收站物理删除本地文件
+        // 从回收站物理删除 MinIO 对象
         if (file.getStorageKey() != null) {
             if (file.getIsFolder() == null || file.getIsFolder() != 1) {
                 esIndexService.delete(fileId);
             }
             try {
-                localStorageService.deleteFromTrash(file.getStorageKey());
+                minioUtil.removeFromTrash(file.getStorageKey());
             } catch (Exception e) {
-                log.warn("从本地回收站删除失败: {}", file.getStorageKey(), e);
+                log.warn("从 MinIO 回收站删除失败: {}", file.getStorageKey(), e);
             }
         }
         if (file.getThumbnailKey() != null) {
             try {
-                localStorageService.deleteThumbnail(file.getThumbnailKey());
+                minioUtil.removeThumbnail(file.getThumbnailKey());
             } catch (Exception e) {
-                log.warn("删除本地缩略图失败: {}", file.getThumbnailKey(), e);
+                log.warn("删除 MinIO 缩略图失败: {}", file.getThumbnailKey(), e);
             }
         }
 
@@ -470,11 +429,10 @@ public class FileServiceImpl implements FileService {
     }
 
     /**
-     * 解决文件名冲突：如果磁盘上已存在同名文件，追加序号
+     * 解决文件名冲突：如果 MinIO 中已存在同名对象，追加序号
      */
     private String resolveConflict(String relativePath, Long parentId) {
-        java.nio.file.Path target = localStorageService.resolve(relativePath);
-        if (!java.nio.file.Files.exists(target)) return relativePath;
+        if (!minioUtil.objectExists(relativePath)) return relativePath;
 
         int lastSlash = relativePath.lastIndexOf('/');
         String dir = lastSlash >= 0 ? relativePath.substring(0, lastSlash + 1) : "";
@@ -493,7 +451,7 @@ public class FileServiceImpl implements FileService {
             String newName = nameBody + " (" + counter + ")" + ext;
             newPath = dir + newName;
             counter++;
-        } while (java.nio.file.Files.exists(localStorageService.resolve(newPath)));
+        } while (minioUtil.objectExists(newPath));
 
         return newPath;
     }
@@ -519,29 +477,25 @@ public class FileServiceImpl implements FileService {
     }
 
     /**
-     * 流式写入磁盘并同时计算 MD5，避免将大文件全部加载到内存。
+     * 上传到 MinIO 并同时计算 MD5，避免将大文件全部加载到内存。
      */
-    private String storeAndCalculateMd5(InputStream inputStream, String relativePath) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            java.nio.file.Path target = localStorageService.resolve(relativePath);
-            java.nio.file.Files.createDirectories(target.getParent());
-            try (DigestInputStream dis = new DigestInputStream(inputStream, md);
-                 java.io.OutputStream os = java.nio.file.Files.newOutputStream(target,
-                         java.nio.file.StandardOpenOption.CREATE,
-                         java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
-                dis.transferTo(os);
-            }
-            byte[] digest = md.digest();
-            StringBuilder sb = new StringBuilder();
-            for (byte b : digest) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
-        } catch (Exception e) {
-            log.error("存储文件并计算 MD5 失败: {}", relativePath, e);
-            return "";
+    private String storeAndCalculateMd5(InputStream inputStream, String objectKey) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("MD5");
+        byte[] data = inputStream.readAllBytes();
+        digest.update(data);
+        String md5 = bytesToHex(digest.digest());
+        try (InputStream uploadStream = new ByteArrayInputStream(data)) {
+            minioUtil.putObject(objectKey, uploadStream, data.length, "application/octet-stream");
         }
+        return md5;
+    }
+
+    private static String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
     }
 
     private Long getCurrentUserId() {
@@ -569,19 +523,9 @@ public class FileServiceImpl implements FileService {
             assertNameUnique(parentId, newName);
         }
 
-        // 物理重命名本地文件/文件夹
+        // MinIO 重命名：逻辑操作，仅更新 DB storageKey（旧对象保留无引用）
         if (file.getStorageKey() != null) {
-            String oldKey = file.getStorageKey();
             String newKey = resolveRelativePath(parentId, newName);
-            try {
-                java.nio.file.Path oldPath = localStorageService.resolve(oldKey);
-                java.nio.file.Path newPath = localStorageService.resolve(newKey);
-                if (java.nio.file.Files.exists(oldPath)) {
-                    java.nio.file.Files.move(oldPath, newPath);
-                }
-            } catch (Exception e) {
-                log.warn("重命名本地文件失败: {} -> {}", oldKey, newKey, e);
-            }
             file.setStorageKey(newKey);
         }
 
@@ -617,20 +561,9 @@ public class FileServiceImpl implements FileService {
         }
         assertNameUnique(newParentId, file.getFileName());
 
-        // 物理移动本地文件/文件夹
+        // MinIO 移动：逻辑操作，仅更新 DB storageKey（旧对象保留无引用）
         if (file.getStorageKey() != null) {
-            String oldKey = file.getStorageKey();
             String newKey = resolveRelativePath(newParentId, file.getFileName());
-            try {
-                java.nio.file.Path oldPath = localStorageService.resolve(oldKey);
-                java.nio.file.Path newPath = localStorageService.resolve(newKey);
-                if (java.nio.file.Files.exists(oldPath)) {
-                    java.nio.file.Files.createDirectories(newPath.getParent());
-                    java.nio.file.Files.move(oldPath, newPath);
-                }
-            } catch (Exception e) {
-                log.warn("移动本地文件失败: {} -> {}", oldKey, newKey, e);
-            }
             file.setStorageKey(newKey);
         }
 

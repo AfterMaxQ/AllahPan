@@ -1,7 +1,7 @@
 package com.allahpan.component;
 
 import com.allahpan.mbg.model.File;
-import com.allahpan.service.LocalStorageService;
+import com.allahpan.component.MinioUtil;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
@@ -19,14 +19,14 @@ import java.util.UUID;
 public class ThumbnailGenerator {
 
     @Autowired
-    private LocalStorageService localStorageService;
+    private MinioUtil minioUtil;
 
     @Value("${allahpan.thumbnail.pdf-dpi:150}")
     private int pdfThumbnailDpi;
 
     private static final int THUMB_WIDTH = 300;
 
-    public String generate(File file) {
+    public String generate(File file) throws Exception {
         if ("IMAGE".equals(file.getFileType())) {
             return generateImageThumbnail(file);
         } else if ("DOCUMENT".equals(file.getFileType()) &&
@@ -37,52 +37,47 @@ public class ThumbnailGenerator {
         return null;
     }
 
-    private String generateImageThumbnail(File file) {
-        try {
-            BufferedImage original;
-            try (InputStream is = localStorageService.read(file.getStorageKey())) {
-                original = ImageIO.read(is);
+    private String generateImageThumbnail(File file) throws Exception {
+        InputStream is = minioUtil.getObject(file.getStorageKey());
+        BufferedImage original = ImageIO.read(is);
+        is.close();
+        if (original == null) return null;
+        return resizeAndUpload(original);
+    }
+
+    private String generatePdfThumbnail(File file) throws Exception {
+        InputStream is = minioUtil.getObject(file.getStorageKey());
+        byte[] pdfBytes = is.readAllBytes();
+        is.close();
+        try (PDDocument document = Loader.loadPDF(pdfBytes)) {
+            if (document.getNumberOfPages() == 0) {
+                return null;
             }
-            if (original == null) return null;
-            return resizeAndUpload(original);
-        } catch (Exception e) {
-            throw new RuntimeException("生成缩略图失败", e);
+            PDFRenderer renderer = new PDFRenderer(document);
+            BufferedImage image = renderer.renderImageWithDPI(0, pdfThumbnailDpi);
+            if (image == null) return null;
+            return resizeAndUpload(image);
         }
     }
 
-    private String generatePdfThumbnail(File file) {
-        try {
-            byte[] pdfBytes;
-            try (InputStream is = localStorageService.read(file.getStorageKey())) {
-                pdfBytes = is.readAllBytes();
-            }
-            try (PDDocument document = Loader.loadPDF(pdfBytes)) {
-                if (document.getNumberOfPages() == 0) {
-                    return null;
-                }
-                PDFRenderer renderer = new PDFRenderer(document);
-                float scale = pdfThumbnailDpi / 72.0f;
-                BufferedImage pageImage = renderer.renderImage(0, scale);
-                if (pageImage == null) return null;
-                return resizeAndUpload(pageImage);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("生成PDF缩略图失败", e);
-        }
-    }
-
-    private String resizeAndUpload(BufferedImage image) throws Exception {
-        int thumbHeight = (int) (image.getHeight() * (THUMB_WIDTH / (double) image.getWidth()));
-        BufferedImage thumb = new BufferedImage(THUMB_WIDTH, thumbHeight, BufferedImage.TYPE_INT_RGB);
+    private String resizeAndUpload(BufferedImage original) throws Exception {
+        int width = THUMB_WIDTH;
+        int height = original.getHeight() * width / original.getWidth();
+        BufferedImage thumb = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = thumb.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
-                RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        g.drawImage(image, 0, 0, THUMB_WIDTH, thumbHeight, null);
+        g.drawImage(original.getScaledInstance(width, height, java.awt.Image.SCALE_SMOOTH), 0, 0, null);
         g.dispose();
 
-        String thumbnailKey = UUID.randomUUID() + ".jpg";
-        java.nio.file.Path thumbPath = localStorageService.resolveThumbnail(thumbnailKey);
-        ImageIO.write(thumb, "jpg", thumbPath.toFile());
+        String thumbnailKey = UUID.randomUUID().toString() + ".jpg";
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        ImageIO.write(thumb, "jpg", baos);
+        byte[] bytes = baos.toByteArray();
+
+        try (InputStream uploadStream = new ByteArrayInputStream(bytes)) {
+            minioUtil.putThumbnail(thumbnailKey, uploadStream, bytes.length, "image/jpeg");
+        }
+
         return thumbnailKey;
     }
 }

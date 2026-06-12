@@ -1,7 +1,7 @@
 package com.allahpan.component;
 
 import com.allahpan.mbg.model.File;
-import com.allahpan.service.LocalStorageService;
+import com.allahpan.component.MinioUtil;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -37,7 +37,7 @@ public class TextExtractor {
     private final OllamaService ollamaService;
 
     @Autowired
-    private LocalStorageService localStorageService;
+    private MinioUtil minioUtil;
 
     @Value("${allahpan.text.max-length:10000}")
     private int maxTextLength;
@@ -87,7 +87,7 @@ public class TextExtractor {
 
     private String extractPdfText(File file) {
         try {
-            byte[] pdfBytes = readFromLocal(file);
+            byte[] pdfBytes = readFromMinio(file);
             try (PDDocument document = Loader.loadPDF(pdfBytes)) {
                 if (document.isEncrypted()) {
                     LOG.warn("PDF 已加密，跳过文本提取: fileId={}", file.getId());
@@ -109,7 +109,7 @@ public class TextExtractor {
 
     private String extractDocxText(File file) {
         try {
-            byte[] docxBytes = readFromLocal(file);
+            byte[] docxBytes = readFromMinio(file);
             try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(docxBytes));
                  XWPFWordExtractor extractor = new XWPFWordExtractor(doc)) {
                 String text = extractor.getText();
@@ -126,7 +126,7 @@ public class TextExtractor {
 
     private String extractDocText(File file) {
         try {
-            byte[] docBytes = readFromLocal(file);
+            byte[] docBytes = readFromMinio(file);
             try (HWPFDocument doc = new HWPFDocument(new ByteArrayInputStream(docBytes));
                  WordExtractor extractor = new WordExtractor(doc)) {
                 String text = extractor.getText();
@@ -143,7 +143,7 @@ public class TextExtractor {
 
     private String extractXlsxText(File file) {
         try {
-            byte[] xlsxBytes = readFromLocal(file);
+            byte[] xlsxBytes = readFromMinio(file);
             try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(xlsxBytes));
                  XSSFExcelExtractor extractor = new XSSFExcelExtractor(wb)) {
                 extractor.setFormulasNotResults(false);
@@ -162,7 +162,7 @@ public class TextExtractor {
 
     private String extractXlsText(File file) {
         try {
-            byte[] xlsBytes = readFromLocal(file);
+            byte[] xlsBytes = readFromMinio(file);
             try (HSSFWorkbook wb = new HSSFWorkbook(new ByteArrayInputStream(xlsBytes));
                  ExcelExtractor extractor = new ExcelExtractor(wb)) {
                 extractor.setFormulasNotResults(false);
@@ -181,7 +181,7 @@ public class TextExtractor {
 
     private String extractPptxText(File file) {
         try {
-            byte[] pptxBytes = readFromLocal(file);
+            byte[] pptxBytes = readFromMinio(file);
             try (XMLSlideShow ppt = new XMLSlideShow(new ByteArrayInputStream(pptxBytes))) {
                 StringBuilder sb = new StringBuilder();
                 for (XSLFSlide slide : ppt.getSlides()) {
@@ -208,7 +208,7 @@ public class TextExtractor {
 
     private String extractPptText(File file) {
         try {
-            byte[] pptBytes = readFromLocal(file);
+            byte[] pptBytes = readFromMinio(file);
             try (HSLFSlideShow ppt = new HSLFSlideShow(new ByteArrayInputStream(pptBytes))) {
                 StringBuilder sb = new StringBuilder();
                 for (HSLFSlide slide : ppt.getSlides()) {
@@ -233,7 +233,7 @@ public class TextExtractor {
 
     private String extractPlainText(File file) {
         try {
-            byte[] textBytes = readFromLocal(file);
+            byte[] textBytes = readFromMinio(file);
             int len = Math.min(textBytes.length, maxTextLength + 1);
             String text = new String(textBytes, 0, len, java.nio.charset.StandardCharsets.UTF_8);
             return truncate(text != null ? text.strip() : null);
@@ -245,8 +245,8 @@ public class TextExtractor {
         }
     }
 
-    private byte[] readFromLocal(File file) throws Exception {
-        try (InputStream is = localStorageService.read(file.getStorageKey())) {
+    private byte[] readFromMinio(File file) throws Exception {
+        try (InputStream is = minioUtil.getObject(file.getStorageKey())) {
             return is.readAllBytes();
         }
     }

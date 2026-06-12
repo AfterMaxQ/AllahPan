@@ -1,13 +1,14 @@
 package com.allahpan.component;
 
 import com.allahpan.mbg.model.File;
-import com.allahpan.service.LocalStorageService;
+import com.allahpan.component.MinioUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.io.InputStream;
 import java.util.Base64;
 import java.util.Map;
 
@@ -24,7 +25,7 @@ public class OllamaService {
     private int numPredict;
 
     @Autowired
-    private LocalStorageService localStorageService;
+    private MinioUtil minioUtil;
 
     private final RestTemplate restTemplate;
 
@@ -39,7 +40,7 @@ public class OllamaService {
     public String ocr(File file) {
         try {
             byte[] imageBytes;
-            try (var is = localStorageService.read(file.getStorageKey())) {
+            try (InputStream is = minioUtil.getObject(file.getStorageKey())) {
                 imageBytes = is.readAllBytes();
             }
             String base64Image = Base64.getEncoder().encodeToString(imageBytes);

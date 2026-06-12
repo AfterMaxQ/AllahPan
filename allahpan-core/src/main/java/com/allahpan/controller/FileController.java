@@ -2,7 +2,6 @@ package com.allahpan.controller;
 
 import com.allahpan.common.api.CommonResult;
 import com.allahpan.component.FileProcessSender;
-import com.allahpan.component.FileSystemWatcher;
 import com.allahpan.domain.FileProcessMessage;
 import com.allahpan.mbg.model.File;
 import com.allahpan.security.util.JwtTokenUtil;
@@ -27,6 +26,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 @Tag(name = "FileController", description = "文件管理")
 @RestController
@@ -40,9 +40,9 @@ public class FileController {
     @Autowired
     private FileProcessSender fileProcessSender;
     @Autowired
-    private FileSystemWatcher fileSystemWatcher;
-    @Autowired
     private JwtTokenUtil jwtTokenUtil;
+
+    private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();
 
     @Operation(summary = "上传文件（multipart 单步上传）")
     @PostMapping("/upload")
@@ -173,7 +173,12 @@ public class FileController {
             emitter.completeWithError(new SecurityException("未授权的访问"));
             return emitter;
         }
-        return fileSystemWatcher.subscribe();
+        SseEmitter emitter = new SseEmitter(0L);
+        emitters.add(emitter);
+        emitter.onCompletion(() -> emitters.remove(emitter));
+        emitter.onTimeout(() -> emitters.remove(emitter));
+        emitter.onError(e -> emitters.remove(emitter));
+        return emitter;
     }
 
     @Operation(summary = "重命名文件")
@@ -222,6 +227,20 @@ public class FileController {
     public CommonResult<Void> permanentDelete(@PathVariable Long fileId) {
         fileService.permanentDelete(fileId);
         return CommonResult.success(null);
+    }
+
+    /**
+     * 通过 SSE 广播事件给所有连接的客户端。
+     * 供 FileProcessReceiver 等组件调用。
+     */
+    public void notifySse(String eventName, Map<String, Object> data) {
+        for (SseEmitter emitter : emitters) {
+            try {
+                emitter.send(SseEmitter.event().name(eventName).data(data));
+            } catch (Exception e) {
+                emitters.remove(emitter);
+            }
+        }
     }
 
     // ========== 响应转换 ==========
