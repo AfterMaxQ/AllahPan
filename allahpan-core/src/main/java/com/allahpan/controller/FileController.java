@@ -6,11 +6,11 @@ import com.allahpan.domain.FileProcessMessage;
 import com.allahpan.mbg.model.File;
 import com.allahpan.security.util.JwtTokenUtil;
 import com.allahpan.service.FileService;
-import com.allahpan.service.LocalStorageService;
+import com.allahpan.component.MinioUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -21,8 +21,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.io.InputStream;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,7 +35,7 @@ public class FileController {
     @Autowired
     private FileService fileService;
     @Autowired
-    private LocalStorageService localStorageService;
+    private MinioUtil minioUtil;
     @Autowired
     private FileProcessSender fileProcessSender;
     @Autowired
@@ -53,6 +52,12 @@ public class FileController {
         if (!"FOLDER".equals(saved.getFileType())) {
             fileProcessSender.sendProcess(new FileProcessMessage(saved.getId(), FileProcessMessage.Stage.UPLOADED));
         }
+        // Notify SSE clients about the new file
+        Map<String, Object> sseData = new java.util.LinkedHashMap<>();
+        sseData.put("fileId", saved.getId());
+        sseData.put("parentId", saved.getParentId());
+        notifySse("file-created", sseData);
+
         return CommonResult.success(toFileResponse(saved));
     }
 
@@ -96,7 +101,7 @@ public class FileController {
         return CommonResult.success(toFileResponse(file));
     }
 
-    @Operation(summary = "下载文件（本地磁盘流式返回）")
+    @Operation(summary = "下载文件（MinIO 流式返回）")
     @GetMapping("/{fileId}/download")
     public ResponseEntity<Resource> downloadFile(@PathVariable Long fileId) {
         File file = fileService.getFileById(fileId);
@@ -105,20 +110,20 @@ public class FileController {
         com.allahpan.common.exception.Asserts.isTrue(file.getIsFolder() != 1, "文件夹不支持下载");
         com.allahpan.common.exception.Asserts.isTrue(file.getStorageKey() != null, "文件无存储对象");
 
-        Path localFile = localStorageService.resolve(file.getStorageKey());
-        if (!Files.exists(localFile)) {
-            return ResponseEntity.notFound().build();
+        try {
+            InputStream stream = minioUtil.getObject(file.getStorageKey());
+            InputStreamResource resource = new InputStreamResource(stream);
+            String encodedName = URLEncoder.encode(file.getFileName(), StandardCharsets.UTF_8)
+                    .replace("+", "%20");
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(
+                            file.getContentType() != null ? file.getContentType() : "application/octet-stream"))
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            "attachment; filename*=UTF-8''" + encodedName)
+                    .body(resource);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
         }
-        Resource resource = new FileSystemResource(localFile);
-        String encodedName = URLEncoder.encode(file.getFileName(), StandardCharsets.UTF_8)
-                .replace("+", "%20");
-        return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(
-                        file.getContentType() != null ? file.getContentType() : "application/octet-stream"))
-                .contentLength(file.getFileSize() != null ? file.getFileSize() : 0)
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename*=UTF-8''" + encodedName)
-                .body(resource);
     }
 
     @Operation(summary = "预览文件（inline）")
@@ -130,20 +135,20 @@ public class FileController {
         com.allahpan.common.exception.Asserts.isTrue(file.getIsFolder() != 1, "文件夹不支持预览");
         com.allahpan.common.exception.Asserts.isTrue(file.getStorageKey() != null, "文件无存储对象");
 
-        Path localFile = localStorageService.resolve(file.getStorageKey());
-        if (!Files.exists(localFile)) {
-            return ResponseEntity.notFound().build();
+        try {
+            InputStream stream = minioUtil.getObject(file.getStorageKey());
+            InputStreamResource resource = new InputStreamResource(stream);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(
+                            file.getContentType() != null ? file.getContentType() : "application/octet-stream"))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                    .body(resource);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
         }
-        Resource resource = new FileSystemResource(localFile);
-        return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(
-                        file.getContentType() != null ? file.getContentType() : "application/octet-stream"))
-                .contentLength(file.getFileSize() != null ? file.getFileSize() : 0)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
-                .body(resource);
     }
 
-    @Operation(summary = "缩略图（本地磁盘）")
+    @Operation(summary = "缩略图（MinIO）")
     @GetMapping("/{fileId}/thumbnail")
     public ResponseEntity<Resource> getThumbnail(@PathVariable Long fileId) {
         File file = fileService.getFileById(fileId);
@@ -151,14 +156,11 @@ public class FileController {
             return ResponseEntity.notFound().build();
         }
         try {
-            Path thumbPath = localStorageService.resolveThumbnail(file.getThumbnailKey());
-            if (Files.exists(thumbPath)) {
-                Resource resource = new FileSystemResource(thumbPath);
-                return ResponseEntity.ok()
-                        .contentType(MediaType.IMAGE_JPEG)
-                        .body(resource);
-            }
-            return ResponseEntity.notFound().build();
+            InputStream stream = minioUtil.getThumbnail(file.getThumbnailKey());
+            InputStreamResource resource = new InputStreamResource(stream);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.IMAGE_JPEG)
+                    .body(resource);
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
