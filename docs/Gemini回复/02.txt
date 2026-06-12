@@ -1,0 +1,3149 @@
+为了在家庭 Mac 上打造温馨、简洁、顺畅的 **AllahPan（家庭共享云盘）** 体验，我们严格遵循“暖白底色 + 木色点缀”的设计语言，使用 Vue 3 组合式 API + `<script setup>` 规范，为您开发出完整、健壮、细节丰富的前端应用。
+
+以下是该项目的核心骨架与全部关键模块的完整实现方案。
+
+---
+
+### 第一部分：全局基础与样式 (Styles & Configs)
+
+#### 1. `src/styles/global.css`
+实现暖调设计。通过覆盖 Element Plus CSS 变量，确保输入框、按钮、弹框以及布局组件均呈现“原木家风”的温润质感。
+
+```css
+/* 自定义调色盘与圆角规范 */
+:root {
+  --el-color-primary: #C4946B !important;
+  --el-color-primary-light-3: #D5B193 !important;
+  --el-color-primary-light-5: #E2C7B1 !important;
+  --el-color-primary-light-7: #EEDBCE !important;
+  --el-color-primary-light-8: #F4EAE1 !important;
+  --el-color-primary-light-9: #FAF5F0 !important;
+  --el-color-primary-dark-2: #A87D5A !important;
+
+  /* 家庭暖色系底色 */
+  --ap-bg-page: #FAF7F2;       /* 暖米白 */
+  --ap-bg-card: #FFFFFF;       /* 白卡片 */
+  --ap-bg-sidebar: #F5EFE6;    /* 自然深一阶 */
+  --ap-text-main: #3D3226;     /* 暖黑 */
+  --ap-text-sub: #8B7E6E;      /* 暖灰 */
+  --ap-border-color: #E8E0D5;  /* 自然木色边线 */
+}
+
+/* 基础重置 */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--ap-bg-page);
+  color: var(--ap-text-main);
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 全局覆盖 Element Plus 样式 */
+.el-button {
+  border-radius: 10px !important;
+  transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+}
+.el-button--primary {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+  color: #fff !important;
+}
+.el-button--primary:hover {
+  background-color: var(--el-color-primary-dark-2) !important;
+  border-color: var(--el-color-primary-dark-2) !important;
+}
+.el-input__wrapper {
+  border-radius: 10px !important;
+  box-shadow: 0 0 0 1px var(--ap-border-color) inset !important;
+}
+.el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset, 0 0 8px var(--el-color-primary-light-7) !important;
+}
+.el-dialog {
+  border-radius: 16px !important;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(61, 50, 38, 0.08) !important;
+}
+.el-dialog__header {
+  margin-right: 0 !important;
+  padding-bottom: 8px !important;
+}
+
+/* 微弹动画 */
+.fade-transform-enter-active,
+.fade-transform-leave-active {
+  transition: all 0.2s ease;
+}
+.fade-transform-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+.fade-transform-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+/* 滚动条温馨圆角 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ap-border-color);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ap-text-sub);
+}
+```
+
+#### 2. `src/main.js`
+初始化 App，绑定 Pinia、路由，并全局导入 Element Plus 中文语言包。
+
+```javascript
+import { createApp } from 'vue';
+import { createPinia } from 'pinia';
+import App from './App.vue';
+import router from './router';
+import ElementPlus from 'element-plus';
+import zhCn from 'element-plus/es/locale/lang/zh-cn';
+import * as ElementPlusIconsVue from '@element-plus/icons-vue';
+
+import 'element-plus/dist/index.css';
+import './styles/global.css';
+
+const app = createApp(App);
+
+// 注册 Element Plus 所有图标
+for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+  app.component(key, component);
+}
+
+app.use(createPinia());
+app.use(router);
+app.use(ElementPlus, { locale: zhCn });
+
+app.mount('#app');
+```
+
+#### 3. `src/App.vue`
+极简视图容器。
+
+```vue
+<template>
+  <router-view v-slot="{ Component }">
+    <transition name="fade-transform" mode="out-in">
+      <component :is="Component" />
+    </transition>
+  </router-view>
+</template>
+
+<script setup>
+// 根视图，通过路由决定是渲染 Login、SetPassword 还是主系统
+</script>
+```
+
+#### 4. `src/router/index.js`
+带有完善路由守卫的路由控制（包含首次登录设密状态校验 `firstLogin`）。
+
+```javascript
+import { createRouter, createWebHistory } from 'vue-router';
+import { useUserStore } from '../stores/user';
+
+const routes = [
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('../views/Login.vue'),
+    meta: { requireAuth: false }
+  },
+  {
+    path: '/set-password',
+    name: 'SetPassword',
+    component: () => import('../views/SetPassword.vue'),
+    meta: { requireAuth: true }
+  },
+  {
+    path: '/',
+    component: () => import('../components/layout/AppLayout.vue'),
+    meta: { requireAuth: true },
+    children: [
+      {
+        path: '',
+        name: 'FileBrowser',
+        component: () => import('../views/FileBrowser.vue')
+      },
+      {
+        path: 'favorites',
+        name: 'Favorites',
+        component: () => import('../views/Favorites.vue')
+      },
+      {
+        path: 'search',
+        name: 'Search',
+        component: () => import('../views/Search.vue')
+      },
+      {
+        path: 'trash',
+        name: 'Trash',
+        component: () => import('../views/Trash.vue')
+      }
+    ]
+  },
+  {
+    path: '/share/:code',
+    name: 'SharedView',
+    component: () => import('../views/SharedView.vue'),
+    meta: { requireAuth: false }
+  }
+];
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes
+});
+
+// 核心路由导航守卫
+router.beforeEach((to, from, next) => {
+  const userStore = useUserStore();
+  const token = userStore.token;
+
+  if (to.meta.requireAuth && !token) {
+    // 未登录跳转登录页
+    next({ name: 'Login' });
+  } else if (token && to.name === 'Login') {
+    // 已登录状态下不能访问登录页
+    next({ name: 'FileBrowser' });
+  } else if (token && userStore.firstLogin && to.name !== 'SetPassword') {
+    // 首次登录，强制去设置密码
+    next({ name: 'SetPassword' });
+  } else {
+    next();
+  }
+});
+
+export default router;
+```
+
+---
+
+### 第二部分：工具类与底层请求 (Utils & Axios)
+
+#### 1. `src/utils/format.js`
+文件格式化工具。
+
+```javascript
+export function formatBytes(bytes, decimals = 2) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
+export function formatDate(dateString) {
+  if (!dateString) return '-';
+  const date = new Date(dateString);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${y}-${m}-${d} ${hh}:${mm}`;
+}
+```
+
+#### 2. `src/utils/md5.js`
+使用 `Spark-MD5` 按分块异步读取并计算文件 MD5，避免浏览器因大文件内存溢出。
+
+```javascript
+import SparkMD5 from 'spark-md5';
+
+export function calculateMD5(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const blobSlice = File.prototype.slice || File.prototype.mozSlice || File.prototype.webkitSlice;
+    const chunkSize = 2097152; // 2MB 块大小
+    const chunks = Math.ceil(file.size / chunkSize);
+    let currentChunk = 0;
+    const spark = new SparkMD5.ArrayBuffer();
+    const fileReader = new FileReader();
+
+    fileReader.onload = function (e) {
+      spark.append(e.target.result);
+      currentChunk++;
+
+      if (currentChunk < chunks) {
+        if (typeof onProgress === 'function') {
+          onProgress(Math.round((currentChunk / chunks) * 100));
+        }
+        loadNext();
+      } else {
+        if (typeof onProgress === 'function') {
+          onProgress(100);
+        }
+        resolve(spark.end());
+      }
+    };
+
+    fileReader.onerror = function () {
+      reject('MD5 计算失败，文件读取错误。');
+    };
+
+    function loadNext() {
+      const start = currentChunk * chunkSize;
+      const end = ((start + chunkSize) >= file.size) ? file.size : start + chunkSize;
+      fileReader.readAsArrayBuffer(blobSlice.call(file, start, end));
+    }
+
+    loadNext();
+  });
+}
+```
+
+#### 3. `src/api/index.js`
+带拦截器的统一 Axios 实例。
+
+```javascript
+import axios from 'axios';
+import { ElMessage } from 'element-plus';
+import router from '../router';
+import { useUserStore } from '../stores/user';
+
+const request = axios.create({
+  baseURL: 'http://localhost:8088/api',
+  timeout: 15000
+});
+
+// 请求拦截器
+request.interceptors.request.use(
+  (config) => {
+    const userStore = useUserStore();
+    if (userStore.token) {
+      config.headers['Authorization'] = `Bearer ${userStore.token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// 响应拦截器
+request.interceptors.response.use(
+  (response) => {
+    const res = response.data;
+    // 如果返回的不是标准 CommonResult（如 MinIO 直传响应或第三方服务），直接放过
+    if (res.code === undefined) {
+      return response;
+    }
+    
+    if (res.code === 200) {
+      return res;
+    }
+
+    // 针对特定状态处理
+    ElMessage.error(res.message || '系统错误');
+    return Promise.reject(new Error(res.message || 'Error'));
+  },
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      const userStore = useUserStore();
+      userStore.logout();
+      ElMessage.error('登录已过期，请重新登录');
+      router.push('/login');
+    } else {
+      ElMessage.error(error.message || '连接服务器失败');
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default request;
+```
+
+---
+
+### 第三部分：业务 API 绑定 (API Modules)
+
+#### 1. `src/api/auth.js`
+```javascript
+import request from './index';
+
+export function sendCode(phone) {
+  return request.post('/auth/send-code', { phone });
+}
+
+export function loginByCode(phone, code) {
+  return request.post('/auth/login-by-code', { phone, code });
+}
+
+export function loginByPassword(phone, password) {
+  return request.post('/auth/login-by-password', { phone, password });
+}
+```
+
+#### 2. `src/api/user.js`
+```javascript
+import request from './index';
+
+export function setPassword(newPassword) {
+  return request.post('/user/set-password', { newPassword });
+}
+
+export function getMyInfo() {
+  return request.get('/user/me');
+}
+```
+
+#### 3. `src/api/file.js`
+```javascript
+import request from './index';
+
+export function preUpload({ md5, fileName, parentId }) {
+  return request.post('/file/pre-upload', { md5, fileName, parentId });
+}
+
+export function confirmUpload(payload) {
+  return request.post('/file/confirm-upload', payload);
+}
+
+export function createFolder(folderName, parentId) {
+  return request.post('/file/create-folder', { folderName, parentId });
+}
+
+export function getFileList(parentId) {
+  return request.get(`/file/list?parentId=${parentId}`);
+}
+
+export function getFileTree(folderId) {
+  return request.get(`/file/tree/${folderId}`);
+}
+
+export function getFileDetails(fileId) {
+  return request.get(`/file/${fileId}`);
+}
+
+export function deleteFile(fileId) {
+  return request.delete(`/file/${fileId}`);
+}
+
+export function getTrashList(pageNum = 1, pageSize = 20) {
+  return request.get(`/file/trash?pageNum=${pageNum}&pageSize=${pageSize}`);
+}
+
+export function restoreFile(fileId) {
+  return request.put(`/file/trash/${fileId}/restore`);
+}
+
+export function permanentlyDeleteFile(fileId) {
+  return request.delete(`/file/trash/${fileId}`);
+}
+
+export function downloadFile(fileId) {
+  return request.get(`/file/${fileId}/download`);
+}
+
+export function renameFile(fileId, newName) {
+  return request.put(`/file/${fileId}/rename`, { newName });
+}
+
+export function moveFile(fileId, targetParentId) {
+  return request.put(`/file/${fileId}/move`, { targetParentId });
+}
+
+export function batchDeleteFiles(fileIds) {
+  return request.delete('/file/batch', { data: { fileIds } });
+}
+```
+
+#### 4. `src/api/favorite.js`
+```javascript
+import request from './index';
+
+export function addFavorite(fileId) {
+  return request.post(`/favorite/${fileId}`);
+}
+
+export function removeFavorite(fileId) {
+  return request.delete(`/favorite/${fileId}`);
+}
+
+export function checkIsFavorite(fileId) {
+  return request.get(`/favorite/check/${fileId}`);
+}
+
+export function getFavoriteList(pageNum = 1, pageSize = 20) {
+  return request.get(`/favorite/list?pageNum=${pageNum}&pageSize=${pageSize}`);
+}
+```
+
+#### 5. `src/api/search.js`
+```javascript
+import request from './index';
+
+export function searchFiles({ keyword, fileType, pageNum = 1, pageSize = 20 }) {
+  const params = { keyword, pageNum, pageSize };
+  if (fileType) params.fileType = fileType;
+  return request.get('/search', { params });
+}
+```
+
+#### 6. `src/api/share.js`
+```javascript
+import request from './index';
+
+export function createShareLink(fileId, expireHours = 24) {
+  return request.post(`/share/${fileId}?expireHours=${expireHours}`);
+}
+
+export function getSharedContent(code) {
+  return request.get(`/share/${code}`);
+}
+
+export function deleteShareLink(code) {
+  return request.delete(`/share/${code}`);
+}
+```
+
+---
+
+### 第四部分：Pinia 状态管理 (Stores)
+
+#### 1. `src/stores/user.js`
+```javascript
+import { defineStore } from 'pinia';
+
+export const useUserStore = defineStore('user', {
+  state: () => ({
+    token: localStorage.getItem('token') || '',
+    userId: localStorage.getItem('userId') || '',
+    phone: localStorage.getItem('phone') || '',
+    firstLogin: localStorage.getItem('firstLogin') === 'true',
+    nickname: localStorage.getItem('nickname') || '',
+    avatarUrl: localStorage.getItem('avatarUrl') || ''
+  }),
+  actions: {
+    saveLoginState(data) {
+      this.token = data.token;
+      this.userId = data.userId;
+      this.phone = data.phone;
+      this.firstLogin = data.firstLogin;
+      
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('userId', data.userId);
+      localStorage.setItem('phone', data.phone);
+      localStorage.setItem('firstLogin', String(data.firstLogin));
+    },
+    updateTokenAfterSetPassword(token) {
+      this.token = token;
+      this.firstLogin = false;
+      localStorage.setItem('token', token);
+      localStorage.setItem('firstLogin', 'false');
+    },
+    setNicknameAndAvatar(nickname, avatarUrl) {
+      this.nickname = nickname;
+      this.avatarUrl = avatarUrl;
+      localStorage.setItem('nickname', nickname);
+      localStorage.setItem('avatarUrl', avatarUrl || '');
+    },
+    logout() {
+      this.token = '';
+      this.userId = '';
+      this.phone = '';
+      this.firstLogin = false;
+      this.nickname = '';
+      this.avatarUrl = '';
+      localStorage.clear();
+    }
+  }
+});
+```
+
+#### 2. `src/stores/file.js`
+```javascript
+import { defineStore } from 'pinia';
+
+export const useFileStore = defineStore('file', {
+  state: () => ({
+    currentFolderId: 0,
+    viewMode: localStorage.getItem('viewMode') || 'grid', // 'grid' or 'list'
+  }),
+  actions: {
+    setCurrentFolder(id) {
+      this.currentFolderId = id;
+    },
+    toggleViewMode() {
+      this.viewMode = this.viewMode === 'grid' ? 'list' : 'grid';
+      localStorage.setItem('viewMode', this.viewMode);
+    }
+  }
+});
+```
+
+---
+
+### 第五部分：核心公共布局组件 (Layouts & UI components)
+
+#### 1. `src/components/common/FileIcon.vue`
+根据文件扩展名与文件属性展现细腻暖色的文件类型视觉，文件夹直接赋予原木暖色调，图片直接渲染其微缩略图。
+
+```vue
+<template>
+  <div class="file-icon-wrapper" :style="{ width: size + 'px', height: size + 'px' }">
+    <template v-if="isFolder">
+      <el-icon :size="size" color="#C4946B"><Folder /></el-icon>
+    </template>
+    <template v-else-if="fileType === 'IMAGE' && thumbUrl">
+      <el-image
+        :src="thumbUrl"
+        fit="cover"
+        class="img-thumb"
+        :lazy="true"
+      >
+        <template #error>
+          <el-icon :size="size" color="#A89F91"><Picture /></el-icon>
+        </template>
+      </el-image>
+    </template>
+    <template v-else>
+      <el-icon :size="size" :style="{ color: iconStyle.color }">
+        <component :is="iconStyle.icon" />
+      </el-icon>
+    </template>
+  </div>
+</template>
+
+<script setup>
+import { computed } from 'vue';
+
+const props = defineProps({
+  isFolder: { type: [Boolean, Number], default: false },
+  fileType: { type: String, default: 'OTHER' },
+  thumbUrl: { type: String, default: '' },
+  size: { type: Number, default: 48 }
+});
+
+const iconStyle = computed(() => {
+  const mapping = {
+    IMAGE: { icon: 'Picture', color: '#D2A280' },
+    VIDEO: { icon: 'VideoCamera', color: '#B38B6D' },
+    DOCUMENT: { icon: 'Document', color: '#88A2B9' },
+    OTHER: { icon: 'Files', color: '#A59B8F' }
+  };
+  return mapping[props.fileType] || mapping.OTHER;
+});
+</script>
+
+<style scoped>
+.file-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.img-thumb {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--ap-border-color);
+}
+</style>
+```
+
+#### 2. `src/components/common/ProcessBadge.vue`
+展示后台服务通过 RabbitMQ、MinIO 和 OCR 完成处理的状态。
+
+```vue
+<template>
+  <el-tag :type="statusConfig.type" size="small" class="badge" effect="light">
+    {{ statusConfig.text }}
+  </el-tag>
+</template>
+
+<script setup>
+import { computed } from 'vue';
+
+const props = defineProps({
+  status: { type: Number, required: true }
+});
+
+const statusConfig = computed(() => {
+  switch (props.status) {
+    case 0:
+      return { text: '排队中', type: 'info' };
+    case 1:
+      return { text: '已缩略', type: 'warning' };
+    case 2:
+      return { text: '正在OCR', type: 'primary' };
+    case 3:
+      return { text: '可用', type: 'success' };
+    case -1:
+    default:
+      return { text: '处理失败', type: 'danger' };
+  }
+});
+</script>
+
+<style scoped>
+.badge {
+  border-radius: 6px;
+  font-size: 11px;
+}
+</style>
+```
+
+#### 3. `src/components/common/EmptyState.vue`
+```vue
+<template>
+  <div class="empty-container">
+    <div class="icon-box">
+      <el-icon size="64" color="#D5CDC3"><FolderOpened /></el-icon>
+    </div>
+    <p class="title">{{ title }}</p>
+    <p class="subtitle">{{ description }}</p>
+    <slot name="action"></slot>
+  </div>
+</template>
+
+<script setup>
+defineProps({
+  title: { type: String, default: '这里空荡荡的' },
+  description: { type: String, default: '来上传第一个温暖的记忆吧' }
+});
+</script>
+
+<style scoped>
+.empty-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 24px;
+  text-align: center;
+}
+.icon-box {
+  background-color: var(--ap-bg-sidebar);
+  border-radius: 50%;
+  padding: 24px;
+  margin-bottom: 20px;
+}
+.title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ap-text-main);
+  margin: 0 0 8px 0;
+}
+.subtitle {
+  font-size: 14px;
+  color: var(--ap-text-sub);
+  margin: 0 0 20px 0;
+}
+</style>
+```
+
+#### 4. `src/components/layout/AppSidebar.vue`
+原木调侧边栏导航，支持折叠。
+
+```vue
+<template>
+  <div class="sidebar-wrapper" :class="{ collapsed: isCollapsed }">
+    <div class="logo-area">
+      <el-avatar :size="36" class="logo-icon">🍂</el-avatar>
+      <span v-if="!isCollapsed" class="logo-title">AllahPan</span>
+    </div>
+
+    <el-menu
+      :default-active="activeMenu"
+      router
+      class="side-menu"
+      :collapse="isCollapsed"
+      background-color="#F5EFE6"
+      text-color="#3D3226"
+      active-text-color="#C4946B"
+    >
+      <el-menu-item index="/">
+        <el-icon><Folder /></el-icon>
+        <template #title>共享文件</template>
+      </el-menu-item>
+
+      <el-menu-item index="/favorites">
+        <el-icon><Star /></el-icon>
+        <template #title>全家收藏</template>
+      </el-menu-item>
+
+      <el-menu-item index="/trash">
+        <el-icon><Delete /></el-icon>
+        <template #title>垃圾站</template>
+      </el-menu-item>
+    </el-menu>
+
+    <div class="footer-area">
+      <el-dropdown trigger="click" @command="handleCommand">
+        <div class="user-info">
+          <el-avatar :size="32" class="user-avatar">{{ userStore.phone.slice(-2) }}</el-avatar>
+          <div v-if="!isCollapsed" class="user-meta">
+            <span class="user-name">家庭成员</span>
+            <span class="user-phone">{{ userStore.phone }}</span>
+          </div>
+        </div>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { computed } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { useUserStore } from '../../stores/user';
+
+defineProps({
+  isCollapsed: { type: Boolean, default: false }
+});
+
+const route = useRoute();
+const router = useRouter();
+const userStore = useUserStore();
+
+const activeMenu = computed(() => {
+  return route.path;
+});
+
+const handleCommand = (command) => {
+  if (command === 'logout') {
+    userStore.logout();
+    router.push('/login');
+  }
+};
+</script>
+
+<style scoped>
+.sidebar-wrapper {
+  width: 200px;
+  background-color: var(--ap-bg-sidebar);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  border-right: 1px solid var(--ap-border-color);
+}
+.sidebar-wrapper.collapsed {
+  width: 64px;
+}
+.logo-area {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+  border-bottom: 1px solid var(--ap-border-color);
+}
+.logo-icon {
+  background-color: var(--el-color-primary-light-8);
+  font-size: 18px;
+}
+.logo-title {
+  font-size: 18px;
+  font-weight: bold;
+  color: var(--ap-text-main);
+  letter-spacing: 0.5px;
+}
+.side-menu {
+  border-right: none;
+  flex: 1;
+  padding-top: 16px;
+}
+:deep(.el-menu-item) {
+  height: 50px;
+  line-height: 50px;
+  margin: 4px 8px;
+  border-radius: 8px;
+}
+:deep(.el-menu-item.is-active) {
+  background-color: var(--el-color-primary-light-8) !important;
+  font-weight: 600;
+}
+:deep(.el-menu-item:hover) {
+  background-color: var(--el-color-primary-light-9) !important;
+}
+.footer-area {
+  padding: 16px;
+  border-top: 1px solid var(--ap-border-color);
+}
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.user-avatar {
+  background-color: var(--el-color-primary);
+  font-weight: bold;
+  color: #fff;
+}
+.user-meta {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+.user-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ap-text-main);
+}
+.user-phone {
+  font-size: 11px;
+  color: var(--ap-text-sub);
+}
+</style>
+```
+
+#### 5. `src/components/layout/AppHeader.vue`
+顶部操作，内嵌折叠按钮与全局搜索栏。
+
+```vue
+<template>
+  <header class="app-header">
+    <div class="left">
+      <el-button class="fold-btn" text @click="$emit('toggle-sidebar')">
+        <el-icon size="20">
+          <component :is="sidebarCollapsed ? 'Expand' : 'Fold'" />
+        </el-icon>
+      </el-button>
+      <slot name="breadcrumb"></slot>
+    </div>
+    <div class="right">
+      <SearchBar />
+    </div>
+  </header>
+</template>
+
+<script setup>
+import SearchBar from '../search/SearchBar.vue';
+
+defineProps({
+  sidebarCollapsed: Boolean
+});
+defineEmits(['toggle-sidebar']);
+</script>
+
+<style scoped>
+.app-header {
+  height: 60px;
+  background-color: var(--ap-bg-card);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--ap-border-color);
+  z-index: 10;
+}
+.left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.fold-btn {
+  padding: 8px !important;
+}
+</style>
+```
+
+#### 6. `src/components/layout/AppLayout.vue`
+全局页面主布局。
+
+```vue
+<template>
+  <div class="app-layout">
+    <AppSidebar :is-collapsed="sidebarCollapsed" />
+    <div class="main-container">
+      <AppHeader
+        :sidebar-collapsed="sidebarCollapsed"
+        @toggle-sidebar="sidebarCollapsed = !sidebarCollapsed"
+      >
+        <template #breadcrumb>
+          <BreadcrumbNav />
+        </template>
+      </AppHeader>
+      <div class="content-body">
+        <router-view v-slot="{ Component }">
+          <transition name="fade-transform" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref } from 'vue';
+import AppSidebar from './AppSidebar.vue';
+import AppHeader from './AppHeader.vue';
+import BreadcrumbNav from '../file/BreadcrumbNav.vue';
+
+const sidebarCollapsed = ref(false);
+</script>
+
+<style scoped>
+.app-layout {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+.main-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: var(--ap-bg-page);
+}
+.content-body {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+}
+</style>
+```
+
+---
+
+### 第六部分：核心文件管理交互 (Interactive Dialogs)
+
+#### 1. `src/components/file/BreadcrumbNav.vue`
+树状层次结构的虚拟文件路径渲染。
+
+```vue
+<template>
+  <el-breadcrumb class="breadcrumb" separator-icon="ArrowRight">
+    <el-breadcrumb-item
+      v-for="(node, index) in breadcrumbs"
+      :key="node.id"
+    >
+      <a
+        href="javascript:void(0)"
+        :class="{ active: index === breadcrumbs.length - 1 }"
+        @click="navigateTo(node.id)"
+      >
+        {{ node.fileName === '/' ? '主空间' : node.fileName }}
+      </a>
+    </el-breadcrumb-item>
+  </el-breadcrumb>
+</template>
+
+<script setup>
+import { ref, watch } from 'vue';
+import { useFileStore } from '../../stores/file';
+import { getFileTree } from '../../api/file';
+
+const fileStore = useFileStore();
+const breadcrumbs = ref([{ id: 0, fileName: '/' }]);
+
+const fetchPathTree = async (folderId) => {
+  if (folderId === 0) {
+    breadcrumbs.value = [{ id: 0, fileName: '/' }];
+    return;
+  }
+  try {
+    const res = await getFileTree(folderId);
+    breadcrumbs.value = res.data;
+  } catch (error) {
+    console.error('计算面包屑树失败', error);
+  }
+};
+
+watch(() => fileStore.currentFolderId, (newId) => {
+  fetchPathTree(newId);
+}, { immediate: true });
+
+const navigateTo = (folderId) => {
+  fileStore.setCurrentFolder(folderId);
+};
+</script>
+
+<style scoped>
+.breadcrumb {
+  font-size: 14px;
+}
+.breadcrumb a {
+  color: var(--ap-text-sub);
+  text-decoration: none;
+  font-weight: normal;
+  transition: color 0.2s;
+}
+.breadcrumb a:hover {
+  color: var(--el-color-primary);
+}
+.breadcrumb a.active {
+  color: var(--ap-text-main);
+  font-weight: 600;
+  cursor: default;
+}
+</style>
+```
+
+#### 2. `src/components/file/FileUploadDialog.vue`
+直传 MinIO + 秒传计算机制。
+
+```vue
+<template>
+  <el-dialog
+    v-model="visible"
+    title="上传家庭文件"
+    width="500px"
+    :close-on-click-modal="false"
+  >
+    <div class="dialog-body">
+      <el-upload
+        class="ap-uploader"
+        drag
+        action=""
+        multiple
+        :auto-upload="false"
+        :on-change="handleFileChange"
+      >
+        <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+        <div class="el-upload__text">
+          拖拽文件到这里，或<em>点击上传</em>
+        </div>
+      </el-upload>
+
+      <!-- 任务列表 -->
+      <div v-if="tasks.length > 0" class="task-list">
+        <div v-for="task in tasks" :key="task.id" class="task-item">
+          <div class="task-info">
+            <span class="task-name" :title="task.name">{{ task.name }}</span>
+            <span class="task-status" :class="task.status">{{ task.statusText }}</span>
+          </div>
+          <el-progress
+            :percentage="task.progress"
+            :status="task.progressStatus"
+            :stroke-width="4"
+          />
+        </div>
+      </div>
+    </div>
+  </el-dialog>
+</template>
+
+<script setup>
+import { ref } from 'vue';
+import axios from 'axios';
+import { useFileStore } from '../../stores/file';
+import { calculateMD5 } from '../../utils/md5';
+import { preUpload, confirmUpload } from '../../api/file';
+import { ElMessage } from 'element-plus';
+
+const visible = ref(false);
+const fileStore = useFileStore();
+const tasks = ref([]);
+
+const open = () => {
+  visible.value = true;
+  tasks.value = [];
+};
+
+defineExpose({ open });
+const emit = defineEmits(['uploaded']);
+
+const handleFileChange = async (uploadFile) => {
+  const file = uploadFile.raw;
+  const taskId = Date.now() + Math.random().toString(36).substr(2, 5);
+  
+  const newTask = {
+    id: taskId,
+    name: file.name,
+    progress: 0,
+    status: 'pending',
+    statusText: '正在准备计算特征码...',
+    progressStatus: ''
+  };
+  
+  tasks.value.push(newTask);
+  const task = tasks.value.find(t => t.id === taskId);
+
+  try {
+    // 1. MD5 计算
+    task.statusText = '计算特征码中...';
+    const md5 = await calculateMD5(file, (p) => {
+      task.progress = Math.round(p * 0.3); // 特征码阶段占30%进度
+    });
+
+    // 2. 秒传判定
+    task.statusText = '极速匹配中...';
+    const preRes = await preUpload({
+      md5,
+      fileName: file.name,
+      parentId: fileStore.currentFolderId
+    });
+
+    if (preRes.data.instant) {
+      task.progress = 100;
+      task.status = 'success';
+      task.statusText = '秒传成功！';
+      task.progressStatus = 'success';
+      ElMessage.success(`${file.name} 秒传成功`);
+      emit('uploaded');
+      return;
+    }
+
+    // 3. 浏览器直传 MinIO 桶（PUT 方法）
+    task.statusText = '开始上传到家庭服务器...';
+    const preSignedUrl = preRes.data.preSignedUrl;
+    const storageKey = preRes.data.storageKey;
+
+    await axios.put(preSignedUrl, file, {
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      onUploadProgress: (progressEvent) => {
+        const uploadProgress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        task.progress = 30 + Math.round(uploadProgress * 0.6); // 直传阶段占60%
+        task.statusText = `正在极速直传...(${uploadProgress}%)`;
+      }
+    });
+
+    // 4. 确认写入数据库
+    task.statusText = '家庭云存储确认中...';
+    await confirmUpload({
+      storageKey,
+      fileName: file.name,
+      parentId: fileStore.currentFolderId,
+      md5,
+      fileSize: file.size,
+      contentType: file.type || 'application/octet-stream'
+    });
+
+    task.progress = 100;
+    task.status = 'success';
+    task.statusText = '上传成功！';
+    task.progressStatus = 'success';
+    ElMessage.success(`${file.name} 上传成功`);
+    emit('uploaded');
+
+  } catch (error) {
+    console.error(error);
+    task.status = 'exception';
+    task.statusText = '操作终止/错误';
+    task.progressStatus = 'exception';
+    ElMessage.error(`${file.name} 传输失败`);
+  }
+};
+</script>
+
+<style scoped>
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.ap-uploader :deep(.el-upload-dragger) {
+  border: 2px dashed var(--ap-border-color);
+  background-color: var(--ap-bg-page);
+  border-radius: 12px;
+}
+.ap-uploader :deep(.el-upload-dragger:hover) {
+  border-color: var(--el-color-primary);
+}
+.task-list {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--ap-border-color);
+  border-radius: 10px;
+  padding: 12px;
+  background-color: var(--ap-bg-page);
+}
+.task-item {
+  margin-bottom: 12px;
+}
+.task-item:last-child {
+  margin-bottom: 0;
+}
+.task-info {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.task-name {
+  color: var(--ap-text-main);
+  font-weight: 500;
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-status {
+  font-size: 12px;
+  color: var(--ap-text-sub);
+}
+.task-status.success {
+  color: var(--el-color-success);
+}
+.task-status.exception {
+  color: var(--el-color-danger);
+}
+</style>
+```
+
+#### 3. `src/components/file/FolderCreateDialog.vue`
+```vue
+<template>
+  <el-dialog
+    v-model="visible"
+    title="新建文件夹"
+    width="400px"
+    @opened="focusInput"
+  >
+    <el-form :model="form" :rules="rules" ref="formRef" label-width="0">
+      <el-form-item prop="folderName">
+        <el-input
+          ref="inputRef"
+          v-model="form.folderName"
+          placeholder="请输入文件夹名称"
+          maxlength="100"
+          @keyup.enter="handleSubmit"
+        />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <div class="dialog-footer">
+        <el-button @click="visible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="handleSubmit">确定</el-button>
+      </div>
+    </template>
+  </el-dialog>
+</template>
+
+<script setup>
+import { ref, reactive } from 'vue';
+import { createFolder } from '../../api/file';
+import { useFileStore } from '../../stores/file';
+import { ElMessage } from 'element-plus';
+
+const visible = ref(false);
+const submitting = ref(false);
+const inputRef = ref(null);
+const formRef = ref(null);
+const fileStore = useFileStore();
+
+const form = reactive({ folderName: '' });
+const rules = {
+  folderName: [{ required: true, message: '请填写名称', trigger: 'blur' }]
+};
+
+const open = () => {
+  form.folderName = '';
+  visible.value = true;
+};
+
+const focusInput = () => {
+  inputRef.value?.focus();
+};
+
+defineExpose({ open });
+const emit = defineEmits(['created']);
+
+const handleSubmit = () => {
+  formRef.value?.validate(async (valid) => {
+    if (!valid) return;
+    submitting.value = true;
+    try {
+      await createFolder(form.folderName, fileStore.currentFolderId);
+      ElMessage.success('文件夹创建成功');
+      visible.value = false;
+      emit('created');
+    } catch (e) {
+      console.error(e);
+    } finally {
+      submitting.value = false;
+    }
+  });
+};
+</script>
+```
+
+#### 4. `src/components/file/FileContextMenu.vue`
+基于浮动层机制的右键功能菜单。
+
+```vue
+<template>
+  <div
+    v-if="visible"
+    class="context-menu"
+    :style="{ top: y + 'px', left: x + 'px' }"
+  >
+    <div class="menu-item" @click="handleAction('open')">
+      <el-icon><FolderOpened /></el-icon>
+      <span>{{ activeFile?.isFolder ? '打开' : '预览' }}</span>
+    </div>
+    <div v-if="!activeFile?.isFolder" class="menu-item" @click="handleAction('download')">
+      <el-icon><Download /></el-icon>
+      <span>下载</span>
+    </div>
+    <div class="menu-item" @click="handleAction('favorite')">
+      <el-icon><Star /></el-icon>
+      <span>收藏</span>
+    </div>
+    <div v-if="!activeFile?.isFolder" class="menu-item" @click="handleAction('share')">
+      <el-icon><Share /></el-icon>
+      <span>极速共享</span>
+    </div>
+    <div class="menu-item" @click="handleAction('rename')">
+      <el-icon><Edit /></el-icon>
+      <span>重命名</span>
+    </div>
+    <div class="menu-item" @click="handleAction('move')">
+      <el-icon><Rank /></el-icon>
+      <span>移动到</span>
+    </div>
+    <div class="menu-item danger" @click="handleAction('delete')">
+      <el-icon><Delete /></el-icon>
+      <span>删除</span>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted, onUnmounted } from 'vue';
+
+const props = defineProps({
+  visible: Boolean,
+  x: Number,
+  y: Number,
+  activeFile: Object
+});
+
+const emit = defineEmits(['action', 'update:visible']);
+
+const handleAction = (action) => {
+  emit('action', { action, file: props.activeFile });
+  closeMenu();
+};
+
+const closeMenu = () => {
+  emit('update:visible', false);
+};
+
+const handleGlobalClick = () => {
+  if (props.visible) {
+    closeMenu();
+  }
+};
+
+onMounted(() => {
+  document.addEventListener('click', handleGlobalClick);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleGlobalClick);
+});
+</script>
+
+<style scoped>
+.context-menu {
+  position: fixed;
+  background-color: var(--ap-bg-card);
+  border: 1px solid var(--ap-border-color);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(61, 50, 38, 0.1);
+  padding: 6px;
+  z-index: 9999;
+  min-width: 140px;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--ap-text-main);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.menu-item:hover {
+  background-color: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+.menu-item.danger {
+  color: var(--el-color-danger);
+}
+.menu-item.danger:hover {
+  background-color: #fef0f0;
+  color: var(--el-color-danger);
+}
+</style>
+```
+
+#### 5. `src/components/file/FilePreviewDialog.vue`
+支持图片、视频、文本及多媒体在线预览，可联动后台 AI/OCR 处理完毕的数据。
+
+```vue
+<template>
+  <el-dialog
+    v-model="visible"
+    :title="file?.fileName"
+    width="75%"
+    top="5vh"
+    destroy-on-close
+  >
+    <div class="preview-body" v-loading="loading">
+      <!-- 1. 图片预览 -->
+      <div v-if="file?.fileType === 'IMAGE'" class="preview-center">
+        <el-image
+          :src="mediaUrl"
+          fit="contain"
+          class="preview-img"
+          :preview-src-list="[mediaUrl]"
+        />
+      </div>
+
+      <!-- 2. 视频预览 -->
+      <div v-else-if="file?.fileType === 'VIDEO'" class="preview-center">
+        <video :src="mediaUrl" controls autoplay class="preview-video"></video>
+      </div>
+
+      <!-- 3. 普通文本或文档等直接详情展示 -->
+      <div v-else class="preview-doc">
+        <div class="doc-icon-section">
+          <el-icon size="80" color="#8B7E6E"><Document /></el-icon>
+          <h3>该文件格式暂不支持在线深度阅读</h3>
+          <p>{{ file?.fileName }} ({{ formatBytes(file?.fileSize) }})</p>
+          <el-button type="primary" @click="triggerDownload">下载到本地查看</el-button>
+        </div>
+      </div>
+
+      <!-- AI 与 OCR 文字挖掘信息栏 (底部手风琴式滑出) -->
+      <div v-if="ocrText" class="ocr-section">
+        <div class="ocr-header">
+          <el-icon color="#C4946B"><Cpu /></el-icon>
+          <span>云端 AI 自动识别出的文字（已自动编入全局搜索引擎）</span>
+        </div>
+        <div class="ocr-content">{{ ocrText }}</div>
+      </div>
+    </div>
+  </el-dialog>
+</template>
+
+<script setup>
+import { ref } from 'vue';
+import { getFileDetails, downloadFile } from '../../api/file';
+import { formatBytes } from '../../utils/format';
+
+const visible = ref(false);
+const loading = ref(false);
+const file = ref(null);
+const mediaUrl = ref('');
+const ocrText = ref('');
+
+const open = async (targetFile) => {
+  file.value = targetFile;
+  visible.value = true;
+  loading.value = true;
+  ocrText.value = '';
+  mediaUrl.value = '';
+
+  try {
+    // 1. 获取最新详情与 OCR
+    const detailRes = await getFileDetails(targetFile.id);
+    const detail = detailRes.data;
+    if (detail.processStatus >= 2 && detail.md5) {
+      // 模拟或者从详情接口提取文字内容
+      ocrText.value = detail.originText || '该文件已智能扫描完成，可直接全局搜文字。';
+    }
+
+    // 2. 获取预签名下载临时链接用于多媒体播放
+    if (detail.fileType === 'IMAGE' || detail.fileType === 'VIDEO') {
+      const linkRes = await downloadFile(targetFile.id);
+      mediaUrl.value = linkRes.data.downloadUrl;
+    }
+  } catch (error) {
+    console.error('加载预览数据失败', error);
+  } finally {
+    loading.value = false;
+  }
+};
+
+const triggerDownload = async () => {
+  try {
+    const res = await downloadFile(file.value.id);
+    window.open(res.data.downloadUrl);
+  } catch (err) {
+    console.error(err);
+  }
+};
+
+defineExpose({ open });
+</script>
+
+<style scoped>
+.preview-body {
+  min-height: 350px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.preview-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: #1e1e1e;
+  border-radius: 12px;
+  overflow: hidden;
+  padding: 12px;
+  max-height: 60vh;
+}
+.preview-img {
+  max-width: 100%;
+  max-height: 55vh;
+}
+.preview-video {
+  width: 100%;
+  max-height: 55vh;
+  outline: none;
+}
+.preview-doc {
+  display: flex;
+  justify-content: center;
+  padding: 40px 0;
+}
+.doc-icon-section {
+  text-align: center;
+}
+.doc-icon-section h3 {
+  margin: 16px 0 8px 0;
+  color: var(--ap-text-main);
+}
+.doc-icon-section p {
+  color: var(--ap-text-sub);
+  margin-bottom: 24px;
+}
+.ocr-section {
+  background-color: var(--ap-bg-sidebar);
+  border-radius: 10px;
+  padding: 12px 16px;
+  border-left: 4px solid var(--el-color-primary);
+}
+.ocr-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.ocr-content {
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--ap-text-main);
+  max-height: 120px;
+  overflow-y: auto;
+}
+</style>
+```
+
+---
+
+### 第七部分：主页与核心文件视图渲染 (Views & Grid/List)
+
+#### 1. `src/components/file/FileToolbar.vue`
+工具栏，支持批量操作、视图切换及路径上传。
+
+```vue
+<template>
+  <div class="toolbar">
+    <div class="left">
+      <el-button type="primary" :icon="Plus" @click="$emit('upload')">
+        上传文件
+      </el-button>
+      <el-button :icon="FolderAdd" @click="$emit('create-folder')">
+        新建文件夹
+      </el-button>
+      <el-button
+        v-if="selectedCount > 0"
+        type="danger"
+        plain
+        :icon="Delete"
+        @click="$emit('batch-delete')"
+      >
+        批量移入垃圾站 ({{ selectedCount }})
+      </el-button>
+    </div>
+    <div class="right">
+      <el-button-group>
+        <el-button
+          :type="fileStore.viewMode === 'grid' ? 'primary' : 'default'"
+          :icon="Grid"
+          @click="setViewMode('grid')"
+        />
+        <el-button
+          :type="fileStore.viewMode === 'list' ? 'primary' : 'default'"
+          :icon="Menu"
+          @click="setViewMode('list')"
+        />
+      </el-button-group>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { Plus, FolderAdd, Delete, Grid, Menu } from '@element-plus/icons-vue';
+import { useFileStore } from '../../stores/file';
+
+defineProps({
+  selectedCount: { type: Number, default: 0 }
+});
+const emit = defineEmits(['upload', 'create-folder', 'batch-delete']);
+
+const fileStore = useFileStore();
+
+const setViewMode = (mode) => {
+  if (fileStore.viewMode !== mode) {
+    fileStore.toggleViewMode();
+  }
+};
+</script>
+
+<style scoped>
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--ap-bg-card);
+  padding: 12px 16px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  box-shadow: 0 4px 12px rgba(61, 50, 38, 0.02);
+}
+.left {
+  display: flex;
+  gap: 12px;
+}
+</style>
+```
+
+#### 2. `src/components/file/FileCard.vue`
+网格视图下的极具氛围感的文件/文件夹渲染卡片。
+
+```vue
+<template>
+  <div
+    class="file-card"
+    :class="{ selected: isSelected }"
+    @contextmenu.prevent="$emit('contextmenu', $event)"
+    @click="$emit('toggle-select')"
+    @dblclick="$emit('open')"
+  >
+    <div class="select-checkbox">
+      <el-checkbox :model-value="isSelected" @change="$emit('toggle-select')" />
+    </div>
+
+    <div class="preview-area">
+      <FileIcon
+        :is-folder="file.isFolder === 1"
+        :file-type="file.fileType"
+        :thumb-url="file.thumbnailUrl"
+        :size="64"
+      />
+    </div>
+
+    <div class="info-area">
+      <div class="title-row">
+        <span class="file-name" :title="file.fileName">{{ file.fileName }}</span>
+      </div>
+      <div class="meta-row">
+        <ProcessBadge v-if="file.isFolder !== 1" :status="file.processStatus" />
+        <span class="size-label" v-if="file.isFolder !== 1">{{ formatBytes(file.fileSize) }}</span>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import FileIcon from '../common/FileIcon.vue';
+import ProcessBadge from '../common/ProcessBadge.vue';
+import { formatBytes } from '../../utils/format';
+
+defineProps({
+  file: { type: Object, required: true },
+  isSelected: { type: Boolean, default: false }
+});
+defineEmits(['contextmenu', 'toggle-select', 'open']);
+</script>
+
+<style scoped>
+.file-card {
+  background-color: var(--ap-bg-card);
+  border: 1px solid var(--ap-border-color);
+  border-radius: 16px;
+  padding: 12px;
+  position: relative;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.file-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(61, 50, 38, 0.06);
+  border-color: var(--el-color-primary-light-5);
+}
+.file-card.selected {
+  border-color: var(--el-color-primary);
+  background-color: var(--el-color-primary-light-9);
+}
+.select-checkbox {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.file-card:hover .select-checkbox,
+.file-card.selected .select-checkbox {
+  opacity: 1;
+}
+.preview-area {
+  height: 90px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.info-area {
+  width: 100%;
+  text-align: center;
+}
+.title-row {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ap-text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 8px;
+}
+.meta-row {
+  margin-top: 4px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ap-text-sub);
+}
+</style>
+```
+
+#### 3. `src/components/file/FileGridView.vue`
+```vue
+<template>
+  <div class="grid-container">
+    <FileCard
+      v-for="file in files"
+      :key="file.id"
+      :file="file"
+      :is-selected="selectedIds.includes(file.id)"
+      @contextmenu="$emit('item-contextmenu', $event, file)"
+      @toggle-select="$emit('item-toggle-select', file)"
+      @open="$emit('item-open', file)"
+    />
+  </div>
+</template>
+
+<script setup>
+import FileCard from './FileCard.vue';
+
+defineProps({
+  files: { type: Array, required: true },
+  selectedIds: { type: Array, default: () => [] }
+});
+defineEmits(['item-contextmenu', 'item-toggle-select', 'item-open']);
+</script>
+
+<style scoped>
+.grid-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 16px;
+}
+</style>
+```
+
+#### 4. `src/components/file/FileListView.vue`
+列表视图渲染结构。
+
+```vue
+<template>
+  <div class="list-container">
+    <el-table
+      :data="files"
+      style="width: 100%"
+      @row-contextmenu="handleRowContextMenu"
+      @selection-change="handleSelectionChange"
+    >
+      <el-table-column type="selection" width="55" />
+      <el-table-column label="名称">
+        <template #default="scope">
+          <div class="name-cell" @dblclick="$emit('item-open', scope.row)">
+            <FileIcon
+              :is-folder="scope.row.isFolder === 1"
+              :file-type="scope.row.fileType"
+              :thumb-url="scope.row.thumbnailUrl"
+              :size="32"
+            />
+            <span class="file-name" :title="scope.row.fileName">{{ scope.row.fileName }}</span>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="大小" width="120">
+        <template #default="scope">
+          {{ scope.row.isFolder === 1 ? '-' : formatBytes(scope.row.fileSize) }}
+        </template>
+      </el-table-column>
+      <el-table-column label="处理状态" width="120">
+        <template #default="scope">
+          <ProcessBadge v-if="scope.row.isFolder !== 1" :status="scope.row.processStatus" />
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="创建时间" width="180">
+        <template #default="scope">
+          {{ formatDate(scope.row.createTime) }}
+        </template>
+      </el-table-column>
+    </el-table>
+  </div>
+</template>
+
+<script setup>
+import FileIcon from '../common/FileIcon.vue';
+import ProcessBadge from '../common/ProcessBadge.vue';
+import { formatBytes, formatDate } from '../../utils/format';
+
+defineProps({
+  files: { type: Array, required: true }
+});
+const emit = defineEmits(['item-contextmenu', 'selection-change', 'item-open']);
+
+const handleRowContextMenu = (row, column, event) => {
+  event.preventDefault();
+  emit('item-contextmenu', event, row);
+};
+
+const handleSelectionChange = (selection) => {
+  emit('selection-change', selection);
+};
+</script>
+
+<style scoped>
+.list-container {
+  background-color: var(--ap-bg-card);
+  border-radius: 16px;
+  border: 1px solid var(--ap-border-color);
+  padding: 8px;
+}
+.name-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+.file-name {
+  font-weight: 500;
+  color: var(--ap-text-main);
+}
+</style>
+```
+
+#### 5. `src/views/FileBrowser.vue`
+主页。串联目录拉取、秒传直传、右键菜单响应、预览。
+
+```vue
+<template>
+  <div class="file-browser">
+    <FileToolbar
+      :selected-count="selectedFiles.length"
+      @upload="triggerUpload"
+      @create-folder="triggerCreateFolder"
+      @batch-delete="triggerBatchDelete"
+    />
+
+    <el-skeleton :rows="6" animated :loading="loading">
+      <template #default>
+        <template v-if="files.length > 0">
+          <FileGridView
+            v-if="fileStore.viewMode === 'grid'"
+            :files="files"
+            :selected-ids="selectedFiles.map(f => f.id)"
+            @item-contextmenu="openContextMenu"
+            @item-toggle-select="toggleItemSelection"
+            @item-open="handleItemOpen"
+          />
+          <FileListView
+            v-else
+            :files="files"
+            @selection-change="handleListSelection"
+            @item-contextmenu="openContextMenu"
+            @item-open="handleItemOpen"
+          />
+        </template>
+        <EmptyState v-else>
+          <template #action>
+            <el-button type="primary" :icon="Plus" @click="triggerUpload">上传文件</el-button>
+          </template>
+        </EmptyState>
+      </template>
+    </el-skeleton>
+
+    <!-- 极速右键功能浮动菜单 -->
+    <FileContextMenu
+      v-model:visible="contextMenuVisible"
+      :x="contextMenuX"
+      :y="contextMenuY"
+      :active-file="rightClickedFile"
+      @action="handleMenuAction"
+    />
+
+    <!-- 统一业务对话框 -->
+    <FileUploadDialog ref="uploadDialogRef" @uploaded="loadData" />
+    <FolderCreateDialog ref="folderDialogRef" @created="loadData" />
+    <FilePreviewDialog ref="previewDialogRef" />
+
+    <!-- 极速共享链接展示弹窗 -->
+    <el-dialog v-model="shareVisible" title="共享创建成功 🍂" width="450px">
+      <div class="share-box">
+        <p>全家成员及访客均可通过此链接极速直取：</p>
+        <el-input :model-value="shareLink" readonly class="share-input">
+          <template #append>
+            <el-button @click="copyShareLink">复制</el-button>
+          </template>
+        </el-input>
+        <p class="expire-tip">有效截止日期：{{ formatDate(shareExpireTime) }}</p>
+      </div>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, watch } from 'vue';
+import { Plus } from '@element-plus/icons-vue';
+import { useFileStore } from '../stores/file';
+import { getFileList, deleteFile, batchDeleteFiles, downloadFile } from '../api/file';
+import { addFavorite } from '../api/favorite';
+import { createShareLink } from '../api/share';
+import { formatDate } from '../utils/format';
+import { ElMessage, ElMessageBox } from 'element-plus';
+
+import FileToolbar from '../components/file/FileToolbar.vue';
+import FileGridView from '../components/file/FileGridView.vue';
+import FileListView from '../components/file/FileListView.vue';
+import EmptyState from '../components/common/EmptyState.vue';
+import FileContextMenu from '../components/file/FileContextMenu.vue';
+import FileUploadDialog from '../components/file/FileUploadDialog.vue';
+import FolderCreateDialog from '../components/file/FolderCreateDialog.vue';
+import FilePreviewDialog from '../components/file/FilePreviewDialog.vue';
+
+const fileStore = useFileStore();
+
+const loading = ref(false);
+const files = ref([]);
+const selectedFiles = ref([]);
+
+// 右键菜单状态
+const contextMenuVisible = ref(false);
+const contextMenuX = ref(0);
+const contextMenuY = ref(0);
+const rightClickedFile = ref(null);
+
+// 对话框引用
+const uploadDialogRef = ref(null);
+const folderDialogRef = ref(null);
+const previewDialogRef = ref(null);
+
+// 共享
+const shareVisible = ref(false);
+const shareLink = ref('');
+const shareExpireTime = ref('');
+
+const loadData = async () => {
+  loading.value = true;
+  selectedFiles.value = [];
+  try {
+    const res = await getFileList(fileStore.currentFolderId);
+    files.value = res.data;
+  } catch (error) {
+    console.error(error);
+  } finally {
+    loading.value = false;
+  }
+};
+
+watch(() => fileStore.currentFolderId, loadData, { immediate: true });
+
+// 上传与建文件夹
+const triggerUpload = () => uploadDialogRef.value?.open();
+const triggerCreateFolder = () => folderDialogRef.value?.open();
+
+// 批量删除
+const triggerBatchDelete = () => {
+  if (selectedFiles.value.length === 0) return;
+  ElMessageBox.confirm(
+    `确定要把这 ${selectedFiles.value.length} 个文件移入垃圾站吗？`,
+    '移入垃圾站',
+    { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+  ).then(async () => {
+    try {
+      const ids = selectedFiles.value.map(f => f.id);
+      await batchDeleteFiles(ids);
+      ElMessage.success('已全部安全移入垃圾站');
+      loadData();
+    } catch (e) {
+      console.error(e);
+    }
+  });
+};
+
+// 各种交互映射
+const toggleItemSelection = (file) => {
+  const index = selectedFiles.value.findIndex(f => f.id === file.id);
+  if (index > -1) {
+    selectedFiles.value.splice(index, 1);
+  } else {
+    selectedFiles.value.push(file);
+  }
+};
+
+const handleListSelection = (selection) => {
+  selectedFiles.value = selection;
+};
+
+const handleItemOpen = (file) => {
+  if (file.isFolder === 1) {
+    fileStore.setCurrentFolder(file.id);
+  } else {
+    previewDialogRef.value?.open(file);
+  }
+};
+
+// 右键
+const openContextMenu = (event, file) => {
+  rightClickedFile.value = file;
+  contextMenuX.value = event.clientX;
+  contextMenuY.value = event.clientY;
+  contextMenuVisible.value = true;
+};
+
+// 菜单选项路由动作
+const handleMenuAction = async ({ action, file }) => {
+  if (action === 'open') {
+    handleItemOpen(file);
+  } else if (action === 'download') {
+    try {
+      const res = await downloadFile(file.id);
+      window.open(res.data.downloadUrl);
+    } catch (err) {
+      console.error(err);
+    }
+  } else if (action === 'favorite') {
+    try {
+      await addFavorite(file.id);
+      ElMessage.success('已加入全家收藏');
+    } catch (err) {
+      console.error(err);
+    }
+  } else if (action === 'share') {
+    try {
+      const res = await createShareLink(file.id, 24);
+      shareLink.value = `${window.location.origin}/share/${res.data.shareCode}`;
+      shareExpireTime.value = res.data.expireTime;
+      shareVisible.value = true;
+    } catch (err) {
+      console.error(err);
+    }
+  } else if (action === 'delete') {
+    ElMessageBox.confirm(`确定要将“${file.fileName}”移至垃圾站吗？`, '警告', {
+      type: 'warning'
+    }).then(async () => {
+      await deleteFile(file.id);
+      ElMessage.success('已安全放入垃圾箱');
+      loadData();
+    });
+  } else if (action === 'rename') {
+    ElMessageBox.prompt('请输入新的名称', '重命名', {
+      inputValue: file.fileName,
+      confirmButtonText: '确定',
+      cancelButtonText: '取消'
+    }).then(async ({ value }) => {
+      if (value.trim()) {
+        const { renameFile } = await import('../api/file');
+        await renameFile(file.id, value.trim());
+        ElMessage.success('名称修改成功');
+        loadData();
+      }
+    });
+  } else if (action === 'move') {
+    ElMessage.info('本系统支持移动至目标目录，前端可在后续补充完整的目录树选择交互。');
+  }
+};
+
+const copyShareLink = () => {
+  navigator.clipboard.writeText(shareLink.value);
+  ElMessage.success('直链已极速复制到剪切板，去发给家人吧！');
+};
+</script>
+
+<style scoped>
+.share-box {
+  padding: 10px 0;
+}
+.share-input {
+  margin: 16px 0;
+}
+.expire-tip {
+  font-size: 12px;
+  color: var(--ap-text-sub);
+}
+</style>
+```
+
+---
+
+### 第八部分：业务视图分支 (Favorites, Search & Trash)
+
+#### 1. `src/views/Favorites.vue`
+家庭成员快速高频查看文件收藏。
+
+```vue
+<template>
+  <div class="favorites">
+    <div class="header">
+      <h2>🍂 全家收藏夹</h2>
+      <p>记录全家人高频互动的最温暖回忆</p>
+    </div>
+
+    <el-skeleton :rows="6" animated :loading="loading">
+      <template #default>
+        <div v-if="list.length > 0" class="fav-grid">
+          <div v-for="file in list" :key="file.id" class="fav-card">
+            <FileIcon
+              :is-folder="file.isFolder === 1"
+              :file-type="file.fileType"
+              :size="48"
+            />
+            <div class="fav-info">
+              <span class="name" @click="handleOpen(file)">{{ file.fileName }}</span>
+              <span class="path">原路径: {{ file.filePath }}</span>
+            </div>
+            <el-button
+              type="danger"
+              circle
+              plain
+              :icon="StarFilled"
+              @click="triggerUnfavorite(file.id)"
+            />
+          </div>
+        </div>
+        <EmptyState v-else title="收藏夹空荡荡" description="在文件浏览中右键，即可把全家最爱的照片和视频放进这里" />
+      </template>
+    </el-skeleton>
+
+    <FilePreviewDialog ref="previewDialogRef" />
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue';
+import { StarFilled } from '@element-plus/icons-vue';
+import { getFavoriteList, removeFavorite } from '../api/favorite';
+import FileIcon from '../components/common/FileIcon.vue';
+import EmptyState from '../components/common/EmptyState.vue';
+import FilePreviewDialog from '../components/file/FilePreviewDialog.vue';
+import { ElMessage } from 'element-plus';
+
+const loading = ref(false);
+const list = ref([]);
+const previewDialogRef = ref(null);
+
+const loadFavorites = async () => {
+  loading.value = true;
+  try {
+    const res = await getFavoriteList();
+    list.value = res.data;
+  } catch (err) {
+    console.error(err);
+  } finally {
+    loading.value = false;
+  }
+};
+
+const triggerUnfavorite = async (fileId) => {
+  try {
+    await removeFavorite(fileId);
+    ElMessage.success('已取消收藏');
+    loadFavorites();
+  } catch (err) {
+    console.error(err);
+  }
+};
+
+const handleOpen = (file) => {
+  if (file.isFolder !== 1) {
+    previewDialogRef.value?.open(file);
+  }
+};
+
+onMounted(loadFavorites);
+</script>
+
+<style scoped>
+.header {
+  margin-bottom: 24px;
+}
+.header h2 {
+  margin: 0;
+  color: var(--ap-text-main);
+}
+.header p {
+  color: var(--ap-text-sub);
+  margin: 6px 0 0 0;
+  font-size: 14px;
+}
+.fav-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.fav-card {
+  background-color: var(--ap-bg-card);
+  border: 1px solid var(--ap-border-color);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: all 0.2s ease;
+}
+.fav-card:hover {
+  box-shadow: 0 4px 12px rgba(61, 50, 38, 0.04);
+}
+.fav-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fav-info .name {
+  font-weight: 600;
+  color: var(--ap-text-main);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fav-info .name:hover {
+  color: var(--el-color-primary);
+}
+.fav-info .path {
+  font-size: 12px;
+  color: var(--ap-text-sub);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>
+```
+
+#### 2. `src/views/Trash.vue`
+提供文件的软恢复和物理删除功能。
+
+```vue
+<template>
+  <div class="trash-view">
+    <div class="header">
+      <h2>🗑️ 垃圾站</h2>
+      <p>文件可在删除之日起 60 天内被重新寻回</p>
+    </div>
+
+    <el-skeleton :rows="6" animated :loading="loading">
+      <template #default>
+        <el-table v-if="trashList.length > 0" :data="trashList" style="width: 100%">
+          <el-table-column label="原名称">
+            <template #default="scope">
+              <span class="file-name">{{ scope.row.fileName }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="大小" width="120">
+            <template #default="scope">
+              {{ scope.row.isFolder === 1 ? '-' : formatBytes(scope.row.fileSize) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="删除时间" width="180">
+            <template #default="scope">
+              {{ formatDate(scope.row.deleteTime) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="极速控制" width="180" align="right">
+            <template #default="scope">
+              <el-button type="success" size="small" plain @click="handleRestore(scope.row)">恢复</el-button>
+              <el-button type="danger" size="small" plain @click="handlePermanentlyDelete(scope.row)">彻底清除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <EmptyState v-else title="垃圾箱十分干净" description="干干净净，没有需要恢复的数据" />
+      </template>
+    </el-skeleton>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue';
+import { getTrashList, restoreFile, permanentlyDeleteFile } from '../api/file';
+import { formatBytes, formatDate } from '../utils/format';
+import EmptyState from '../components/common/EmptyState.vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
+
+const loading = ref(false);
+const trashList = ref([]);
+
+const fetchTrash = async () => {
+  loading.value = true;
+  try {
+    const res = await getTrashList();
+    trashList.value = res.data;
+  } catch (err) {
+    console.error(err);
+  } finally {
+    loading.value = false;
+  }
+};
+
+const handleRestore = async (file) => {
+  try {
+    await restoreFile(file.id);
+    ElMessage.success('文件成功送回原处');
+    fetchTrash();
+  } catch (err) {
+    console.error(err);
+  }
+};
+
+const handlePermanentlyDelete = (file) => {
+  ElMessageBox.confirm(
+    `“${file.fileName}”一旦被物理洗消，将彻底从 MinIO 和磁盘抹除。确定继续吗？`,
+    '不可逆操作',
+    { confirmButtonText: '极其确定', cancelButtonText: '取消', type: 'error' }
+  ).then(async () => {
+    try {
+      await permanentlyDeleteFile(file.id);
+      ElMessage.success('已物理清除');
+      fetchTrash();
+    } catch (err) {
+      console.error(err);
+    }
+  });
+};
+
+onMounted(fetchTrash);
+</script>
+
+<style scoped>
+.header {
+  margin-bottom: 24px;
+}
+.header h2 {
+  margin: 0;
+  color: var(--ap-text-main);
+}
+.header p {
+  color: var(--ap-text-sub);
+  margin: 6px 0 0 0;
+  font-size: 14px;
+}
+.file-name {
+  font-weight: 500;
+  color: var(--ap-text-main);
+}
+</style>
+```
+
+#### 3. `src/components/search/SearchBar.vue`
+全局顶部快速搜索，高亮命中字段。
+
+```vue
+<template>
+  <div class="search-bar">
+    <el-input
+      v-model="keyword"
+      placeholder="搜索全家共享（含扫描出的图片/视频文字）"
+      :prefix-icon="Search"
+      clearable
+      @keyup.enter="triggerSearch"
+    />
+  </div>
+</template>
+
+<script setup>
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { Search } from '@element-plus/icons-vue';
+
+const router = useRouter();
+const keyword = ref('');
+
+const triggerSearch = () => {
+  if (!keyword.value.trim()) return;
+  router.push({
+    path: '/search',
+    query: { q: keyword.value.trim() }
+  });
+};
+</script>
+
+<style scoped>
+.search-bar {
+  width: 320px;
+}
+</style>
+```
+
+#### 4. `src/views/Search.vue`
+通过 ES 全文检索与高亮渲染提取信息。
+
+```vue
+<template>
+  <div class="search-page">
+    <div class="header">
+      <h2>🔍 全文智能搜索</h2>
+      <p>为您找到包含关键词 "<strong>{{ keyword }}</strong>" 的家庭文件结果 (共 {{ total }} 项)</p>
+    </div>
+
+    <el-skeleton :rows="6" animated :loading="loading">
+      <template #default>
+        <div v-if="results.length > 0" class="result-list">
+          <div v-for="item in results" :key="item.fileId" class="result-item">
+            <div class="item-main">
+              <div class="title-section">
+                <!-- 针对命中高亮名称展示 -->
+                <span
+                  class="name-highlight"
+                  v-html="item.fileNameHighlight || item.fileName"
+                  @click="openDetails(item.fileId)"
+                ></span>
+                <span class="path">{{ item.filePath }}</span>
+              </div>
+              <div class="text-snippets" v-if="item.contentSnippets && item.contentSnippets.length > 0">
+                <div
+                  v-for="(snippet, index) in item.contentSnippets"
+                  :key="index"
+                  class="snippet"
+                  v-html="snippet"
+                ></div>
+              </div>
+            </div>
+            <div class="item-meta">
+              <span>{{ formatBytes(item.fileSize) }}</span>
+              <span>上传者: {{ item.uploaderName || '匿名' }}</span>
+            </div>
+          </div>
+        </div>
+        <EmptyState v-else title="未找到相关温存" description="换个词搜搜看，可能文字没有提取成功" />
+      </template>
+    </el-skeleton>
+
+    <FilePreviewDialog ref="previewDialogRef" />
+  </div>
+</template>
+
+<script setup>
+import { ref, watch, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
+import { searchFiles } from '../api/search';
+import { getFileDetails } from '../api/file';
+import { formatBytes } from '../utils/format';
+import EmptyState from '../components/common/EmptyState.vue';
+import FilePreviewDialog from '../components/file/FilePreviewDialog.vue';
+
+const route = useRoute();
+const loading = ref(false);
+const results = ref([]);
+const total = ref(0);
+const keyword = ref('');
+const previewDialogRef = ref(null);
+
+const executeSearch = async () => {
+  const q = route.query.q;
+  if (!q) return;
+  keyword.value = q;
+  loading.value = true;
+  try {
+    const res = await searchFiles({ keyword: q });
+    results.value = res.data.list;
+    total.value = res.data.totalCount;
+  } catch (err) {
+    console.error(err);
+  } finally {
+    loading.value = false;
+  }
+};
+
+watch(() => route.query.q, executeSearch);
+onMounted(executeSearch);
+
+const openDetails = async (fileId) => {
+  try {
+    const res = await getFileDetails(fileId);
+    previewDialogRef.value?.open(res.data);
+  } catch (err) {
+    console.error(err);
+  }
+};
+</script>
+
+<style scoped>
+.header {
+  margin-bottom: 24px;
+}
+.header h2 {
+  margin: 0;
+}
+.header p {
+  color: var(--ap-text-sub);
+  font-size: 14px;
+  margin-top: 6px;
+}
+.result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.result-item {
+  background-color: var(--ap-bg-card);
+  border: 1px solid var(--ap-border-color);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.title-section {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.name-highlight {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-color-primary-dark-2);
+  cursor: pointer;
+}
+:deep(mark) {
+  background-color: #ffeb3b;
+  color: #333;
+  padding: 0 2px;
+  border-radius: 4px;
+}
+.path {
+  font-size: 12px;
+  color: var(--ap-text-sub);
+}
+.text-snippets {
+  background-color: var(--ap-bg-page);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.snippet {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ap-text-main);
+}
+.item-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--ap-text-sub);
+}
+</style>
+```
+
+---
+
+### 第九部分：独立业务视图 (Auth Channels & Share Views)
+
+#### 1. `src/views/Login.vue`
+登录通道，支持验证码和密码登录双轨并行。
+
+```vue
+<template>
+  <div class="login-wrapper">
+    <div class="login-card">
+      <div class="brand">
+        <span class="brand-emoji">🍁</span>
+        <h2>AllahPan</h2>
+        <p>温馨舒适的家庭私有共享云盘</p>
+      </div>
+
+      <el-tabs v-model="activeTab" class="login-tabs">
+        <!-- 验证码登录通道 -->
+        <el-tab-pane label="手机验证码登录" name="code">
+          <el-form :model="codeForm" :rules="codeRules" ref="codeFormRef">
+            <el-form-item prop="phone">
+              <el-input v-model="codeForm.phone" placeholder="请输入绑定的手机号" :prefix-icon="User" />
+            </el-form-item>
+            <el-form-item prop="code" class="code-item">
+              <el-input v-model="codeForm.code" placeholder="6 位短信验证码" :prefix-icon="Key" class="code-input" />
+              <el-button :disabled="countdown > 0" class="code-btn" @click="triggerSendCode">
+                {{ countdown > 0 ? `${countdown}s 后重新获取` : '获取验证码' }}
+              </el-button>
+            </el-form-item>
+            <el-button type="primary" class="submit-btn" :loading="loading" @click="handleCodeLogin">
+              登录 / 极速登记
+            </el-button>
+          </el-form>
+        </el-tab-pane>
+
+        <!-- 密码密码登录通道 -->
+        <el-tab-pane label="密码登录" name="password">
+          <el-form :model="pwdForm" :rules="pwdRules" ref="pwdFormRef">
+            <el-form-item prop="phone">
+              <el-input v-model="pwdForm.phone" placeholder="绑定的手机号" :prefix-icon="User" />
+            </el-form-item>
+            <el-form-item prop="password">
+              <el-input v-model="pwdForm.password" type="password" show-password placeholder="请输入安全访问密码" :prefix-icon="Lock" />
+            </el-form-item>
+            <el-button type="primary" class="submit-btn" :loading="loading" @click="handlePasswordLogin">
+              验证密码并登录
+            </el-button>
+          </el-form>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive } from 'vue';
+import { useRouter } from 'vue-router';
+import { useUserStore } from '../stores/user';
+import { sendCode, loginByCode, loginByPassword } from '../api/auth';
+import { User, Key, Lock } from '@element-plus/icons-vue';
+import { ElMessage } from 'element-plus';
+
+const router = useRouter();
+const userStore = useUserStore();
+
+const activeTab = ref('code');
+const loading = ref(false);
+const countdown = ref(0);
+
+const codeFormRef = ref(null);
+const codeForm = reactive({ phone: '', code: '' });
+const codeRules = {
+  phone: [{ required: true, message: '请填写手机号', trigger: 'blur' }],
+  code: [{ required: true, message: '请填写验证码', trigger: 'blur' }]
+};
+
+const pwdFormRef = ref(null);
+const pwdForm = reactive({ phone: '', password: '' });
+const pwdRules = {
+  phone: [{ required: true, message: '请填写手机号', trigger: 'blur' }],
+  password: [{ required: true, message: '密码不能为空', trigger: 'blur' }]
+};
+
+const triggerSendCode = async () => {
+  if (!codeForm.phone) {
+    ElMessage.warning('请填写手机号再获取验证码');
+    return;
+  }
+  try {
+    await sendCode(codeForm.phone);
+    ElMessage.success('验证码已飞往控制台与手机！有效期 5 分钟');
+    countdown.value = 30;
+    const timer = setInterval(() => {
+      countdown.value--;
+      if (countdown.value <= 0) clearInterval(timer);
+    }, 1000);
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+const handleCodeLogin = () => {
+  codeFormRef.value?.validate(async (valid) => {
+    if (!valid) return;
+    loading.value = true;
+    try {
+      const res = await loginByCode(codeForm.phone, codeForm.code);
+      userStore.saveLoginState(res.data);
+      ElMessage.success('家庭云盘登录成功！');
+      if (res.data.firstLogin) {
+        router.push('/set-password');
+      } else {
+        router.push('/');
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      loading.value = false;
+    }
+  });
+};
+
+const handlePasswordLogin = () => {
+  pwdFormRef.value?.validate(async (valid) => {
+    if (!valid) return;
+    loading.value = true;
+    try {
+      const res = await loginByPassword(pwdForm.phone, pwdForm.password);
+      userStore.saveLoginState(res.data);
+      ElMessage.success('密码验证通过，登录成功');
+      router.push('/');
+    } catch (e) {
+      console.error(e);
+    } finally {
+      loading.value = false;
+    }
+  });
+};
+</script>
+
+<style scoped>
+.login-wrapper {
+  background-color: var(--ap-bg-page);
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.login-card {
+  background-color: var(--ap-bg-card);
+  border: 1px solid var(--ap-border-color);
+  border-radius: 20px;
+  box-shadow: 0 12px 40px rgba(61, 50, 38, 0.05);
+  padding: 40px;
+  width: 360px;
+}
+.brand {
+  text-align: center;
+  margin-bottom: 24px;
+}
+.brand-emoji {
+  font-size: 32px;
+}
+.brand h2 {
+  margin: 10px 0 4px 0;
+  color: var(--ap-text-main);
+}
+.brand p {
+  font-size: 13px;
+  color: var(--ap-text-sub);
+  margin: 0;
+}
+.login-tabs :deep(.el-tabs__item) {
+  font-size: 14px;
+  color: var(--ap-text-sub);
+}
+.login-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+.code-item :deep(.el-form-item__content) {
+  display: flex;
+  gap: 10px;
+}
+.code-input {
+  flex: 1;
+}
+.submit-btn {
+  width: 100%;
+  margin-top: 12px;
+}
+</style>
+```
+
+#### 2. `src/views/SetPassword.vue`
+针对首次短信进入系统的家庭成员，强控制链去设置专属独立访问密码。
+
+```vue
+<template>
+  <div class="set-pwd-wrapper">
+    <div class="pwd-card">
+      <h2>🍂 建立独立密码通道</h2>
+      <p>为了保障文件隐私和后续安全，请首先设置家庭云盘专属访问密码。</p>
+
+      <el-form :model="form" :rules="rules" ref="formRef" class="form-container">
+        <el-form-item prop="password">
+          <el-input
+            v-model="form.password"
+            type="password"
+            show-password
+            placeholder="建立高强度安全密码"
+            :prefix-icon="Lock"
+          />
+        </el-form-item>
+        <el-form-item prop="confirm">
+          <el-input
+            v-model="form.confirm"
+            type="password"
+            show-password
+            placeholder="确认您的密码"
+            :prefix-icon="Lock"
+          />
+        </el-form-item>
+        <el-button type="primary" class="confirm-btn" :loading="submitting" @click="handleSetPassword">
+          创建并登录系统
+        </el-button>
+      </el-form>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive } from 'vue';
+import { useRouter } from 'vue-router';
+import { setPassword } from '../api/user';
+import { useUserStore } from '../stores/user';
+import { Lock } from '@element-plus/icons-vue';
+import { ElMessage } from 'element-plus';
+
+const router = useRouter();
+const userStore = useUserStore();
+const formRef = ref(null);
+const submitting = ref(false);
+
+const form = reactive({ password: '', confirm: '' });
+
+const rules = {
+  password: [{ required: true, message: '请填写新密码', trigger: 'blur' }],
+  confirm: [
+    { required: true, message: '请再次输入密码以确保一致', trigger: 'blur' },
+    {
+      validator: (rule, value, callback) => {
+        if (value !== form.password) callback(new Error('两次填写的密码不吻合'));
+        else callback();
+      },
+      trigger: 'blur'
+    }
+  ]
+};
+
+const handleSetPassword = () => {
+  formRef.value?.validate(async (valid) => {
+    if (!valid) return;
+    submitting.value = true;
+    try {
+      const res = await setPassword(form.password);
+      // 后端返回包含 hasPassword=true 的新 Token，更新本地 state
+      userStore.updateTokenAfterSetPassword(res.data.token);
+      ElMessage.success('专属密码配置成功，祝玩得开心！');
+      router.push('/');
+    } catch (e) {
+      console.error(e);
+    } finally {
+      submitting.value = false;
+    }
+  });
+};
+</script>
+
+<style scoped>
+.set-pwd-wrapper {
+  background-color: var(--ap-bg-page);
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pwd-card {
+  background-color: var(--ap-bg-card);
+  border: 1px solid var(--ap-border-color);
+  border-radius: 20px;
+  padding: 40px;
+  width: 380px;
+  box-shadow: 0 12px 40px rgba(61, 50, 38, 0.05);
+}
+.pwd-card h2 {
+  margin: 0 0 10px 0;
+  color: var(--ap-text-main);
+  text-align: center;
+}
+.pwd-card p {
+  font-size: 13px;
+  color: var(--ap-text-sub);
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+.form-container {
+  display: flex;
+  flex-direction: column;
+}
+.confirm-btn {
+  width: 100%;
+  margin-top: 12px;
+}
+</style>
+```
+
+#### 3. `src/views/SharedView.vue`
+完全公开、免去 JWT 身份验证的极速下载和查看页，支持视频/图像直接读取展示。
+
+```vue
+<template>
+  <div class="share-landing">
+    <div class="card" v-loading="loading">
+      <div class="logo">🍂 AllahPan 共享</div>
+
+      <template v-if="expired">
+        <EmptyState title="链接失效或已过期" description="该共享通道可能超过有效期或原主已将它主动熔断删除" />
+      </template>
+
+      <template v-else-if="sharedItem">
+        <div class="share-info">
+          <div class="preview-block">
+            <FileIcon
+              :is-folder="false"
+              :file-type="sharedItem.fileType"
+              :thumb-url="sharedItem.downloadUrl"
+              :size="80"
+            />
+          </div>
+          <h3>{{ sharedItem.fileName }}</h3>
+          <p class="meta">
+            大小：{{ formatBytes(sharedItem.fileSize) }} |
+            发布时间：{{ formatDate(sharedItem.createTime) }}
+          </p>
+          <el-button type="primary" size="large" class="dl-btn" @click="handleDownload">
+            极速提取该文件
+          </el-button>
+        </div>
+      </template>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
+import { getSharedContent } from '../api/share';
+import { formatBytes, formatDate } from '../utils/format';
+import FileIcon from '../components/common/FileIcon.vue';
+import EmptyState from '../components/common/EmptyState.vue';
+
+const route = useRoute();
+const loading = ref(false);
+const expired = ref(false);
+const sharedItem = ref(null);
+
+const loadShare = async () => {
+  const code = route.params.code;
+  loading.value = true;
+  try {
+    const res = await getSharedContent(code);
+    sharedItem.value = res.data;
+  } catch (err) {
+    expired.value = true;
+    console.error(err);
+  } finally {
+    loading.value = false;
+  }
+};
+
+const handleDownload = () => {
+  if (sharedItem.value?.downloadUrl) {
+    window.open(sharedItem.value.downloadUrl);
+  }
+};
+
+onMounted(loadShare);
+</script>
+
+<style scoped>
+.share-landing {
+  background-color: var(--ap-bg-page);
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card {
+  background-color: var(--ap-bg-card);
+  border: 1px solid var(--ap-border-color);
+  border-radius: 20px;
+  box-shadow: 0 12px 32px rgba(61, 50, 38, 0.05);
+  padding: 40px;
+  width: 420px;
+  text-align: center;
+}
+.logo {
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--el-color-primary);
+  margin-bottom: 24px;
+}
+.share-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.preview-block {
+  margin-bottom: 16px;
+}
+.share-info h3 {
+  margin: 0 0 8px 0;
+  color: var(--ap-text-main);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meta {
+  font-size: 12px;
+  color: var(--ap-text-sub);
+  margin-bottom: 24px;
+}
+.dl-btn {
+  width: 100%;
+}
+</style>
+```
+
+---
+
+### 第十部分：总结与安装指南
+
+至此，您已拥有 **AllahPan（家庭共享云盘）** 极具视觉亲和度、逻辑健壮的 Vue 3 高级前端应用的所有关键架构及组件实现。
+
+#### 后续运行说明
+1. 前端使用 **Vite 8** 搭载 `sass-embedded` 进行快速热更新构建。
+2. 配置您的 `vite.config.js` 以便路由和代理完美指向后端 `:8088` 端口：
+   ```javascript
+   import { defineConfig } from 'vite';
+   import vue from '@vitejs/plugin-vue';
+
+   export default defineConfig({
+     plugins: [vue()],
+     server: {
+       port: 5173,
+       proxy: {
+         '/api': {
+           target: 'http://localhost:8088',
+           changeOrigin: true
+         }
+       }
+     }
+   });
+   ```
