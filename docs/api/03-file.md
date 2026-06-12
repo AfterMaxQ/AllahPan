@@ -15,11 +15,11 @@
 | `parentId` | `number` | 父目录 ID，0 = 根目录 |
 | `fileName` | `string` | 文件名 |
 | `filePath` | `string` | 虚拟路径，如 `/我的图片/screenshot.png` |
-| `storageKey` | `string` | 本地存储路径 key |
+| `storageKey` | `string` | MinIO 对象 key（allahpan-files bucket） |
 | `fileType` | `string` | `FOLDER` / `IMAGE` / `VIDEO` / `DOCUMENT` / `OTHER` |
 | `fileSize` | `number` | 文件大小（字节） |
 | `contentType` | `string` | MIME 类型 |
-| `thumbnailKey` | `string` | 缩略图本地路径 key（可空） |
+| `thumbnailKey` | `string` | 缩略图 MinIO 对象 key（allahpan-thumbnails bucket，可空） |
 | `isFolder` | `number` | 0=文件, 1=文件夹 |
 | `processStatus` | `number` | 0=待处理, 1=缩略图完成, 2=文字提取完成, 3=全部完成, -1=失败 |
 | `md5` | `string` | MD5 哈希（秒传用） |
@@ -35,7 +35,7 @@
 POST /api/file/upload
 ```
 
-Multipart 表单上传，服务端直接接收文件并写入本地磁盘。含 MD5 秒传检测。
+Multipart 表单上传，服务端通过 `DigestInputStream` 边上传边计算 MD5，写入 MinIO `allahpan-files` bucket。含 MD5 秒传检测。
 
 ### 请求
 
@@ -99,7 +99,7 @@ curl -X POST http://localhost:8088/api/file/upload \
 
 - `fileType` 根据 `contentType` 自动判定（IMAGE/VIDEO/DOCUMENT/OTHER）
 - `filePath` 从父目录链拼接（如 `/我的图片/photo.png`）
-- 文件写入本地磁盘后触发 RabbitMQ 流水线，串行三个阶段：
+- 文件上传到 MinIO 后触发 RabbitMQ 流水线，串行三个阶段：
 
 | 阶段 | processStatus | 组件 | 说明 |
 |------|:---:|---|---|
@@ -113,7 +113,7 @@ curl -X POST http://localhost:8088/api/file/upload \
 
 ---
 
-## 3. 创建文件夹
+## 2. 创建文件夹
 
 ```
 POST /api/file/create-folder
@@ -160,7 +160,7 @@ curl -X POST http://localhost:8088/api/file/create-folder \
 
 ---
 
-## 4. 文件列表
+## 3. 文件列表
 
 ```
 GET /api/file/list
@@ -226,7 +226,7 @@ curl "http://localhost:8088/api/file/list?parentId=44" \
 
 ---
 
-## 5. 目录树（面包屑导航）
+## 4. 目录树（面包屑导航）
 
 ```
 GET /api/file/tree/{folderId}
@@ -266,7 +266,7 @@ curl http://localhost:8088/api/file/tree/43 \
 
 ---
 
-## 6. 文件详情
+## 5. 文件详情
 
 ```
 GET /api/file/{fileId}
@@ -305,7 +305,7 @@ curl http://localhost:8088/api/file/43 \
 
 ---
 
-## 7. 删除文件（移入垃圾站）
+## 6. 删除文件（移入垃圾站）
 
 ```
 DELETE /api/file/{fileId}
@@ -337,7 +337,7 @@ curl -X DELETE http://localhost:8088/api/file/43 \
 
 ---
 
-## 8. 垃圾站列表
+## 7. 垃圾站列表
 
 ```
 GET /api/file/trash
@@ -382,7 +382,7 @@ curl "http://localhost:8088/api/file/trash?pageNum=1&pageSize=20" \
 
 ---
 
-## 9. 恢复文件
+## 8. 恢复文件
 
 ```
 PUT /api/file/trash/{fileId}/restore
@@ -413,13 +413,13 @@ curl -X PUT http://localhost:8088/api/file/trash/43/restore \
 
 ---
 
-## 10. 永久删除
+## 9. 永久删除
 
 ```
 DELETE /api/file/trash/{fileId}
 ```
 
-物理删除，不可恢复。会删除本地文件和数据库记录。
+物理删除，不可恢复。会删除 MinIO 对象和数据库记录。
 
 ### 请求示例
 
@@ -440,19 +440,19 @@ curl -X DELETE http://localhost:8088/api/file/trash/43 \
 
 ### 备注
 
-- 删除本地原文件和缩略图
+- 删除 MinIO 原文件和缩略图
 - 文件夹会递归永久删除所有子节点
 - 每天 3 AM 自动清理 60 天前的垃圾站文件（`TrashCleanupTask`）
 
 ---
 
-## 11. 下载文件
+## 10. 下载文件
 
 ```
 GET /api/file/{fileId}/download
 ```
 
-**本地文件服务**：从本地磁盘读取文件，直接返回 `FileSystemResource`（二进制流）；本地不存在则返回 404。
+**MinIO 流式返回**：通过 `MinioUtil.getObject()` 获取 InputStream，包装为 `InputStreamResource` 流式返回；对象不存在则返回 404。
 
 ### 请求示例
 
@@ -461,7 +461,7 @@ curl "http://localhost:8088/api/file/43/download" \
   -H "Authorization: Bearer <token>"
 ```
 
-### 响应 — 本地文件
+### 响应 — MinIO 流
 
 HTTP 200，直接返回文件二进制流：
 ```
@@ -473,11 +473,11 @@ Content-Disposition: attachment; filename*=UTF-8''photo.png
 
 - 文件夹不支持下载
 - 已删除文件不支持下载
-- 本地文件直接流式返回
+- MinIO 对象流式返回
 
 ---
 
-## 11.5. 内联预览
+## 11. 内联预览
 
 ```
 GET /api/file/{fileId}/stream
@@ -485,7 +485,7 @@ GET /api/file/{fileId}/stream
 
 与下载类似，但 `Content-Disposition: inline`（浏览器内联显示而非下载）。
 
-### 响应 — 本地文件
+### 响应 — MinIO 流
 
 ```
 Content-Type: {实际MIME类型}
@@ -496,11 +496,11 @@ Content-Disposition: inline; filename*=UTF-8''photo.png
 
 - 文件夹和已删除文件同样受限
 - 适用于图片/PDF 等浏览器直接预览
-- 本地文件直接流式返回
+- MinIO 对象流式返回
 
 ---
 
-## 11.6. 缩略图
+## 12. 缩略图
 
 ```
 GET /api/file/{fileId}/thumbnail
@@ -522,11 +522,11 @@ HTTP 404，无缩略图 key。
 ### 备注
 
 - 公开端点（在 SecurityConfig 白名单中）
-- 本地缩略图存储在 `.thumbnails/` 子目录下
+- 缩略图从 MinIO `allahpan-thumbnails` bucket 读取
 
 ---
 
-## 11.7. SSE 实时推送
+## 13. SSE 实时推送
 
 ```
 GET /api/file/watch?token=<jwt>
@@ -545,10 +545,9 @@ GET /api/file/watch?token=<jwt>
 | 事件 | 数据 | 说明 |
 |------|------|------|
 | `connected` | `{message: "..."}` | SSE 连接成功确认 |
-| `file-created` | `{fileId, parentId, fileName, ...}` | 新文件创建（含 local watcher 发现） |
+| `file-created` | `{fileId, parentId, fileName, ...}` | 新文件创建 |
 | `file-updated` | `{fileId, parentId, processStatus, thumbnailKey, originText, ...}` | 文件更新（pipeline 进度、重命名等） |
 | `file-deleted` | `{fileId, parentId}` | 文件删除 |
-| `sync-complete` | `{message: "..."}` | 全量同步完成 |
 
 ### 浏览器示例
 
@@ -562,11 +561,11 @@ es.addEventListener('file-updated', e => { /* 更新文件状态 */ });
 
 - SSE 超时 30 分钟，前端应自动重连
 - JWT 手动校验（EventSource 无法设 Authorization 头）
-- 流水线每阶段完成后通过 `notifyStatusChange` 推送 `file-updated` 事件
+- 流水线每阶段完成后通过 `SseBroadcaster.broadcast()` 推送 `file-updated` 事件
 
 ---
 
-## 12. 重命名文件
+## 14. 重命名文件
 
 ```
 PUT /api/file/{fileId}/rename
@@ -609,7 +608,7 @@ curl -X PUT http://localhost:8088/api/file/43/rename \
 
 ---
 
-## 13. 移动文件
+## 15. 移动文件
 
 ```
 PUT /api/file/{fileId}/move
@@ -657,7 +656,7 @@ curl -X PUT http://localhost:8088/api/file/43/move \
 
 ---
 
-## 14. 批量删除
+## 16. 批量删除
 
 ```
 DELETE /api/file/batch
@@ -696,4 +695,3 @@ curl -X DELETE http://localhost:8088/api/file/batch \
 - 容错处理：不存在的 ID 或已删除的文件会被跳过
 - 文件夹会递归软删除所有子节点
 - `failedIds` 记录处理失败的 ID（文件不存在、已删除等）
-- 同时清理本地磁盘镜像文件

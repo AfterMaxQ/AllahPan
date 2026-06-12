@@ -29,7 +29,7 @@ public class FileProcessReceiver {
     @Autowired
     private FileProcessSender sender;
     @Autowired
-    private com.allahpan.controller.FileController fileController;
+    private SseBroadcaster sseBroadcaster;
 
     @RabbitHandler
     public void handle(FileProcessMessage message) {
@@ -108,7 +108,7 @@ public class FileProcessReceiver {
      */
     private void notifyStatusChange(File file) {
         try {
-            fileController.notifySse("file-updated", java.util.Map.of(
+            sseBroadcaster.broadcast("file-updated", java.util.Map.of(
                     "fileId", file.getId(),
                     "parentId", file.getParentId() != null ? file.getParentId() : 0L,
                     "processStatus", file.getProcessStatus() != null ? (int) file.getProcessStatus() : 0,

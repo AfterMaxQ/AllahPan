@@ -49,22 +49,20 @@ public class MinioUtil {
     /** Upload object to files bucket */
     public void putObject(String objectKey, InputStream data, long size, String contentType)
             throws Exception {
-        minioClient.putObject(
-                PutObjectArgs.builder()
-                        .bucket(bucketName)
-                        .object(objectKey)
-                        .stream(data, size, -1)
-                        .contentType(contentType)
-                        .build()
-        );
+        putObject(bucketName, objectKey, data, size, contentType);
     }
 
     /** Upload object to thumbnail bucket */
     public void putThumbnail(String objectKey, InputStream data, long size, String contentType)
             throws Exception {
+        putObject(thumbnailBucket, objectKey, data, size, contentType);
+    }
+
+    private void putObject(String bucket, String objectKey, InputStream data, long size,
+                           String contentType) throws Exception {
         minioClient.putObject(
                 PutObjectArgs.builder()
-                        .bucket(thumbnailBucket)
+                        .bucket(bucket)
                         .object(objectKey)
                         .stream(data, size, -1)
                         .contentType(contentType)
@@ -74,19 +72,18 @@ public class MinioUtil {
 
     /** Download object from files bucket */
     public InputStream getObject(String objectKey) throws Exception {
-        return minioClient.getObject(
-                GetObjectArgs.builder()
-                        .bucket(bucketName)
-                        .object(objectKey)
-                        .build()
-        );
+        return getObject(bucketName, objectKey);
     }
 
     /** Download object from thumbnail bucket */
     public InputStream getThumbnail(String objectKey) throws Exception {
+        return getObject(thumbnailBucket, objectKey);
+    }
+
+    private InputStream getObject(String bucket, String objectKey) throws Exception {
         return minioClient.getObject(
                 GetObjectArgs.builder()
-                        .bucket(thumbnailBucket)
+                        .bucket(bucket)
                         .object(objectKey)
                         .build()
         );
@@ -114,19 +111,18 @@ public class MinioUtil {
 
     /** Delete object from files bucket */
     public void removeObject(String objectKey) throws Exception {
-        minioClient.removeObject(
-                RemoveObjectArgs.builder()
-                        .bucket(bucketName)
-                        .object(objectKey)
-                        .build()
-        );
+        removeObject(bucketName, objectKey);
     }
 
     /** Delete object from thumbnail bucket */
     public void removeThumbnail(String objectKey) throws Exception {
+        removeObject(thumbnailBucket, objectKey);
+    }
+
+    private void removeObject(String bucket, String objectKey) throws Exception {
         minioClient.removeObject(
                 RemoveObjectArgs.builder()
-                        .bucket(thumbnailBucket)
+                        .bucket(bucket)
                         .object(objectKey)
                         .build()
         );

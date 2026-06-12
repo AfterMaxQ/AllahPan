@@ -35,7 +35,10 @@ services:
     restart: unless-stopped
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    build:
+      context: ./docker/elasticsearch
+      dockerfile: Dockerfile
+    image: allahpan-elasticsearch:8.11.0-ik
     container_name: elasticsearch
     ports:
       - "9200:9200"

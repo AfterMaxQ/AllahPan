@@ -174,7 +174,7 @@ curl "http://localhost:8081/es-admin/files/search?keyword=截图&fileType=IMAGE&
 - **匹配字段**: `multi_match` 查询 `fileName`（权重 10×）和 `originText`（权重 5×），`BestFields` 策略
 - **筛选**: `fileType` 非空时添加 `term` 过滤
 - **高亮**: `fileName` 返回完整字段，`originText` 最多 3 段（每段 100 字符），标记为 `<mark>...</mark>`
-- **聚合**: `fileType` 的 `terms` 聚合（top 10）
+- **聚合**: `fileType` 的 `terms` 聚合（top 10），使用 `fileType.keyword` 子字段
 - **分词**: `ik_max_word` 中文分词器
 
 ---
@@ -235,7 +235,24 @@ curl -X POST http://localhost:8081/es-admin/rebuild \
 
 ## 错误处理
 
-搜索服务控制器无全局异常处理。异常时 Spring 默认返回 HTTP 500，无 JSON 错误体。
+搜索服务采用优雅降级策略：
+
+- **索引不存在**: `search()` 和 `deleteAll()` 捕获 `index_not_found_exception`，返回空结果（`{list: [], totalCount: 0}` / `{deleted: 0}`），而非 500 错误。
+- **索引初始化**: `EsFileServiceImpl` 通过 `@PostConstruct ensureIndexExists()` 在启动时自动创建 `allahpan_files` 索引。先删除旧索引（处理不兼容映射变更），再创建新索引。
+- **聚合**: `fileType` 聚合使用 `fileType.keyword`（非裸 `fileType`），避免 ES Java Client 8.x 的 `fielddata` 禁用错误。
+- **其他异常**: Spring 默认返回 HTTP 500，无 JSON 错误体。
+
+## IK 分词器持久化
+
+IK 插件通过自定义 Docker 镜像预装（`docker/elasticsearch/Dockerfile`）：
+
+```dockerfile
+FROM docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+COPY elasticsearch-analysis-ik-8.11.0.zip /tmp/
+RUN bin/elasticsearch-plugin install --batch file:///tmp/elasticsearch-analysis-ik-8.11.0.zip
+```
+
+插件已编译为 `elasticsearch-analysis-ik-8.11.0.zip`（4.6MB）存储在项目中。`docker-compose.yml` 使用 `build` 构建 `allahpan-elasticsearch:8.11.0-ik` 镜像，容器重建后 IK 自动可用。
 
 ## ES 文档结构
 

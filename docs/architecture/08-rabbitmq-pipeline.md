@@ -73,7 +73,7 @@ stateDiagram-v2
 ### Stage 1: UPLOADED → THUMBNAILED
 
 1. `ThumbnailGenerator.generate(file)` — 根据 fileType 分发:
-   - **IMAGE**: 从本地磁盘读取原图 → 缩放到 300px 宽 → 写入本地 `.thumbnails/` + 上传 JPEG 到 `allahpan-thumbnails` bucket → 返回 `thumbnailKey`
+   - **IMAGE**: 从 MinIO `allahpan-files` bucket 读取原图 → 缩放到 300px 宽 → 上传 JPEG 到 `allahpan-thumbnails` bucket via `MinioUtil.putThumbnail()` → 返回 `thumbnailKey`
    - **PDF**: PDFBox 渲染首帧 → 缩放至宽 300px → JPEG，可配置 DPI（默认 150）
    - **其他**: 跳过，`thumbnailKey` 保持 null
 2. 更新 `processStatus = 1`
@@ -83,7 +83,7 @@ stateDiagram-v2
 
 ### Stage 2: THUMBNAILED → TEXT_EXTRACTED
 
-1. `TextExtractor.extract(file)` — 根据 fileType 分发（从本地磁盘读取文件）:
+1. `TextExtractor.extract(file)` — 根据 fileType 分发（从 MinIO 读取文件 via `MinioUtil.getObject()`）:
    - **IMAGE**: `OllamaService.ocr(file)` → 调用 Ollama `/api/chat`，qwen3.5:2b 模型，`think=false`，`num_predict=4096`，base64 图片 → 返回文字（~3.1s / 359 tokens / 699 chars）
    - **PDF**: PDFBox `PDFTextStripper` 提取文字，跳过加密文件
    - **DOCX**: Apache POI `XWPFWordExtractor`
@@ -126,7 +126,7 @@ flowchart TD
 
 ## SSE 状态推送
 
-流水线每完成一个阶段，通过 `FileSystemWatcher.notifyAll()` 推送 `file-updated` SSE 事件：
+流水线每完成一个阶段，通过 `SseBroadcaster.broadcast()` 推送 `file-updated` SSE 事件：
 
 ```mermaid
 flowchart LR
@@ -134,7 +134,7 @@ flowchart LR
     B --> C["Stage 完成"]
     C --> D["update processStatus<br/>+ 更新数据库"]
     D --> E["notifyStatusChange(file)"]
-    E --> F["FileSystemWatcher.notifyAll()"]
+    E --> F["SseBroadcaster.broadcast()"]
     F --> G["SSE push: file-updated"]
     G --> H["前端实时更新"]
 ```
@@ -191,7 +191,7 @@ sequenceDiagram
 
 | 功能 | 状态 | 备注 |
 |------|------|------|
-| IMAGE 缩略图 | ✅ 完成 | 300px 宽等比缩放，JPEG 格式，本地磁盘读取 |
+| IMAGE 缩略图 | ✅ 完成 | 300px 宽等比缩放，JPEG 格式，MinIO 读写 |
 | PDF 缩略图 | ✅ 完成 | PDFBox 渲染首帧，可配置 DPI（默认 150） |
 | IMAGE OCR | ✅ 完成 | Ollama qwen3.5:2b，think=false，num_predict=4096，String.format JSON |
 | PDF 文字提取 | ✅ 完成 | PDFBox PDFTextStripper，跳过加密文件 |
@@ -215,8 +215,10 @@ sequenceDiagram
 | 消息生产者 | `FileProcessSender.java` | `sendProcess()`, `sendRetry()` |
 | 消息消费者 | `FileProcessReceiver.java` | `handle()` — 状态机 + 重试 |
 | 消息实体 | `FileProcessMessage.java` | `Stage` 枚举 + `retryCount` |
-| 缩略图生成 | `ThumbnailGenerator.java` | `generate()` — IMAGE + PDF done |
-| 文字提取 | `TextExtractor.java` | `extract()` — 7 种格式 |
+| 缩略图生成 | `ThumbnailGenerator.java` | `generate()` — IMAGE + PDF done, MinIO 读写 |
+| 文字提取 | `TextExtractor.java` | `extract()` — 7 种格式, MinIO 读取 |
 | OCR 服务 | `OllamaService.java` | `ocr()` — Ollama vision API, String.format JSON |
 | ES 索引 | `EsIndexServiceImpl.java` | `index()`, `delete()` — HTTP → :8081，失败降级 |
+| MinIO 操作 | `MinioUtil.java` | `getObject()`, `putThumbnail()` — 流水线文件读写 |
+| SSE 广播 | `SseBroadcaster.java` | `broadcast()` — 状态变更推送 |
 | 文件表更新 | `FileMapper.java` | `updateByPrimaryKeySelective()` / `updateByPrimaryKeyWithBLOBs()` |

@@ -14,7 +14,7 @@
 - [08 — RabbitMQ 文件处理流水线](architecture/08-rabbitmq-pipeline.md)
 - [09 — 搜索模块](architecture/09-search-module.md)
 - [10 — 收藏模块](architecture/10-favorites-module.md)
-- [11 — 本地存储架构](architecture/11-local-storage-architecture.md)
+- [11 — MinIO 存储架构](architecture/11-minio-storage-architecture.md)
 
 ## API 文档 (`api/`)
 
@@ -23,7 +23,7 @@
 - [README — 总览、认证、错误码](api/README.md)
 - [01 — 认证 API](api/01-auth.md)（3 端点）
 - [02 — 用户 API](api/02-user.md)（2 端点）
-- [03 — 文件 API](api/03-file.md)（18 端点）
+- [03 — 文件 API](api/03-file.md)（16 端点）
 - [04 — 收藏 API](api/04-favorite.md)（4 端点）
 - [05 — 搜索 API（core 代理）](api/05-search-core.md)（2 端点）
 - [06 — 搜索服务 API（:8081）](api/06-search-service.md)（5 端点）

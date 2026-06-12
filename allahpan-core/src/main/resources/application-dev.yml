@@ -74,10 +74,6 @@ mail:
 
 
 allahpan:
-  file:
-    # 文件以本地磁盘为唯一存储
-    # 上传：浏览器 multipart POST → 服务器写本地磁盘 → 创建 DB 记录
-    # 本地新文件：WatchService → 创建 DB 记录
   text:
     max-length: 10000     # 文本提取最大字符数（DB origin_text 截断值）
   thumbnail:

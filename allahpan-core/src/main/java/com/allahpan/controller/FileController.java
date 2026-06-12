@@ -2,6 +2,7 @@ package com.allahpan.controller;
 
 import com.allahpan.common.api.CommonResult;
 import com.allahpan.component.FileProcessSender;
+import com.allahpan.component.SseBroadcaster;
 import com.allahpan.domain.FileProcessMessage;
 import com.allahpan.mbg.model.File;
 import com.allahpan.security.util.JwtTokenUtil;
@@ -25,7 +26,6 @@ import java.io.InputStream;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 @Tag(name = "FileController", description = "文件管理")
 @RestController
@@ -40,8 +40,8 @@ public class FileController {
     private FileProcessSender fileProcessSender;
     @Autowired
     private JwtTokenUtil jwtTokenUtil;
-
-    private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();
+    @Autowired
+    private SseBroadcaster sseBroadcaster;
 
     @Operation(summary = "上传文件（multipart 单步上传）")
     @PostMapping("/upload")
@@ -53,10 +53,10 @@ public class FileController {
             fileProcessSender.sendProcess(new FileProcessMessage(saved.getId(), FileProcessMessage.Stage.UPLOADED));
         }
         // Notify SSE clients about the new file
-        Map<String, Object> sseData = new java.util.LinkedHashMap<>();
+        Map<String, Object> sseData = new LinkedHashMap<>();
         sseData.put("fileId", saved.getId());
         sseData.put("parentId", saved.getParentId());
-        notifySse("file-created", sseData);
+        sseBroadcaster.broadcast("file-created", sseData);
 
         return CommonResult.success(toFileResponse(saved));
     }
@@ -105,43 +105,35 @@ public class FileController {
     @GetMapping("/{fileId}/download")
     public ResponseEntity<Resource> downloadFile(@PathVariable Long fileId) {
         File file = fileService.getFileById(fileId);
-        com.allahpan.common.exception.Asserts.isTrue(file != null, "文件不存在");
-        com.allahpan.common.exception.Asserts.isTrue(file.getDeleteTime() == null, "文件已删除");
-        com.allahpan.common.exception.Asserts.isTrue(file.getIsFolder() != 1, "文件夹不支持下载");
-        com.allahpan.common.exception.Asserts.isTrue(file.getStorageKey() != null, "文件无存储对象");
-
-        try {
-            InputStream stream = minioUtil.getObject(file.getStorageKey());
-            InputStreamResource resource = new InputStreamResource(stream);
-            String encodedName = URLEncoder.encode(file.getFileName(), StandardCharsets.UTF_8)
-                    .replace("+", "%20");
-            return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(
-                            file.getContentType() != null ? file.getContentType() : "application/octet-stream"))
-                    .header(HttpHeaders.CONTENT_DISPOSITION,
-                            "attachment; filename*=UTF-8''" + encodedName)
-                    .body(resource);
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().build();
-        }
+        validateDownloadable(file);
+        String encodedName = URLEncoder.encode(file.getFileName(), StandardCharsets.UTF_8)
+                .replace("+", "%20");
+        return streamResponse(file, "attachment; filename*=UTF-8''" + encodedName);
     }
 
     @Operation(summary = "预览文件（inline）")
     @GetMapping("/{fileId}/stream")
     public ResponseEntity<Resource> streamFile(@PathVariable Long fileId) {
         File file = fileService.getFileById(fileId);
+        validateDownloadable(file);
+        return streamResponse(file, "inline");
+    }
+
+    private void validateDownloadable(File file) {
         com.allahpan.common.exception.Asserts.isTrue(file != null, "文件不存在");
         com.allahpan.common.exception.Asserts.isTrue(file.getDeleteTime() == null, "文件已删除");
-        com.allahpan.common.exception.Asserts.isTrue(file.getIsFolder() != 1, "文件夹不支持预览");
+        com.allahpan.common.exception.Asserts.isTrue(file.getIsFolder() != 1, "文件夹不支持下载");
         com.allahpan.common.exception.Asserts.isTrue(file.getStorageKey() != null, "文件无存储对象");
+    }
 
+    private ResponseEntity<Resource> streamResponse(File file, String contentDisposition) {
         try {
             InputStream stream = minioUtil.getObject(file.getStorageKey());
             InputStreamResource resource = new InputStreamResource(stream);
             return ResponseEntity.ok()
                     .contentType(MediaType.parseMediaType(
                             file.getContentType() != null ? file.getContentType() : "application/octet-stream"))
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
                     .body(resource);
         } catch (Exception e) {
             return ResponseEntity.internalServerError().build();
@@ -170,17 +162,12 @@ public class FileController {
     @GetMapping("/watch")
     public SseEmitter watchFiles(@RequestParam(required = false) String token) {
         // EventSource 不支持自定义请求头，JWT 通过查询参数传递
+        SseEmitter emitter = new SseEmitter(0L);
         if (token == null || token.isBlank() || jwtTokenUtil.getUserIdFromToken(token) == null) {
-            SseEmitter emitter = new SseEmitter(0L);
             emitter.completeWithError(new SecurityException("未授权的访问"));
             return emitter;
         }
-        SseEmitter emitter = new SseEmitter(0L);
-        emitters.add(emitter);
-        emitter.onCompletion(() -> emitters.remove(emitter));
-        emitter.onTimeout(() -> emitters.remove(emitter));
-        emitter.onError(e -> emitters.remove(emitter));
-        return emitter;
+        return sseBroadcaster.subscribe();
     }
 
     @Operation(summary = "重命名文件")
@@ -229,20 +216,6 @@ public class FileController {
     public CommonResult<Void> permanentDelete(@PathVariable Long fileId) {
         fileService.permanentDelete(fileId);
         return CommonResult.success(null);
-    }
-
-    /**
-     * 通过 SSE 广播事件给所有连接的客户端。
-     * 供 FileProcessReceiver 等组件调用。
-     */
-    public void notifySse(String eventName, Map<String, Object> data) {
-        for (SseEmitter emitter : emitters) {
-            try {
-                emitter.send(SseEmitter.event().name(eventName).data(data));
-            } catch (Exception e) {
-                emitters.remove(emitter);
-            }
-        }
     }
 
     // ========== 响应转换 ==========

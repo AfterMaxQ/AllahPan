@@ -9,7 +9,6 @@ import com.allahpan.mbg.model.File;
 import com.allahpan.mbg.model.FileExample;
 import com.allahpan.service.FileService;
 import com.github.pagehelper.PageHelper;
-import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -17,12 +16,13 @@ import org.springframework.web.multipart.MultipartFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -68,7 +68,8 @@ public class FileServiceImpl implements FileService {
         if (contentType == null) contentType = "application/octet-stream";
         String md5;
         try {
-            md5 = storeAndCalculateMd5(file.getInputStream(), relativePath);
+            md5 = storeAndCalculateMd5(file.getInputStream(), relativePath,
+                    file.getSize(), contentType);
         } catch (Exception e) {
             log.error("上传到 MinIO 失败: {}", relativePath, e);
             Asserts.fail("文件保存失败，请重试");
@@ -242,15 +243,6 @@ public class FileServiceImpl implements FileService {
         return fileMapper.selectByPrimaryKey(fileId);
     }
 
-    /**
-     * 启动时清理孤儿垃圾记录（MinIO 存储无需物理文件检查，trash bucket 对象持久可靠）。
-     * 保留空实现供未来扩展。
-     */
-    @PostConstruct
-    public void cleanupOrphanedTrash() {
-        log.debug("MinIO 存储模式：跳过孤儿垃圾记录清理（trash bucket 对象持久可靠）");
-    }
-
     @Override
     public List<File> listTrash(int pageNum, int pageSize) {
         Long userId = getCurrentUserId();
@@ -347,8 +339,8 @@ public class FileServiceImpl implements FileService {
     // ========== 路径工具 ==========
 
     /**
-     * 构建文件相对于根目录的路径（用于本地存储）。
-     * 格式: folderA/folderB/filename.txt (根目录下直接是文件名)
+     * 构建 MinIO 对象键（逻辑路径）。
+     * 格式: folderA/folderB/filename.txt
      */
     private String resolveRelativePath(Long parentId, String fileName) {
         StringBuilder sb = new StringBuilder();
@@ -477,25 +469,15 @@ public class FileServiceImpl implements FileService {
     }
 
     /**
-     * 上传到 MinIO 并同时计算 MD5，避免将大文件全部加载到内存。
+     * 上传到 MinIO 并同时计算 MD5。使用 DigestInputStream 流式传输，避免将大文件全部加载到内存。
      */
-    private String storeAndCalculateMd5(InputStream inputStream, String objectKey) throws Exception {
+    private String storeAndCalculateMd5(InputStream inputStream, String objectKey,
+                                        long size, String contentType) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("MD5");
-        byte[] data = inputStream.readAllBytes();
-        digest.update(data);
-        String md5 = bytesToHex(digest.digest());
-        try (InputStream uploadStream = new ByteArrayInputStream(data)) {
-            minioUtil.putObject(objectKey, uploadStream, data.length, "application/octet-stream");
+        try (DigestInputStream dis = new DigestInputStream(inputStream, digest)) {
+            minioUtil.putObject(objectKey, dis, size, contentType);
         }
-        return md5;
-    }
-
-    private static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     private Long getCurrentUserId() {

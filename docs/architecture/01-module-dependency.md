@@ -18,8 +18,8 @@ graph TD
     subgraph "Maven 模块"
         common["<b>allahpan-common</b><br/>API / 异常 / Redis / AOP<br/>12 个文件"]
         security["<b>allahpan-security</b><br/>Spring Security + JWT<br/>7 个文件"]
-        mbg["<b>allahpan-mbg</b><br/>MyBatis Generator 实体/Mapper<br/>10 个文件"]
-        core["<b>allahpan-core</b><br/>主应用 :8088<br/>13 个文件"]
+        mbg["<b>allahpan-mbg</b><br/>MyBatis Generator 实体/Mapper<br/>11 个文件"]
+        core["<b>allahpan-core</b><br/>主应用 :8088<br/>31 个文件"]
         search["<b>allahpan-search</b><br/>搜索应用 :8081<br/>7 个文件"]
     end
 
@@ -88,13 +88,12 @@ graph TD
 |---|---|---|
 | **入口** | `AllahPanApplication.java` | `@SpringBootApplication` + `@MapperScan` |
 | **配置** | `MallSecurityConfig.java` | `UserDetailsService` Bean — email → DB/Cache → AdminUserDetails |
-| **配置** | `LocalStorageConfig.java` | 本地存储根目录 |
-| **配置** | `LocalStorageConfig.java` | 本地存储根目录（Windows→`%USERPROFILE%\AllahPan`） |
+| **配置** | `MinioConfig.java` | MinIO Client Bean（`minio.endpoint/accessKey/secretKey`） |
 | **配置** | `RabbitMqConfig.java` | RabbitMQ 拓扑：主队列 + DLX 重试队列 + JSON 转换器 |
 | **配置** | `SchedulingConfig.java` | `@EnableScheduling` — 定时任务开关 |
 | **控制器** | `AuthController.java` | `/api/auth/send-code`, `/login-by-code`, `/login-by-password` |
 | **控制器** | `UserController.java` | `/api/user/set-password`, `/me` |
-| **控制器** | `FileController.java` | `/api/file/*` — 18 个端点（含 SSE watch, stream, thumbnail） |
+| **控制器** | `FileController.java` | `/api/file/*` — 16 个端点（含 SSE watch, stream, thumbnail） |
 | **控制器** | `SearchController.java` | `/api/search` — 搜索代理（GET 搜索, POST 重建索引） |
 | **控制器** | `FavoriteController.java` | `/api/favorite/*` — 收藏/取消/检查/列表 |
 | **控制器** | `ShareController.java` | `/api/share/*` — 创建/访问/删除分享 |
@@ -106,6 +105,8 @@ graph TD
 | **组件** | `MailService` | QQ 邮箱 SMTP 验证码发送（替换 SmsService） |
 | **组件** | `FileProcessSender` | RabbitMQ 生产者：`sendProcess()` + `sendRetry()` |
 | **组件** | `FileProcessReceiver` | `@RabbitListener` — 3 阶段流水线消费者 + 最多 3 次重试 |
+| **组件** | `MinioUtil` | MinIO 对象存储 I/O（3 个 bucket） |
+| **组件** | `SseBroadcaster` | SSE 连接管理 + 事件广播（从 FileController 提取） |
 | **组件** | `ThumbnailGenerator` | IMAGE 缩略图生成（缩放 300px），PDF via PDFBox (150 DPI) |
 | **组件** | `TextExtractor` | IMAGE→Ollama OCR，PDF/DOCX/DOC/XLSX/XLS/PPTX/PPT/Text via PDFBox + POI |
 | **组件** | `OllamaService` | Ollama vision API `/api/chat`，qwen3.5:2b 模型，think=false，num_predict=4096，String.format 构建 JSON |
@@ -152,7 +153,7 @@ flowchart LR
 
     controller --> service
     service --> mapper
-    service --> lss["LocalStorageService"]
+    service --> minio["MinioUtil"]
     mapper --> entity
     config --> security
     filter --> jwt

@@ -6,6 +6,9 @@ import co.elastic.clients.elasticsearch.core.SearchResponse;
 import com.allahpan.search.domain.EsFile;
 import com.allahpan.search.repository.EsFileRepository;
 import com.allahpan.search.service.EsFileService;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -19,10 +22,34 @@ import java.util.stream.Collectors;
 @Service
 public class EsFileServiceImpl implements EsFileService {
 
+    private static final Logger log = LoggerFactory.getLogger(EsFileServiceImpl.class);
+
     @Autowired
     private EsFileRepository repository;
     @Autowired
     private ElasticsearchClient elasticsearchClient;
+
+    @PostConstruct
+    public void ensureIndexExists() {
+        try {
+            // 如果存在旧索引（可能带有不兼容的 IK 映射），先删除再重建
+            try {
+                elasticsearchClient.indices().delete(d -> d.index("allahpan_files"));
+                log.info("已删除旧的 ES 索引 allahpan_files");
+            } catch (Exception ignored) {
+                // 索引不存在，无需删除
+            }
+            elasticsearchClient.indices().create(c -> c.index("allahpan_files"));
+            log.info("ES 索引 allahpan_files 已创建");
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            if (msg.contains("resource_already_exists_exception")) {
+                log.debug("ES 索引 allahpan_files 已存在");
+            } else {
+                log.warn("ES 索引创建失败: {}", msg);
+            }
+        }
+    }
 
     @Override
     public void index(Map<String, Object> data) {
@@ -52,7 +79,11 @@ public class EsFileServiceImpl implements EsFileService {
                     .index("allahpan_files")
                     .query(q -> q.matchAll(m -> m)));
             return response.deleted();
-        } catch (java.io.IOException e) {
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            if (msg.contains("index_not_found_exception")) {
+                return 0;
+            }
             throw new RuntimeException("ES 全量删除失败", e);
         }
     }
@@ -88,14 +119,21 @@ public class EsFileServiceImpl implements EsFileService {
                         .fields("originText.char", hf -> hf.numberOfFragments(3).fragmentSize(100)
                                 .preTags("<mark>").postTags("</mark>")))
                 .aggregations("fileTypes", a -> a
-                        .terms(t -> t.field("fileType").size(10)))
+                        .terms(t -> t.field("fileType.keyword").size(10)))
                 .from((pageNum - 1) * pageSize)
                 .size(pageSize));
 
         SearchResponse<EsFile> response;
         try {
             response = elasticsearchClient.search(request, EsFile.class);
-        } catch (java.io.IOException e) {
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            Throwable cause = e.getCause();
+            String causeMsg = cause != null ? cause.getMessage() : "";
+            log.error("ES 搜索失败: keyword={}, error={}, cause={}", keyword, msg, causeMsg);
+            if (msg.contains("index_not_found_exception")) {
+                return emptyResult();
+            }
             throw new RuntimeException("Elasticsearch search failed", e);
         }
 
@@ -138,6 +176,13 @@ public class EsFileServiceImpl implements EsFileService {
                     .toList();
             result.put("aggregations", Map.of("fileTypes", aggList));
         }
+        return result;
+    }
+
+    private Map<String, Object> emptyResult() {
+        Map<String, Object> result = new HashMap<>();
+        result.put("list", List.of());
+        result.put("totalCount", 0L);
         return result;
     }
 

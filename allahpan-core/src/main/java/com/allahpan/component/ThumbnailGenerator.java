@@ -3,6 +3,7 @@ package com.allahpan.component;
 import com.allahpan.mbg.model.File;
 import com.allahpan.component.MinioUtil;
 import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.io.RandomAccessReadBuffer;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,18 +39,16 @@ public class ThumbnailGenerator {
     }
 
     private String generateImageThumbnail(File file) throws Exception {
-        InputStream is = minioUtil.getObject(file.getStorageKey());
-        BufferedImage original = ImageIO.read(is);
-        is.close();
-        if (original == null) return null;
-        return resizeAndUpload(original);
+        try (InputStream is = minioUtil.getObject(file.getStorageKey())) {
+            BufferedImage original = ImageIO.read(is);
+            if (original == null) return null;
+            return resizeAndUpload(original);
+        }
     }
 
     private String generatePdfThumbnail(File file) throws Exception {
-        InputStream is = minioUtil.getObject(file.getStorageKey());
-        byte[] pdfBytes = is.readAllBytes();
-        is.close();
-        try (PDDocument document = Loader.loadPDF(pdfBytes)) {
+        try (InputStream is = minioUtil.getObject(file.getStorageKey());
+             PDDocument document = Loader.loadPDF(new RandomAccessReadBuffer(is))) {
             if (document.getNumberOfPages() == 0) {
                 return null;
             }
@@ -65,7 +64,8 @@ public class ThumbnailGenerator {
         int height = original.getHeight() * width / original.getWidth();
         BufferedImage thumb = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = thumb.createGraphics();
-        g.drawImage(original.getScaledInstance(width, height, java.awt.Image.SCALE_SMOOTH), 0, 0, null);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.drawImage(original, 0, 0, width, height, null);
         g.dispose();
 
         String thumbnailKey = UUID.randomUUID().toString() + ".jpg";

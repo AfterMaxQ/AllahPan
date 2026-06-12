@@ -25,7 +25,7 @@ stateDiagram-v2
     [*] --> Active: 上传/创建文件夹
     Active --> Trash: deleteFile()<br/>设置 deleteTime
     Trash --> Active: restoreFile()<br/>清除 deleteTime
-    Trash --> Deleted: permanentDelete()<br/>删本地文件 + DB 记录
+    Trash --> Deleted: permanentDelete()<br/>删 MinIO 对象 + DB 记录
     Deleted --> [*]
 
     note right of Active: deleteTime IS NULL
@@ -84,10 +84,10 @@ flowchart TD
     B --> C{"文件存在?"}
     C -->|"否"| Err["Asserts.fail"]
     C -->|"是"| D{"storageKey != null?"}
-    D -->|"是"| E["localStorageService.delete(storageKey)"]
+    D -->|"是"| E["minioUtil.removeFromTrash(storageKey)"]
     D -->|"否"| F
     E --> F{"thumbnailKey != null?"}
-    F -->|"是"| G["localStorageService.deleteThumbnail(thumbnailKey)"]
+    F -->|"是"| G["minioUtil.removeThumbnail(thumbnailKey)"]
     F -->|"否"| H{"isFolder == 1?"}
     G --> H
     H -->|"是"| I["permanentDeleteChildren(fileId)<br/>递归物理删除所有子孙"]
@@ -123,41 +123,38 @@ ORDER BY is_folder DESC, create_time DESC
 
 ## API 端点汇总
 
-| 方法 | 路径 | 功能 | 服务方法 |
-|------|------|------|----------|
-| POST | `/api/file/upload` | 服务端直接上传（multipart） | `upload()` |
-| POST | `/api/file/create-folder` | 创建文件夹 | `createFolder()` |
-| GET | `/api/file/list?parentId=` | 文件列表 | `listFiles()` |
-| GET | `/api/file/tree/{folderId}` | 目录树 | `getDirectoryTree()` |
-| GET | `/api/file/{fileId}` | 文件详情 | `getFileById()` |
-| GET | `/api/file/{fileId}/download` | 下载（本地文件直读） | `downloadFile()` |
-| GET | `/api/file/{fileId}/stream` | 内联预览（本地文件直读） | `streamFile()` |
-| GET | `/api/file/{fileId}/thumbnail` | 缩略图（本地文件直读） | `getThumbnail()` |
-| GET | `/api/file/watch?token=` | SSE 实时推送 | `watchFiles()` |
-| DELETE | `/api/file/{fileId}` | 软删除 | `deleteFile()` |
-| DELETE | `/api/file/batch` | 批量软删除 | `batchDelete()` |
-| GET | `/api/file/trash` | 垃圾站列表 | `listTrash()` |
-| PUT | `/api/file/trash/{fileId}/restore` | 恢复 | `restoreFile()` |
-| DELETE | `/api/file/trash/{fileId}` | 永久删除 | `permanentDelete()` |
-| PUT | `/api/file/{fileId}/rename` | 重命名 | `renameFile()` |
-| PUT | `/api/file/{fileId}/move` | 移动 | `moveFile()` |
-| POST | `/api/share/{fileId}` | 创建分享 | `ShareService.createShare()` |
-| GET | `/api/share/{code}` | 获取分享（公开） | `ShareService.getShare()` |
-| DELETE | `/api/share/{code}` | 删除分享 | `ShareService.deleteShare()` |
+| 方法 | 路径 | 功能 | 存储层 |
+|------|------|------|--------|
+| POST | `/api/file/upload` | 上传（multipart） | MinioUtil.putObject() |
+| POST | `/api/file/create-folder` | 创建文件夹 | — |
+| GET | `/api/file/list?parentId=` | 文件列表 | — |
+| GET | `/api/file/tree/{folderId}` | 目录树 | — |
+| GET | `/api/file/{fileId}` | 文件详情 | — |
+| GET | `/api/file/{fileId}/download` | 下载 | MinioUtil.getObject() |
+| GET | `/api/file/{fileId}/stream` | 内联预览 | MinioUtil.getObject() |
+| GET | `/api/file/{fileId}/thumbnail` | 缩略图 | MinioUtil.getThumbnail() |
+| GET | `/api/file/watch?token=` | SSE 实时推送 | — |
+| DELETE | `/api/file/{fileId}` | 软删除 | MinioUtil.copyToTrash() |
+| DELETE | `/api/file/batch` | 批量软删除 | MinioUtil.copyToTrash() |
+| GET | `/api/file/trash` | 垃圾站列表 | — |
+| PUT | `/api/file/trash/{fileId}/restore` | 恢复 | MinioUtil.restoreFromTrash() |
+| DELETE | `/api/file/trash/{fileId}` | 永久删除 | MinioUtil.removeFromTrash() |
+| PUT | `/api/file/{fileId}/rename` | 重命名 | — |
+| PUT | `/api/file/{fileId}/move` | 移动 | — |
 
-## 下载/预览/缩略图 — 本地优先策略
+## 下载/预览/缩略图 — MinIO 流式访问
 
 ```mermaid
 flowchart TD
-    A["请求 download / stream / thumbnail"] --> B{"本地文件存在?"}
-    B -->|"是"| C["FileSystemResource 直接返回"]
+    A["请求 download / stream / thumbnail"] --> B{"MinIO 对象存在?"}
+    B -->|"是"| C["InputStream 流式返回"]
     C --> D["download: Content-Disposition: attachment"]
     C --> E["stream: Content-Disposition: inline"]
-    C --> F["thumbnail: Content-Type: image/jpeg"]
+    C --> F["thumbnail: Content-Type: image/jpeg<br/>来源: allahpan-thumbnails bucket"]
     B -->|"否"| G["返回 404 Not Found"]
 ```
 
-本地磁盘作为主要存储，所有文件/缩略图直接读取本地文件。
+所有文件/缩略图通过 MinIO SDK 读取，无需本地磁盘访问。
 
 ## TrashCleanupTask — 定时清理
 
@@ -172,9 +169,10 @@ flowchart TD
     A["TrashCleanupTask.cleanExpiredTrash()"] --> B["SELECT files WHERE<br/>deleteTime <= NOW() - 60 days"]
     B --> C["遍历过期文件"]
     C --> D["permanentDelete(fileId)"]
-    D --> E["删除本地文件（原文件+缩略图）"]
-    D --> F["删除 ES 索引"]
-    D --> G["删除 DB 记录"]
+    D --> E["从 MinIO trash bucket 删除对象"]
+    D --> F["从 MinIO thumbnails bucket 删除缩略图"]
+    D --> G["删除 ES 索引"]
+    D --> H["删除 DB 记录"]
     C --> I["日志: 成功 N 条, 失败 M 条"]
 ```
 
@@ -221,59 +219,25 @@ flowchart TD
     L --> Done2
 ```
 
-### 分享（ShareService）
-
-```mermaid
-sequenceDiagram
-    participant U as 用户 A
-    participant C as ShareController
-    participant S as ShareServiceImpl
-    participant R as Redis
-    Note over U,S: === 创建分享 ===
-    U->>C: POST /api/share/{fileId}?expireHours=24
-    C->>S: createShare(fileId, 24)
-    S->>S: 校验文件存在/非文件夹/未删除
-    S->>S: 生成 8 位随机码
-    S->>R: set(allahpan:share:{code}, {fileId,creatorId,expireTime}, TTL)
-    S-->>C: {shareCode, shareUrl, expireTime}
-
-    Note over U,M: === 访问分享（公开） ===
-    Note right of U: 任何人拿到分享码
-    U->>C: GET /api/share/{code} (无 token)
-    C->>S: getShare(code)
-    S->>R: get(allahpan:share:{code})
-    R-->>S: {fileId, creatorId, expireTime}
-    S->>S: 检查过期 → 过期则 del key
-    S->>S: 查文件 → 校验未删除
-    S->>S: 生成下载 URL = /api/file/{id}/download
-    S-->>C: {fileId, fileName, fileSize, downloadUrl}
-```
-
 ## 关键文件索引
 
 | 功能 | 文件 | 方法 |
 |------|------|------|
-| 软删除 | `FileServiceImpl.java:153` | `deleteFile()` |
-| 递归软删子节点 | `FileServiceImpl.java:165` | `deleteChildren()` |
-| 垃圾站列表 | `FileServiceImpl.java:189` | `listTrash()` |
-| 恢复 | `FileServiceImpl.java:198` | `restoreFile()` |
-| 递归恢复 | `FileServiceImpl.java:216` | `restoreChildren()` |
-| 永久删除 | `FileServiceImpl.java:230` | `permanentDelete()` |
-| 递归物理删除 | `FileServiceImpl.java:258` | `permanentDeleteChildren()` |
-| 目录树 | `FileServiceImpl.java:139` | `getDirectoryTree()` |
-| 文件列表 | `FileServiceImpl.java:130` | `listFiles()` |
-| 获取当前用户 | `FileServiceImpl.java:277` | `getCurrentUserId()` |
+| 软删除 | `FileServiceImpl.java` | `deleteFile()` |
+| 递归软删子节点 | `FileServiceImpl.java` | `deleteChildren()` |
+| 垃圾站列表 | `FileServiceImpl.java` | `listTrash()` |
+| 恢复 | `FileServiceImpl.java` | `restoreFile()` |
+| 递归恢复 | `FileServiceImpl.java` | `restoreChildren()` |
+| 永久删除 | `FileServiceImpl.java` | `permanentDelete()` |
+| 递归物理删除 | `FileServiceImpl.java` | `permanentDeleteChildren()` |
+| 目录树 | `FileServiceImpl.java` | `getDirectoryTree()` |
+| 文件列表 | `FileServiceImpl.java` | `listFiles()` |
 | 路径构建 | `FileServiceImpl.java` | `buildPath()` |
 | 递归重建子孙路径 | `FileServiceImpl.java` | `rebuildDescendantPaths()` |
 | 循环检测 | `FileServiceImpl.java` | `isDescendant()` |
 | 重命名 | `FileServiceImpl.java` | `renameFile()` |
 | 移动 | `FileServiceImpl.java` | `moveFile()` |
 | 批量删除 | `FileServiceImpl.java` | `batchDelete()` |
-| 本地文件 I/O | `LocalStorageService.java` | `store()`, `delete()`, `resolve()` |
-| 本地文件 I/O | `LocalStorageService.java` | `store()`, `delete()`, `resolve()` |
-| 文件监控 | `FileSystemWatcher.java` | `reconcilePath()`, `fullSync()`, `notifyAll()` |
-| SSE 推送 | `FileController.java` | `watchFiles()` |
+| MinIO 对象 I/O | `MinioUtil.java` | `putObject()`, `getObject()`, `removeObject()`, `copyToTrash()`, `restoreFromTrash()`, `removeFromTrash()`, `putThumbnail()`, `getThumbnail()`, `removeThumbnail()` |
+| SSE 广播 | `SseBroadcaster.java` | `broadcast()` |
 | 定时清理 | `TrashCleanupTask.java` | `cleanExpiredTrash()` |
-| 创建分享 | `ShareServiceImpl.java` | `createShare()` |
-| 获取分享（公开） | `ShareServiceImpl.java` | `getShare()` |
-| 删除分享 | `ShareServiceImpl.java` | `deleteShare()` |

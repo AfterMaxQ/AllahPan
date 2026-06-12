@@ -70,12 +70,12 @@ GET /api/search?keyword=xxx&pageNum=1&pageSize=20
 |------|------|--------|
 | 认证 | [01-auth.md](01-auth.md) | 3 |
 | 用户 | [02-user.md](02-user.md) | 2 |
-| 文件 | [03-file.md](03-file.md) | 18 |
+| 文件 | [03-file.md](03-file.md) | 16 |
 | 收藏 | [04-favorite.md](04-favorite.md) | 4 |
 | 搜索（代理） | [05-search-core.md](05-search-core.md) | 2 |
 | 搜索服务 | [06-search-service.md](06-search-service.md) | 5 |
 | 分享 | [07-share.md](07-share.md) | 3 |
-| **合计** | | **37** (32 core + 5 search) |
+| **合计** | | **35** (30 core + 5 search) |
 
 ## 快速导航
 

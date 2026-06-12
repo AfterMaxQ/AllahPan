@@ -23,6 +23,17 @@
     },
     "mappings": {
       "properties": {
+        "fileType": {
+          "type": "keyword"
+        },
+        "fileName": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword"
+            }
+          }
+        },
         "originText": {
           "type": "text",
           "analyzer": "ik_max_word",

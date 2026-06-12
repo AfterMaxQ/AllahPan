@@ -1,6 +1,6 @@
 # AllahPan — 家庭共享云盘
 
-Spring Boot 3.5 + Java 17 + MyBatis + Redis + RabbitMQ + Elasticsearch + Ollama + Vue 3
+Spring Boot 3.5 + Java 17 + MyBatis + Redis + RabbitMQ + Elasticsearch + Ollama + MinIO + Vue 3
 
 ## 项目结构
 
@@ -53,7 +53,8 @@ docker compose up -d
 | MySQL 8.0 | `3307` | `root / 123456` |
 | Redis 7.0 | `6379` | 无密码 |
 | RabbitMQ 3.12 | `5672` (管理界面 `15672`) | `guest / guest` |
-| Elasticsearch 8.11 | `9200` | 无安全认证 |
+| Elasticsearch 8.11 | `9200` | 无安全认证（内置 IK 分词器） |
+| MinIO | `9000` (Console `9001`) | `minioadmin / minioadmin` |
 
 ### 3. 构建后端
 
@@ -97,11 +98,9 @@ Ollama 仅用于 IMAGE 类型文件的 OCR 文字提取。不启动时图片无 
 |------|--------|------|
 | `JWT_SECRET` | (内置 dev secret) | JWT 签名密钥，生产环境必须修改 |
 | `MAIL_PASSWORD` | (内置 QQ 邮箱授权码) | SMTP 验证码发送密码 |
-| `ALLAHPAN_ROOT` | `C:/Users/ray/AllahPan` | 文件存储根目录 |
 
 **Windows 设置示例（PowerShell）**:
 ```powershell
-$env:ALLAHPAN_ROOT = "D:\AllahPanData"
 $env:JWT_SECRET = "your-256-bit-secret"
 ```
 
@@ -143,21 +142,16 @@ $env:JWT_SECRET = "your-256-bit-secret"
 
 ## 存储架构
 
-文件存储在本地磁盘，路径可通过 `ALLAHPAN_ROOT` 环境变量配置：
+文件存储在 MinIO 对象存储，3 个 bucket：
 
 ```
-%ALLAHPAN_ROOT%/
-├── user@example.com/       # 每个用户独立目录
-│   ├── .thumbnails/        # 缩略图
-│   ├── .trash/             # 回收站
-│   ├── 文件夹A/
-│   │   └── 文件.pdf
-│   └── 文件.txt
-└── another@example.com/
-    └── ...
+MinIO (:9000)
+├── allahpan-files/          # 原文件
+├── allahpan-thumbnails/     # 缩略图
+└── allahpan-trash/          # 垃圾站（软删除文件）
 ```
 
-`FileSystemWatcher` 监控本地文件夹变更，自动同步到数据库（如在资源管理器中拖入文件）。
+文件通过 `MinioUtil` 组件读写，存储 key 格式为 `{userId}/{yyyy/MM}/{UUID}{ext}`。`SseBroadcaster` 负责实时推送文件变更事件到前端。
 
 ## 处理流水线
 
@@ -199,7 +193,7 @@ UPLOADED (0) → THUMBNAILED (1) → TEXT_EXTRACTED (2) → COMPLETED (3)
 | [07-数据模型](docs/architecture/07-data-model.md) | ER 图与表结构 |
 | [08-流水线](docs/architecture/08-rabbitmq-pipeline.md) | RabbitMQ 处理流水线 |
 | [09-搜索模块](docs/architecture/09-search-module.md) | ES 搜索架构 |
-| [11-存储架构](docs/architecture/11-local-storage-architecture.md) | 本地存储与 FileSystemWatcher |
+| [11-存储架构](docs/architecture/11-minio-storage-architecture.md) | MinIO 对象存储 |
 
 ## 常用命令
 
@@ -229,4 +223,4 @@ docker compose down -v
 
 **前端**: Vue 3 · Vite · Element Plus · Pinia · Axios · Vue Router
 
-**基础设施**: MySQL 8.0 · Redis 7.0 · RabbitMQ 3.12 · Elasticsearch 8.11
+**基础设施**: MySQL 8.0 · Redis 7.0 · RabbitMQ 3.12 · Elasticsearch 8.11 (IK) · MinIO

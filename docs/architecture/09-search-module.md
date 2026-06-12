@@ -96,6 +96,35 @@ flowchart LR
 |------|------|------|
 | `POST` | `/es-admin/rebuild` | 全量重建索引（接收文件列表 JSON） |
 
+## ES 索引初始化
+
+`EsFileServiceImpl` 通过 `@PostConstruct ensureIndexExists()` 确保索引在启动时可用：
+
+1. 尝试删除旧索引 `allahpan_files`（处理不兼容映射变更）
+2. 创建新索引（匹配 `EsFile` 的 `@Setting`/`@Field` 注解）
+3. 捕获 `resource_already_exists_exception`（幂等），捕获 `index_not_found_exception`（删除旧索引时）
+4. 其他异常记录 WARN 日志（不影响应用启动）
+
+## IK 分词器持久化
+
+IK 插件通过自定义 Docker 镜像预装，容器重建后自动可用：
+
+```
+docker/elasticsearch/
+├── Dockerfile                              # FROM es:8.11.0, COPY + plugin install
+└── elasticsearch-analysis-ik-8.11.0.zip    # 编译好的插件包 (4.6MB)
+```
+
+`docker-compose.yml` 中 ES 服务使用 `build`（非 `image`）构建 `allahpan-elasticsearch:8.11.0-ik` 镜像。
+
+## search 端容错机制
+
+`EsFileServiceImpl` 采用**优雅降级**策略：
+
+- **`search()`**: 捕获 `Exception`，检查消息是否包含 `index_not_found_exception` → 返回空结果 `{list: [], totalCount: 0}`，不抛出异常。其他异常重新抛出。
+- **`deleteAll()`**: 捕获 `index_not_found_exception` → 返回 `deleted=0`，不抛出异常。
+- **聚合字段使用 `fileType.keyword`**: `fileType` 是 `keyword` 类型，ES Java Client 8.x 中 `terms` 聚合必须使用 `.keyword` 子字段（如 `fileType.keyword`），否则触发 `fielddata` 禁用错误。
+
 ## core 端容错机制
 
 `EsIndexServiceImpl` 和 `SearchController` 均采用**不崩溃**策略：
