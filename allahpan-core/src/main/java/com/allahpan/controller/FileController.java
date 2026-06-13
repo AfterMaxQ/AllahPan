@@ -27,10 +27,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 @Tag(name = "FileController", description = "文件管理")
 @RestController
 @RequestMapping("/api/file")
 public class FileController {
+
+    private static final Logger LOG = LoggerFactory.getLogger(FileController.class);
 
     @Autowired
     private FileService fileService;
@@ -127,8 +132,17 @@ public class FileController {
     }
 
     private ResponseEntity<Resource> streamResponse(File file, String contentDisposition) {
+        String key = file.getStorageKey();
+        LOG.info("stream request: fileId={} storageKey='{}' contentType='{}' disposition={}",
+                file.getId(), key, file.getContentType(), contentDisposition);
         try {
-            InputStream stream = minioUtil.getObject(file.getStorageKey());
+            // 防御性检查：确认 MinIO 对象存在再读取
+            if (!minioUtil.objectExists(key)) {
+                LOG.error("MinIO object NOT FOUND for stream: fileId={} storageKey='{}' fileName='{}' filePath='{}'",
+                        file.getId(), key, file.getFileName(), file.getFilePath());
+                return ResponseEntity.notFound().build();
+            }
+            InputStream stream = minioUtil.getObject(key);
             InputStreamResource resource = new InputStreamResource(stream);
             return ResponseEntity.ok()
                     .contentType(MediaType.parseMediaType(
@@ -136,6 +150,8 @@ public class FileController {
                     .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
                     .body(resource);
         } catch (Exception e) {
+            LOG.error("Failed to stream file: fileId={} storageKey='{}' error={}",
+                    file.getId(), key, e.toString(), e);
             return ResponseEntity.internalServerError().build();
         }
     }
@@ -154,6 +170,8 @@ public class FileController {
                     .contentType(MediaType.IMAGE_JPEG)
                     .body(resource);
         } catch (Exception e) {
+            LOG.warn("Failed to stream thumbnail: fileId={} thumbnailKey='{}' error={}",
+                    file.getId(), file.getThumbnailKey(), e.toString());
             return ResponseEntity.notFound().build();
         }
     }

@@ -40,9 +40,11 @@ public class OllamaService {
     public String ocr(File file) {
         try {
             byte[] imageBytes;
+            LOG.info("OCR: reading from MinIO fileId={} storageKey='{}'", file.getId(), file.getStorageKey());
             try (InputStream is = minioUtil.getObject(file.getStorageKey())) {
                 imageBytes = is.readAllBytes();
             }
+            LOG.info("OCR: image read successfully fileId={} size={} bytes", file.getId(), imageBytes.length);
             String base64Image = Base64.getEncoder().encodeToString(imageBytes);
 
             // 图像分析提示词：根据图像是否包含文字，采用不同策略
@@ -92,7 +94,10 @@ public class OllamaService {
             }
             return null;
         } catch (Exception e) {
-            throw new RuntimeException("Ollama OCR failed", e);
+            LOG.error("Ollama OCR failed: fileId={} storageKey='{}' errorType={} errorMessage={}",
+                    file.getId(), file.getStorageKey(),
+                    e.getClass().getSimpleName(), e.getMessage(), e);
+            throw new RuntimeException("Ollama OCR failed for storageKey=" + file.getStorageKey(), e);
         }
     }
 

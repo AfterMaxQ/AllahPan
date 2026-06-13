@@ -81,12 +81,19 @@ public class MinioUtil {
     }
 
     private InputStream getObject(String bucket, String objectKey) throws Exception {
-        return minioClient.getObject(
-                GetObjectArgs.builder()
-                        .bucket(bucket)
-                        .object(objectKey)
-                        .build()
-        );
+        log.debug("MinIO getObject: bucket={} key='{}'", bucket, objectKey);
+        try {
+            return minioClient.getObject(
+                    GetObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(objectKey)
+                            .build()
+            );
+        } catch (Exception e) {
+            log.error("MinIO getObject FAILED: bucket={} key='{}' error={}",
+                    bucket, objectKey, e.toString());
+            throw e;
+        }
     }
 
     /** Get object metadata */

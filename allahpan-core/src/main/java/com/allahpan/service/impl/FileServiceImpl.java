@@ -84,13 +84,13 @@ public class FileServiceImpl implements FileService {
             var dupList = fileMapper.selectByExample(md5Example);
             if (!dupList.isEmpty()) {
                 File existing = dupList.get(0);
-                // 秒传：删除刚上传的 MinIO 对象（因为复用已有文件）
-                try { minioUtil.removeObject(relativePath); } catch (Exception ignored) {}
+                // 秒传：复用已有文件的元数据，但保留独立 MinIO 对象避免删除源文件后断链
+                // relativePath 已在上传阶段存储到 MinIO，不删除，确保路径与 filePath 一致
                 File dup = new File();
                 dup.setUploaderId(uploaderId);
                 dup.setParentId(pid);
                 dup.setFileName(finalName);
-                dup.setStorageKey(existing.getStorageKey());
+                dup.setStorageKey(relativePath);
                 dup.setFileSize(existing.getFileSize());
                 dup.setContentType(existing.getContentType());
                 dup.setMd5(md5);

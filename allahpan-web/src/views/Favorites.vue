@@ -7,24 +7,29 @@
 
     <el-skeleton :rows="6" animated :loading="loading">
       <div v-if="list.length > 0" class="fav-grid">
-        <div v-for="file in list" :key="file.id" class="fav-card">
-          <FileIcon
-            :is-folder="file.isFolder === 1"
-            :file-type="file.fileType"
-            :size="48"
-          />
-          <div class="fav-info">
-            <span class="name" @click="handleOpen(file)">{{ file.fileName }}</span>
-            <span class="origin-path">{{ file.filePath }}</span>
+        <div v-for="file in list" :key="file.id" class="fav-card" @click="handleOpen(file)">
+          <div class="preview-area">
+            <FileIcon
+              :is-folder="file.isFolder === 1"
+              :file-type="file.fileType"
+              :thumb-url="thumbUrl(file)"
+              :size="64"
+            />
+            <el-button
+              class="remove-btn"
+              type="danger"
+              circle
+              plain
+              :icon="StarFilled"
+              size="small"
+              @click.stop="cancelFavorite(file.id)"
+            />
           </div>
-          <el-button
-            type="danger"
-            circle
-            plain
-            :icon="StarFilled"
-            size="small"
-            @click="cancelFavorite(file.id)"
-          />
+          <div class="info-area">
+            <span class="file-name" :title="file.fileName">{{ file.fileName }}</span>
+            <span class="origin-path" :title="file.filePath">{{ file.filePath }}</span>
+            <span v-if="file.isFolder !== 1" class="file-size">{{ formatBytes(file.fileSize) }}</span>
+          </div>
         </div>
       </div>
       <EmptyState
@@ -45,11 +50,19 @@ import { getFavoriteList, removeFavorite } from '@/api/favorite'
 import FileIcon from '@/components/common/FileIcon.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import FilePreviewDialog from '@/components/file/FilePreviewDialog.vue'
+import { formatBytes } from '@/utils/format'
 import { ElMessage } from 'element-plus'
 
 const loading = ref(false)
 const list = ref([])
 const previewDialogRef = ref(null)
+
+const thumbUrl = (file) => {
+  if (file.thumbnailKey) {
+    return `/api/file/${file.id}/thumbnail`
+  }
+  return ''
+}
 
 const loadFavorites = async () => {
   loading.value = true
@@ -98,45 +111,67 @@ onMounted(loadFavorites)
 }
 .fav-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
 }
 .fav-card {
   background-color: var(--ap-bg-card);
   border: 1px solid var(--ap-border-color);
-  border-radius: 14px;
-  padding: 16px;
+  border-radius: 16px;
+  cursor: pointer;
   display: flex;
-  align-items: center;
-  gap: 14px;
-  transition: box-shadow 0.2s ease;
+  flex-direction: column;
+  overflow: hidden;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 0.2s ease;
 }
 .fav-card:hover {
-  box-shadow: 0 4px 12px rgba(61, 50, 38, 0.04);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(61, 50, 38, 0.06);
 }
-.fav-info {
-  flex: 1;
+.preview-area {
+  height: 120px;
+  background-color: var(--ap-bg-sidebar);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.remove-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.fav-card:hover .remove-btn {
+  opacity: 1;
+}
+.info-area {
+  padding: 12px;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
-.fav-info .name {
+.file-name {
+  font-size: 14px;
   font-weight: 600;
   color: var(--ap-text-main);
-  cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fav-info .name:hover {
-  color: var(--el-color-primary);
-}
-.fav-info .origin-path {
+.origin-path {
   font-size: 12px;
   color: var(--ap-text-sub);
   margin-top: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.file-size {
+  font-size: 11px;
+  color: var(--ap-text-sub);
+  margin-top: 4px;
 }
 </style>

@@ -38,6 +38,8 @@ public class FileProcessReceiver {
             LOG.warn("文件不存在或已删除: {}", message.getFileId());
             return;
         }
+        LOG.info("Processing file: fileId={} fileName='{}' storageKey='{}' stage={}",
+                file.getId(), file.getFileName(), file.getStorageKey(), message.getCurrentStage());
         try {
             switch (message.getCurrentStage()) {
                 case UPLOADED -> {
@@ -79,8 +81,8 @@ public class FileProcessReceiver {
                 default -> LOG.warn("未知处理阶段: {}", message.getCurrentStage());
             }
         } catch (Exception e) {
-            LOG.error("文件处理失败: {}, 阶段: {}, 重试: {}",
-                    file.getFileName(), message.getCurrentStage(), message.getRetryCount(), e);
+            LOG.error("文件处理失败: storageKey='{}', 阶段: {}, 重试: {}",
+                    file.getStorageKey(), message.getCurrentStage(), message.getRetryCount(), e);
             if (message.getRetryCount() < MAX_RETRY) {
                 // 递增延迟: 30s / 60s / 120s
                 long delay = 30_000L * (1L << message.getRetryCount());
