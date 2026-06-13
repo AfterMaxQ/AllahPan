@@ -187,6 +187,17 @@ public class MinioUtil {
         );
     }
 
+    /** List all object names in a bucket (for orphan scanning). */
+    public java.util.List<String> listObjectNames(String bucket) throws Exception {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        var results = minioClient.listObjects(
+                io.minio.ListObjectsArgs.builder().bucket(bucket).recursive(true).build());
+        for (var result : results) {
+            names.add(result.get().objectName());
+        }
+        return names;
+    }
+
     public String getBucketName() { return bucketName; }
     public String getThumbnailBucket() { return thumbnailBucket; }
     public String getTrashBucket() { return trashBucket; }

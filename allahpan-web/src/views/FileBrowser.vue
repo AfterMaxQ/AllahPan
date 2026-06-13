@@ -66,13 +66,16 @@
         <p class="expire-tip">有效期至：{{ shareExpireTime }}</p>
       </div>
     </el-dialog>
+
+    <!-- 移动文件对话框 -->
+    <MoveFileDialog ref="moveDialogRef" @confirm="handleMoveConfirm" />
   </div>
 </template>
 
 <script setup>
 import { ref, watch } from 'vue'
 import { useFileStore } from '@/stores/file'
-import { getFileList, deleteFile, batchDeleteFiles, getDownloadUrl, renameFile } from '@/api/file'
+import { getFileList, deleteFile, batchDeleteFiles, downloadFile, renameFile, moveFile } from '@/api/file'
 import { addFavorite } from '@/api/favorite'
 import { createShareLink } from '@/api/share'
 import { formatDate } from '@/utils/format'
@@ -87,6 +90,7 @@ import FileContextMenu from '@/components/file/FileContextMenu.vue'
 import FileUploadDialog from '@/components/file/FileUploadDialog.vue'
 import FolderCreateDialog from '@/components/file/FolderCreateDialog.vue'
 import FilePreviewDialog from '@/components/file/FilePreviewDialog.vue'
+import MoveFileDialog from '@/components/file/MoveFileDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 
 const fileStore = useFileStore()
@@ -105,11 +109,15 @@ const rightClickedFile = ref(null)
 const uploadDialogRef = ref(null)
 const folderDialogRef = ref(null)
 const previewDialogRef = ref(null)
+const moveDialogRef = ref(null)
 
 // 分享
 const shareVisible = ref(false)
 const shareLink = ref('')
 const shareExpireTime = ref('')
+
+// 移动
+const pendingMoveFile = ref(null)
 
 const loadData = async () => {
   loading.value = true
@@ -193,11 +201,9 @@ const handleMenuAction = async (action) => {
       case 'open':
         handleItemOpen(file)
         break
-      case 'download': {
-        const res = await getDownloadUrl(file.id)
-        window.open(res.downloadUrl, '_blank')
+      case 'download':
+        await downloadFile(file.id, file.fileName)
         break
-      }
       case 'favorite':
         await addFavorite(file.id)
         ElMessage.success('已加入收藏')
@@ -223,7 +229,8 @@ const handleMenuAction = async (action) => {
         break
       }
       case 'move':
-        ElMessage.info('移动功能请在后续版本中使用')
+        pendingMoveFile.value = file
+        moveDialogRef.value.open(file.parentId)
         break
       case 'delete':
         await ElMessageBox.confirm(
@@ -238,6 +245,20 @@ const handleMenuAction = async (action) => {
     }
   } catch (e) {
     if (e !== 'cancel') console.error('操作失败', e)
+  }
+}
+
+const handleMoveConfirm = async (targetParentId) => {
+  if (!pendingMoveFile.value) return
+  try {
+    await moveFile(pendingMoveFile.value.id, targetParentId)
+    ElMessage.success('移动成功')
+    loadData()
+  } catch (e) {
+    console.error('移动失败', e)
+    ElMessage.error('移动失败，请重试')
+  } finally {
+    pendingMoveFile.value = null
   }
 }
 

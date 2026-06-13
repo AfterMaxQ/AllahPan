@@ -45,9 +45,19 @@ export function moveFile(fileId, targetParentId) {
   return request.put(`/file/${fileId}/move`, { targetParentId })
 }
 
-// 下载 URL
-export function getDownloadUrl(fileId) {
-  return request.get(`/file/${fileId}/download`)
+// 下载文件（以 blob 方式获取并触发浏览器下载）
+export async function downloadFile(fileId, fileName) {
+  const blob = await request.get(`/file/${fileId}/download`, {
+    responseType: 'blob',
+  })
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName || 'download'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  window.URL.revokeObjectURL(url)
 }
 
 // 预览流 URL

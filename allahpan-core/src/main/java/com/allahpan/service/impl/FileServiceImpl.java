@@ -100,7 +100,13 @@ public class FileServiceImpl implements FileService {
                 dup.setProcessStatus((byte) 3);
                 dup.setCreateTime(new Date());
                 dup.setFilePath(buildPath(finalName, pid));
-                fileMapper.insert(dup);
+                try {
+                    fileMapper.insert(dup);
+                } catch (Exception e) {
+                    log.error("秒传记录插入失败，清理 MinIO: {}", relativePath, e);
+                    try { minioUtil.removeObject(relativePath); } catch (Exception ex) { log.warn("清理失败", ex); }
+                    Asserts.fail("文件保存失败");
+                }
                 return dup;
             }
         }
@@ -119,7 +125,13 @@ public class FileServiceImpl implements FileService {
         record.setFileType(detectFileType(contentType));
         record.setCreateTime(new Date());
         record.setFilePath(buildPath(finalName, pid));
-        fileMapper.insert(record);
+        try {
+            fileMapper.insert(record);
+        } catch (Exception e) {
+            log.error("文件记录插入失败，清理 MinIO: {}", relativePath, e);
+            try { minioUtil.removeObject(relativePath); } catch (Exception ex) { log.warn("清理失败", ex); }
+            Asserts.fail("文件保存失败");
+        }
         return record;
     }
 
@@ -174,16 +186,15 @@ public class FileServiceImpl implements FileService {
     public void deleteFile(Long fileId) {
         File file = fileMapper.selectByPrimaryKey(fileId);
         Asserts.isTrue(file != null, "文件不存在");
-        // 先尝试移动物理文件到 MinIO 回收站
-        // 失败不阻塞 DB 软删除：秒传场景下多条 DB 记录共享同一 storageKey，
-        // 首条删除已将对象移入 trash，后续删除时源对象已不存在
+        // MySQL 优先：先标记软删除，再尝试移动 MinIO 对象到回收站
+        // MinIO 移动失败不阻塞：文件已标记删除，物理对象保留在 files bucket 安全
+        file.setDeleteTime(new Date());
+        fileMapper.updateByPrimaryKeySelective(file);
         try {
             moveToTrash(file);
         } catch (Exception e) {
             log.warn("无法将文件移至回收站: {} (id={})", file.getStorageKey(), file.getId(), e);
         }
-        file.setDeleteTime(new Date());
-        fileMapper.updateByPrimaryKeySelective(file);
         // 从 ES 移除，避免搜索到已删除文件
         if (file.getIsFolder() == null || file.getIsFolder() != 1) {
             esIndexService.delete(fileId);
@@ -198,14 +209,13 @@ public class FileServiceImpl implements FileService {
         example.createCriteria().andParentIdEqualTo(folderId).andDeleteTimeIsNull();
         var children = fileMapper.selectByExample(example);
         for (File child : children) {
+            // MySQL 优先：先标记软删除
+            child.setDeleteTime(new Date(System.currentTimeMillis() + counter.getAndIncrement()));
+            fileMapper.updateByPrimaryKeySelective(child);
             try {
                 moveToTrash(child);
-                // 每个子节点用递增时间戳，避免同名文件在同一秒删除时触发 uk_parent_name_delete 约束冲突
-                child.setDeleteTime(new Date(System.currentTimeMillis() + counter.getAndIncrement()));
-                fileMapper.updateByPrimaryKeySelective(child);
             } catch (Exception e) {
-                log.warn("无法将子文件移至回收站，跳过: {} (id={})", child.getStorageKey(), child.getId(), e);
-                continue;
+                log.warn("无法将子文件移至回收站，MinIO 对象保留在 files bucket: {} (id={})", child.getStorageKey(), child.getId(), e);
             }
             if (child.getIsFolder() == null || child.getIsFolder() != 1) {
                 esIndexService.delete(child.getId());
@@ -295,9 +305,17 @@ public class FileServiceImpl implements FileService {
                 Asserts.fail("父文件夹在垃圾站中，请先恢复父文件夹");
             }
         }
+        Date oldDeleteTime = file.getDeleteTime();
         file.setDeleteTime(null);
         fileMapper.updateByPrimaryKey(file);
-        restoreFromTrash(file);
+        try {
+            restoreFromTrash(file);
+        } catch (Exception e) {
+            log.error("从 MinIO 回收站恢复失败，回滚 DB: {} (id={})", file.getStorageKey(), fileId, e);
+            file.setDeleteTime(oldDeleteTime);
+            fileMapper.updateByPrimaryKey(file);
+            Asserts.fail("文件恢复失败，请重试");
+        }
         // 重新索引到 ES，搜索可再次找到恢复的文件
         if (file.getIsFolder() == null || file.getIsFolder() != 1) {
             esIndexService.index(file);
@@ -312,9 +330,17 @@ public class FileServiceImpl implements FileService {
         example.createCriteria().andParentIdEqualTo(folderId).andDeleteTimeIsNotNull();
         var children = fileMapper.selectByExample(example);
         for (File child : children) {
+            Date oldDeleteTime = child.getDeleteTime();
             child.setDeleteTime(null);
             fileMapper.updateByPrimaryKey(child);
-            restoreFromTrash(child);
+            try {
+                restoreFromTrash(child);
+            } catch (Exception e) {
+                log.error("子文件从 MinIO 回收站恢复失败，回滚 DB: {} (id={})", child.getStorageKey(), child.getId(), e);
+                child.setDeleteTime(oldDeleteTime);
+                fileMapper.updateByPrimaryKey(child);
+                continue;
+            }
             if (child.getIsFolder() == null || child.getIsFolder() != 1) {
                 esIndexService.index(child);
             }
@@ -330,13 +356,21 @@ public class FileServiceImpl implements FileService {
         Asserts.isTrue(file != null, "文件不存在");
         Asserts.isTrue(file.getDeleteTime() != null, "只能永久删除垃圾站中的文件");
 
-        // 从回收站物理删除 MinIO 对象
+        // MySQL 优先：先删除 DB 记录，再清理 MinIO 对象
+        // MinIO 清理失败仅记 warning，由定时孤儿扫描兜底
+        fileMapper.deleteByPrimaryKey(fileId);
+
+        // 递归删除子节点
+        if (file.getIsFolder() == 1) {
+            permanentDeleteChildren(fileId);
+        }
+
+        // 清理 MinIO 对象（DB 记录已删除，清理失败不影响用户）
         if (file.getStorageKey() != null) {
             if (file.getIsFolder() == null || file.getIsFolder() != 1) {
                 esIndexService.delete(fileId);
             }
             try {
-                // 仅当无其他记录引用同一 storageKey 时才从 trash bucket 删除
                 if (countAllRefs(file.getStorageKey(), file.getId()) == 0) {
                     minioUtil.removeFromTrash(file.getStorageKey());
                 }
@@ -351,12 +385,6 @@ public class FileServiceImpl implements FileService {
                 log.warn("删除 MinIO 缩略图失败: {}", file.getThumbnailKey(), e);
             }
         }
-
-        // 递归删除子节点
-        if (file.getIsFolder() == 1) {
-            permanentDeleteChildren(fileId);
-        }
-        fileMapper.deleteByPrimaryKey(fileId);
     }
 
     private void permanentDeleteChildren(Long folderId) {
@@ -437,19 +465,32 @@ public class FileServiceImpl implements FileService {
                 String newKey = resolveRelativePath(child.getParentId(), child.getFileName());
                 if (!newKey.equals(oldKey)) {
                     child.setStorageKey(newKey);
-                    if (child.getIsFolder() == null || child.getIsFolder() != 1) {
-                        try {
-                            minioUtil.copyObject(oldKey, newKey);
-                            minioUtil.removeObject(oldKey);
-                        } catch (Exception e) {
-                            log.error("MinIO 重命名子孙文件失败: {} -> {}", oldKey, newKey, e);
-                            // 继续处理其他子孙，不因单个失败中断全部
-                        }
+                }
+            }
+
+            // MySQL 优先：先更新 DB
+            fileMapper.updateByPrimaryKeySelective(child);
+
+            // MinIO 随后：复制到新 key + 删除旧 key（仅非文件夹），失败则回滚该子节点 DB
+            if (oldKey != null && !oldKey.equals(child.getStorageKey())) {
+                if (child.getIsFolder() == null || child.getIsFolder() != 1) {
+                    try {
+                        minioUtil.copyObject(oldKey, child.getStorageKey());
+                        minioUtil.removeObject(oldKey);
+                    } catch (Exception e) {
+                        log.error("MinIO 重命名子孙文件失败，回滚 DB: {} -> {}", oldKey, child.getStorageKey(), e);
+                        // 回滚 MySQL 对该子节点的修改
+                        child.setStorageKey(oldKey);
+                        fileMapper.updateByPrimaryKeySelective(child);
                     }
                 }
             }
 
-            fileMapper.updateByPrimaryKeySelective(child);
+            // 更新 ES 中子文件的路径（非文件夹）
+            if (child.getIsFolder() == null || child.getIsFolder() != 1) {
+                esIndexService.index(child);
+            }
+
             if (child.getIsFolder() == 1) {
                 rebuildDescendantPaths(child.getId());
             }
@@ -555,27 +596,44 @@ public class FileServiceImpl implements FileService {
             assertNameUnique(parentId, newName);
         }
 
-        // MinIO 重命名：复制到新 key + 删除旧 key（非文件夹）
+        // 保存旧值用于 MinIO 失败时回滚
         String oldKey = file.getStorageKey();
+        String oldName = file.getFileName();
+        String oldPath = file.getFilePath();
+
+        // MySQL 优先：先更新 DB storageKey + fileName + filePath
         if (oldKey != null) {
             String newKey = resolveRelativePath(parentId, newName);
             if (!newKey.equals(oldKey)) {
-                if (file.getIsFolder() == null || file.getIsFolder() != 1) {
-                    try {
-                        minioUtil.copyObject(oldKey, newKey);
-                        minioUtil.removeObject(oldKey);
-                    } catch (Exception e) {
-                        log.error("MinIO 重命名失败: {} -> {}", oldKey, newKey, e);
-                        Asserts.fail("文件重命名失败");
-                    }
-                }
+                file.setStorageKey(newKey);
             }
-            file.setStorageKey(newKey);
         }
-
         file.setFileName(newName);
         file.setFilePath(buildPath(newName, file.getParentId()));
         fileMapper.updateByPrimaryKeySelective(file);
+
+        // MinIO 随后：复制到新 key + 删除旧 key（仅非文件夹）
+        if (oldKey != null && file.getStorageKey() != null && !file.getStorageKey().equals(oldKey)) {
+            if (file.getIsFolder() == null || file.getIsFolder() != 1) {
+                try {
+                    minioUtil.copyObject(oldKey, file.getStorageKey());
+                    minioUtil.removeObject(oldKey);
+                } catch (Exception e) {
+                    log.error("MinIO 重命名失败，回滚 DB: {} -> {}", oldKey, file.getStorageKey(), e);
+                    // 回滚 MySQL
+                    file.setStorageKey(oldKey);
+                    file.setFileName(oldName);
+                    file.setFilePath(oldPath);
+                    fileMapper.updateByPrimaryKeySelective(file);
+                    Asserts.fail("文件重命名失败");
+                }
+            }
+        }
+
+        // 更新 ES 中的文件名/路径（非文件夹）
+        if (file.getIsFolder() == null || file.getIsFolder() != 1) {
+            esIndexService.index(file);
+        }
         if (file.getIsFolder() == 1) {
             rebuildDescendantPaths(fileId);
         }
@@ -605,15 +663,42 @@ public class FileServiceImpl implements FileService {
         }
         assertNameUnique(newParentId, file.getFileName());
 
-        // MinIO 移动：逻辑操作，仅更新 DB storageKey（旧对象保留无引用）
+        // 保存旧值用于 MinIO 失败时回滚
+        String oldKey = file.getStorageKey();
+        Long oldParentId = file.getParentId();
+        String oldPath = file.getFilePath();
+
+        // MySQL 优先：先更新 DB storageKey + parentId + filePath
         if (file.getStorageKey() != null) {
             String newKey = resolveRelativePath(newParentId, file.getFileName());
             file.setStorageKey(newKey);
         }
-
         file.setParentId(newParentId);
         file.setFilePath(buildPath(file.getFileName(), newParentId));
         fileMapper.updateByPrimaryKeySelective(file);
+
+        // MinIO 随后：复制到新 key + 删除旧 key（仅非文件夹）
+        if (oldKey != null && file.getStorageKey() != null && !file.getStorageKey().equals(oldKey)) {
+            if (file.getIsFolder() == null || file.getIsFolder() != 1) {
+                try {
+                    minioUtil.copyObject(oldKey, file.getStorageKey());
+                    minioUtil.removeObject(oldKey);
+                } catch (Exception e) {
+                    log.error("MinIO 移动失败，回滚 DB: {} -> {}", oldKey, file.getStorageKey(), e);
+                    // 回滚 MySQL
+                    file.setStorageKey(oldKey);
+                    file.setParentId(oldParentId);
+                    file.setFilePath(oldPath);
+                    fileMapper.updateByPrimaryKeySelective(file);
+                    Asserts.fail("文件移动失败");
+                }
+            }
+        }
+
+        // 更新 ES 中的文件路径（非文件夹）
+        if (file.getIsFolder() == null || file.getIsFolder() != 1) {
+            esIndexService.index(file);
+        }
         if (file.getIsFolder() == 1) {
             rebuildDescendantPaths(fileId);
         }

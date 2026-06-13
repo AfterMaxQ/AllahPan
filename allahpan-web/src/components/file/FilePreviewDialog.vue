@@ -63,7 +63,7 @@
 <script setup>
 import { ref } from 'vue'
 import { Document, Cpu, ArrowRight } from '@element-plus/icons-vue'
-import { getFileDetail, getStreamUrl, getDownloadUrl } from '@/api/file'
+import { getFileDetail, getStreamUrl, downloadFile } from '@/api/file'
 import { formatBytes } from '@/utils/format'
 
 const visible = ref(false)
@@ -99,8 +99,7 @@ const open = async (targetFile) => {
 
 const triggerDownload = async () => {
   try {
-    const res = await getDownloadUrl(file.value.id)
-    window.open(res.downloadUrl, '_blank')
+    await downloadFile(file.value.id, file.value.fileName)
   } catch (e) {
     console.error('下载失败', e)
   }

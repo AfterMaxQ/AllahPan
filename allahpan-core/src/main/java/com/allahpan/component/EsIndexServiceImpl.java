@@ -16,6 +16,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
@@ -31,6 +32,9 @@ public class EsIndexServiceImpl implements EsIndexService {
     private final RestTemplate restTemplate = new RestTemplate();
     private static final String SEARCH_SERVICE_URL = "http://localhost:8081/es-admin/files";
     private static final int MAX_RETRIES = 3;
+
+    /** ES 操作失败补偿队列：fileId → "index"|"delete"，定时重试 */
+    private final Map<Long, String> pendingOps = new ConcurrentHashMap<>();
 
     /**
      * 启动时轮询等待搜索服务就绪，然后重建 ES 索引。
@@ -71,6 +75,7 @@ public class EsIndexServiceImpl implements EsIndexService {
                 if (attempt == MAX_RETRIES - 1) {
                     LOG.warn("ES 索引失败（重试 {} 次后放弃）: {}, 原因: {}",
                             MAX_RETRIES, file.getFileName(), e.getMessage());
+                    pendingOps.put(file.getId(), "index");
                 } else {
                     try { Thread.sleep(2000L * (attempt + 1)); } catch (InterruptedException ignored) {}
                 }
@@ -107,6 +112,7 @@ public class EsIndexServiceImpl implements EsIndexService {
             } catch (Exception e) {
                 if (attempt == MAX_RETRIES - 1) {
                     LOG.warn("ES 删除失败（重试 {} 次后放弃）: fileId={}", MAX_RETRIES, fileId);
+                    pendingOps.put(fileId, "delete");
                 } else {
                     try { Thread.sleep(2000L * (attempt + 1)); } catch (InterruptedException ignored) {}
                 }
@@ -154,6 +160,37 @@ public class EsIndexServiceImpl implements EsIndexService {
             }
         } catch (Exception e) {
             LOG.warn("ES 定时对账失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 每 5 分钟重试失败的 ES 操作（增量补偿，不走全量重建）。
+     * 全量对账（30 分钟）仍为最终兜底。
+     */
+    @Scheduled(fixedDelay = 5 * 60 * 1000, initialDelay = 2 * 60 * 1000)
+    public void retryFailedOps() {
+        if (pendingOps.isEmpty()) return;
+        Map<Long, String> snapshot = new HashMap<>(pendingOps);
+        pendingOps.clear();
+        int success = 0;
+        for (var entry : snapshot.entrySet()) {
+            try {
+                if ("index".equals(entry.getValue())) {
+                    File f = fileMapper.selectByPrimaryKey(entry.getKey());
+                    if (f != null && f.getDeleteTime() == null) {
+                        doIndex(f);
+                    }
+                } else {
+                    restTemplate.delete(SEARCH_SERVICE_URL + "/" + entry.getKey());
+                }
+                success++;
+            } catch (Exception e) {
+                // 重试失败则重新入队，等待下次调度
+                pendingOps.put(entry.getKey(), entry.getValue());
+            }
+        }
+        if (success > 0) {
+            LOG.info("ES 补偿重试: 成功={}, 仍失败={}", success, snapshot.size() - success);
         }
     }
 }

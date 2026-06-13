@@ -1,9 +1,7 @@
 package com.allahpan.config;
 
 import com.allahpan.bo.AdminUserDetails;
-import com.allahpan.mbg.mapper.UserMapper;
 import com.allahpan.mbg.model.User;
-import com.allahpan.mbg.model.UserExample;
 import com.allahpan.service.UserCacheService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -17,23 +15,13 @@ import java.util.Collections;
 public class MallSecurityConfig {
 
     @Autowired
-    private UserMapper userMapper;
-    @Autowired
     private UserCacheService userCacheService;
 
     @Bean
     public UserDetailsService userDetailsService(){
         return useremail -> {
+            // userCacheService.getUser 已实现读穿透（Redis miss → MySQL 回源 → 回填缓存）
             User user = userCacheService.getUser(useremail);
-            if (user == null){
-                UserExample example = new UserExample();
-                example.createCriteria().andEmailEqualTo(useremail).andStatusEqualTo((byte) 1);
-                var list = userMapper.selectByExample(example);
-                if (!list.isEmpty()) {
-                    user = list.get(0);
-                    userCacheService.setUser(user);
-                }
-            }
             if (user == null) {
                 throw new UsernameNotFoundException("用户不存在：" + useremail);
             }

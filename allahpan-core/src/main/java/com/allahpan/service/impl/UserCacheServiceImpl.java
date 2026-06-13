@@ -34,11 +34,21 @@ public class UserCacheServiceImpl implements UserCacheService {
         return REDIS_DATABASE + ":" + REDIS_KEY_MEMBER + ":" + email;
     }
 
-    // ===================== 1. 从Redis获取用户信息 =====================
+    // ===================== 1. 从Redis获取用户信息（读穿透：miss 时回源 MySQL）=====================
     @Override
     public User getUser(String email) {
-        // 根据邮箱生成key，从Redis取值，强转为User对象
-        return (User) redisService.get(memberKey(email));
+        User user = (User) redisService.get(memberKey(email));
+        if (user == null) {
+            // 缓存未命中，回源 MySQL 并回填缓存
+            com.allahpan.mbg.model.UserExample example = new com.allahpan.mbg.model.UserExample();
+            example.createCriteria().andEmailEqualTo(email).andStatusEqualTo((byte) 1);
+            var list = userMapper.selectByExample(example);
+            if (!list.isEmpty()) {
+                user = list.get(0);
+                redisService.set(memberKey(email), user, REDIS_EXPIRE);
+            }
+        }
+        return user;
     }
 
     // ===================== 2. 把用户信息存入Redis =====================
