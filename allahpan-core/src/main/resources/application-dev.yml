@@ -74,6 +74,9 @@ mail:
 
 
 allahpan:
+  chunk:
+    temp-dir: ${java.io.tmpdir}/allahpan-chunks
+    expire-hours: 24
   text:
     max-length: 10000     # 文本提取最大字符数（DB origin_text 截断值）
   thumbnail:

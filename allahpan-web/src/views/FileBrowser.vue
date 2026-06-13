@@ -69,13 +69,16 @@
 
     <!-- 移动文件对话框 -->
     <MoveFileDialog ref="moveDialogRef" @confirm="handleMoveConfirm" />
+
+    <!-- 下载进度对话框 -->
+    <FileDownloadDialog ref="downloadDialogRef" />
   </div>
 </template>
 
 <script setup>
 import { ref, watch } from 'vue'
 import { useFileStore } from '@/stores/file'
-import { getFileList, deleteFile, batchDeleteFiles, downloadFile, renameFile, moveFile } from '@/api/file'
+import { getFileList, deleteFile, batchDeleteFiles, renameFile, moveFile } from '@/api/file'
 import { addFavorite } from '@/api/favorite'
 import { createShareLink } from '@/api/share'
 import { formatDate } from '@/utils/format'
@@ -90,6 +93,7 @@ import FileContextMenu from '@/components/file/FileContextMenu.vue'
 import FileUploadDialog from '@/components/file/FileUploadDialog.vue'
 import FolderCreateDialog from '@/components/file/FolderCreateDialog.vue'
 import FilePreviewDialog from '@/components/file/FilePreviewDialog.vue'
+import FileDownloadDialog from '@/components/file/FileDownloadDialog.vue'
 import MoveFileDialog from '@/components/file/MoveFileDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 
@@ -110,6 +114,7 @@ const uploadDialogRef = ref(null)
 const folderDialogRef = ref(null)
 const previewDialogRef = ref(null)
 const moveDialogRef = ref(null)
+const downloadDialogRef = ref(null)
 
 // 分享
 const shareVisible = ref(false)
@@ -202,7 +207,7 @@ const handleMenuAction = async (action) => {
         handleItemOpen(file)
         break
       case 'download':
-        await downloadFile(file.id, file.fileName)
+        downloadDialogRef.value.open(file.id, file.fileName)
         break
       case 'favorite':
         await addFavorite(file.id)

@@ -1,4 +1,16 @@
 import request from './index'
+import axios from 'axios'
+import { useUserStore } from '@/stores/user'
+
+// 无超时的 axios 实例（用于大文件下载）
+const noTimeoutAxios = axios.create({ baseURL: '/api', timeout: 0 })
+noTimeoutAxios.interceptors.request.use((config) => {
+  const userStore = useUserStore()
+  if (userStore.token) {
+    config.headers.Authorization = `Bearer ${userStore.token}`
+  }
+  return config
+})
 
 // 单步上传（multipart）
 export function uploadFile(file, parentId, onProgress) {
@@ -45,10 +57,19 @@ export function moveFile(fileId, targetParentId) {
   return request.put(`/file/${fileId}/move`, { targetParentId })
 }
 
-// 下载文件（以 blob 方式获取并触发浏览器下载）
-export async function downloadFile(fileId, fileName) {
-  const blob = await request.get(`/file/${fileId}/download`, {
+// 下载文件（以 blob 方式获取并触发浏览器下载，支持进度回调）
+export async function downloadFile(fileId, fileName, onProgress) {
+  const blob = await noTimeoutAxios.get(`/file/${fileId}/download`, {
     responseType: 'blob',
+    onDownloadProgress: (event) => {
+      if (onProgress && event.total) {
+        onProgress({
+          percent: Math.round((event.loaded / event.total) * 100),
+          loaded: event.loaded,
+          total: event.total,
+        })
+      }
+    },
   })
   const url = window.URL.createObjectURL(blob)
   const a = document.createElement('a')

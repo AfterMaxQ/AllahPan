@@ -72,6 +72,9 @@ mail:
   from: AllahPan <${MAIL_USERNAME:1455726631@qq.com}>
 
 allahpan:
+  chunk:
+    temp-dir: ${java.io.tmpdir}/allahpan-chunks
+    expire-hours: 24
   text:
     max-length: 10000
   thumbnail:

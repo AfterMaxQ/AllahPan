@@ -59,6 +59,9 @@
             :status="task.progressStatus"
             :stroke-width="4"
           />
+          <div v-if="task.status === 'pending' && task.speed > 0" class="task-detail">
+            {{ formatSpeed(task.speed) }} · {{ formatETA(task.eta) }} · {{ formatSize(task.loaded) }}/{{ formatSize(task.total) }}
+          </div>
         </div>
       </div>
     </div>
@@ -70,7 +73,8 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, FolderOpened } from '@element-plus/icons-vue'
 import { useFileStore } from '@/stores/file'
-import { uploadFile, createFolder } from '@/api/file'
+import { createFolder } from '@/api/file'
+import { useChunkUpload } from '@/composables/useChunkUpload'
 
 const visible = ref(false)
 const mode = ref('file') // 'file' | 'folder'
@@ -79,6 +83,16 @@ const tasks = ref([])
 const folderInputRef = ref(null)
 const selectedFolderName = ref('')
 const folderFileCount = ref(0)
+
+const { uploadFiles, formatSpeed, formatETA } = useChunkUpload()
+
+function formatSize(bytes) {
+  if (bytes == null || bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
 
 const open = () => {
   mode.value = 'file'
@@ -101,47 +115,46 @@ const triggerFolderInput = () => {
   folderInputRef.value?.click()
 }
 
-// 单文件上传（单步 multipart，后端自动秒传检测）
-const uploadSingleFile = async (file, parentId, taskId) => {
-  const currentTask = () => tasks.value.find((t) => t.id === taskId)
+// 创建任务并注册回调
+const createTask = (name) => {
+  const taskId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+  const task = {
+    id: taskId,
+    name,
+    progress: 0,
+    speed: 0,
+    eta: 0,
+    loaded: 0,
+    total: 0,
+    status: 'pending',
+    statusText: '准备中...',
+    progressStatus: '',
+  }
+  tasks.value.push(task)
+  return taskId
+}
 
-  currentTask().statusText = '上传中...'
-  await uploadFile(file, parentId, (p) => {
-    currentTask().progress = p
+const onTaskUpdate = (taskId, updates) => {
+  const t = tasks.value.find((task) => task.id === taskId)
+  if (!t) return
+  Object.assign(t, {
+    ...updates,
+    progressStatus: updates.status === 'success' ? 'success'
+      : updates.status === 'exception' ? 'exception' : '',
   })
-
-  currentTask().progress = 100
-  currentTask().status = 'success'
-  currentTask().statusText = '上传成功'
-  currentTask().progressStatus = 'success'
 }
 
 // 文件模式：el-upload on-change 逐文件触发
 const handleFileChange = async (uploadFile) => {
   const file = uploadFile.raw
-  const taskId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-
-  tasks.value.push({
-    id: taskId,
-    name: file.name,
-    progress: 0,
-    status: 'pending',
-    statusText: '准备中...',
-    progressStatus: '',
-  })
+  const taskId = createTask(file.name)
 
   try {
-    await uploadSingleFile(file, fileStore.currentFolderId, taskId)
+    await uploadFiles([file], fileStore.currentFolderId, onTaskUpdate, taskId)
     ElMessage.success(`${file.name} 上传成功`)
     emit('uploaded')
   } catch (error) {
     console.error('上传失败:', error)
-    const t = tasks.value.find((task) => task.id === taskId)
-    if (t) {
-      t.status = 'exception'
-      t.statusText = '上传失败'
-      t.progressStatus = 'exception'
-    }
     ElMessage.error(`${file.name} 上传失败`)
   }
 }
@@ -184,6 +197,7 @@ const handleFolderChange = async (event) => {
       id: taskId,
       name: dir,
       progress: 0,
+      speed: 0, eta: 0, loaded: 0, total: 0,
       status: 'pending',
       statusText: '创建文件夹...',
       progressStatus: '',
@@ -207,38 +221,35 @@ const handleFolderChange = async (event) => {
         t.progressStatus = 'exception'
       }
       ElMessage.error(`创建文件夹 "${dir}" 失败，请检查是否有同名文件夹已存在`)
-      return // 文件夹创建失败则终止，避免文件落入错误目录
+      return
     }
   }
 
   // 3. 上传所有文件到对应子文件夹
+  const fileList = []
+  const fileTaskIds = []
   for (const file of files) {
     const path = file.webkitRelativePath || file.name
     const parts = path.split('/')
     const parentPath = parts.slice(0, -1).join('/')
     const parentId = pathToId.get(parentPath) || fileStore.currentFolderId
 
-    const taskId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-    tasks.value.push({
-      id: taskId,
-      name: parts[parts.length - 1], // 仅文件名
-      progress: 0,
-      status: 'pending',
-      statusText: '准备中...',
-      progressStatus: '',
-    })
+    fileList.push(file)
+    fileTaskIds.push(parentId)
+  }
+
+  // 按 parentId 分组处理，每组独立上传
+  for (let i = 0; i < fileList.length; i++) {
+    const file = fileList[i]
+    const parentId = fileTaskIds[i]
+    const name = (file.webkitRelativePath || file.name).split('/').pop()
+    const taskId = createTask(name)
 
     try {
-      await uploadSingleFile(file, parentId, taskId)
-      ElMessage.success(`${parts[parts.length - 1]} 上传成功`)
+      await uploadFiles([file], parentId, onTaskUpdate, taskId)
+      ElMessage.success(`${name} 上传成功`)
     } catch (e) {
-      const t = tasks.value.find((task) => task.id === taskId)
-      if (t) {
-        t.status = 'exception'
-        t.statusText = '上传失败'
-        t.progressStatus = 'exception'
-      }
-      ElMessage.error(`${parts[parts.length - 1]} 上传失败`)
+      ElMessage.error(`${name} 上传失败`)
     }
   }
 
@@ -318,4 +329,9 @@ const handleFolderChange = async (event) => {
 }
 .task-status.success { color: #67c23a; }
 .task-status.exception { color: #f56c6c; }
+.task-detail {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ap-text-sub);
+}
 </style>
