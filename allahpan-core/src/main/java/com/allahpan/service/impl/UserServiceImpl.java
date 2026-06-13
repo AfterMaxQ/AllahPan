@@ -1,19 +1,20 @@
 package com.allahpan.service.impl;
 
-import com.allahpan.common.api.ResultCode;
-import com.allahpan.common.exception.Asserts;
-import com.allahpan.bo.AdminUserDetails;
-import com.allahpan.mbg.mapper.UserMapper;
-import com.allahpan.mbg.model.User;
-import com.allahpan.mbg.model.UserExample;
-import com.allahpan.service.UserCacheService;
-import com.allahpan.service.UserService;
+import java.util.Date;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.util.Date;
+import com.allahpan.bo.AdminUserDetails;
+import com.allahpan.common.exception.Asserts;
+import com.allahpan.common.service.BloomFilterService;
+import com.allahpan.mbg.mapper.UserMapper;
+import com.allahpan.mbg.model.User;
+import com.allahpan.mbg.model.UserExample;
+import com.allahpan.service.UserCacheService;
+import com.allahpan.service.UserService;
 
 @Service
 public class UserServiceImpl implements UserService {
@@ -21,6 +22,8 @@ public class UserServiceImpl implements UserService {
     private UserMapper userMapper;
     @Autowired
     private UserCacheService userCacheService;
+    @Autowired
+    private BloomFilterService bloomFilterService;
     @Autowired
     private PasswordEncoder passwordEncoder;
 
@@ -39,13 +42,14 @@ public class UserServiceImpl implements UserService {
             user.setFirstLogin((byte) 1);
             user.setCreateTime(new Date());
             userMapper.insert(user);
+            bloomFilterService.add(email);
         } else {
             user = list.get(0);
             Asserts.isTrue(user.getStatus() == 1, "账号已被禁用");
             user.setLastLoginTime(new Date());
             userMapper.updateByPrimaryKeySelective(user);
         }
-        userCacheService.setUser(user);
+        userCacheService.delUserByEmail(user.getEmail());
         return user;
     }
 
@@ -60,7 +64,7 @@ public class UserServiceImpl implements UserService {
         Asserts.isTrue(passwordEncoder.matches(password, user.getPassword()), "密码错误");
         user.setLastLoginTime(new Date());
         userMapper.updateByPrimaryKeySelective(user);
-        userCacheService.setUser(user);
+        userCacheService.delUserByEmail(user.getEmail());
         return user;
     }
 
@@ -71,7 +75,7 @@ public class UserServiceImpl implements UserService {
         user.setPassword(passwordEncoder.encode(newPassword));
         user.setFirstLogin((byte) 0);
         userMapper.updateByPrimaryKeySelective(user);
-        userCacheService.setUser(user);
+        userCacheService.delUserByEmail(user.getEmail());
         return user;
     }
 

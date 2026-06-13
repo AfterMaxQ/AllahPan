@@ -13,4 +13,6 @@ public interface UserCacheService {
     void setUser(User user);
     /** 根据用户 ID 删除缓存 */
     void delUser(Long userId);
+    /** 根据邮箱删除缓存（调用方已有 email 时使用，避免二次查 DB） */
+    void delUserByEmail(String email);
 }
