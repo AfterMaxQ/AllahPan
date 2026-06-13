@@ -174,11 +174,13 @@ public class FileServiceImpl implements FileService {
     public void deleteFile(Long fileId) {
         File file = fileMapper.selectByPrimaryKey(fileId);
         Asserts.isTrue(file != null, "文件不存在");
-        // 先移动物理文件，成功后再写 DB，避免孤儿垃圾记录
+        // 先尝试移动物理文件到 MinIO 回收站
+        // 失败不阻塞 DB 软删除：秒传场景下多条 DB 记录共享同一 storageKey，
+        // 首条删除已将对象移入 trash，后续删除时源对象已不存在
         try {
             moveToTrash(file);
         } catch (Exception e) {
-            throw new RuntimeException("无法将文件移至回收站: " + file.getStorageKey(), e);
+            log.warn("无法将文件移至回收站: {} (id={})", file.getStorageKey(), file.getId(), e);
         }
         file.setDeleteTime(new Date());
         fileMapper.updateByPrimaryKeySelective(file);
@@ -214,13 +216,37 @@ public class FileServiceImpl implements FileService {
         }
     }
 
-    /** 将文件移至回收站（MinIO: 复制到 trash bucket 后删除源对象），失败时抛出异常由调用方处理 */
+    /** 统计其他活跃记录（delete_time IS NULL）共享同一 storageKey 的数量 */
+    private long countActiveRefs(String storageKey, Long excludeId) {
+        if (storageKey == null) return 0;
+        FileExample example = new FileExample();
+        example.createCriteria()
+                .andStorageKeyEqualTo(storageKey)
+                .andDeleteTimeIsNull()
+                .andIdNotEqualTo(excludeId);
+        return fileMapper.countByExample(example);
+    }
+
+    /** 统计所有记录（含已删除）共享同一 storageKey 的数量 */
+    private long countAllRefs(String storageKey, Long excludeId) {
+        if (storageKey == null) return 0;
+        FileExample example = new FileExample();
+        example.createCriteria()
+                .andStorageKeyEqualTo(storageKey)
+                .andIdNotEqualTo(excludeId);
+        return fileMapper.countByExample(example);
+    }
+
+    /** 将文件移至回收站（MinIO: 复制到 trash bucket，仅当无其他活跃引用时删除源对象） */
     private void moveToTrash(File file) throws Exception {
         if (file.getStorageKey() == null) return;
-        // 非文件夹 → 复制到 trash bucket 后删除源对象
+        // 非文件夹 → 复制到 trash bucket
         if (file.getIsFolder() == null || file.getIsFolder() != 1) {
             minioUtil.copyToTrash(file.getStorageKey());
-            minioUtil.removeObject(file.getStorageKey());
+            // 仅当无其他活跃记录引用同一 storageKey 时才从 files bucket 删除
+            if (countActiveRefs(file.getStorageKey(), file.getId()) == 0) {
+                minioUtil.removeObject(file.getStorageKey());
+            }
         }
     }
 
@@ -230,8 +256,11 @@ public class FileServiceImpl implements FileService {
         // 非文件夹 → 从 trash bucket 恢复到 files bucket
         if (file.getIsFolder() == null || file.getIsFolder() != 1) {
             try {
-                minioUtil.restoreFromTrash(file.getStorageKey());
-                minioUtil.removeFromTrash(file.getStorageKey());
+                // 如果已有其他活跃记录引用同一 storageKey，对象已在 files bucket 中，无需恢复
+                if (countActiveRefs(file.getStorageKey(), file.getId()) == 0) {
+                    minioUtil.restoreFromTrash(file.getStorageKey());
+                    minioUtil.removeFromTrash(file.getStorageKey());
+                }
             } catch (Exception e) {
                 log.warn("从 MinIO 回收站恢复失败: {}", file.getStorageKey(), e);
             }
@@ -307,7 +336,10 @@ public class FileServiceImpl implements FileService {
                 esIndexService.delete(fileId);
             }
             try {
-                minioUtil.removeFromTrash(file.getStorageKey());
+                // 仅当无其他记录引用同一 storageKey 时才从 trash bucket 删除
+                if (countAllRefs(file.getStorageKey(), file.getId()) == 0) {
+                    minioUtil.removeFromTrash(file.getStorageKey());
+                }
             } catch (Exception e) {
                 log.warn("从 MinIO 回收站删除失败: {}", file.getStorageKey(), e);
             }
