@@ -39,7 +39,7 @@ services:
       context: ./docker/elasticsearch
       dockerfile: Dockerfile
     image: allahpan-elasticsearch:8.11.0-ik
-    container_name: elasticsearch
+    container_name: elasticsearch-allahpan
     ports:
       - "9200:9200"
     environment:

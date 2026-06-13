@@ -166,6 +166,20 @@ public class MinioUtil {
         );
     }
 
+    /** Copy object within files bucket (used for rename/move) */
+    public void copyObject(String sourceKey, String destKey) throws Exception {
+        minioClient.copyObject(
+                CopyObjectArgs.builder()
+                        .source(CopySource.builder()
+                                .bucket(bucketName)
+                                .object(sourceKey)
+                                .build())
+                        .bucket(bucketName)
+                        .object(destKey)
+                        .build()
+        );
+    }
+
     public String getBucketName() { return bucketName; }
     public String getThumbnailBucket() { return thumbnailBucket; }
     public String getTrashBucket() { return trashBucket; }

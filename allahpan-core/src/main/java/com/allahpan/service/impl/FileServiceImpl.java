@@ -391,7 +391,7 @@ public class FileServiceImpl implements FileService {
     }
 
     /**
-     * 递归重建文件夹下所有子孙节点的 filePath
+     * 递归重建文件夹下所有子孙节点的 filePath 和 storageKey
      */
     private void rebuildDescendantPaths(Long folderId) {
         FileExample example = new FileExample();
@@ -399,6 +399,24 @@ public class FileServiceImpl implements FileService {
         List<File> children = fileMapper.selectByExample(example);
         for (File child : children) {
             child.setFilePath(buildPath(child.getFileName(), child.getParentId()));
+
+            String oldKey = child.getStorageKey();
+            if (oldKey != null) {
+                String newKey = resolveRelativePath(child.getParentId(), child.getFileName());
+                if (!newKey.equals(oldKey)) {
+                    child.setStorageKey(newKey);
+                    if (child.getIsFolder() == null || child.getIsFolder() != 1) {
+                        try {
+                            minioUtil.copyObject(oldKey, newKey);
+                            minioUtil.removeObject(oldKey);
+                        } catch (Exception e) {
+                            log.error("MinIO 重命名子孙文件失败: {} -> {}", oldKey, newKey, e);
+                            // 继续处理其他子孙，不因单个失败中断全部
+                        }
+                    }
+                }
+            }
+
             fileMapper.updateByPrimaryKeySelective(child);
             if (child.getIsFolder() == 1) {
                 rebuildDescendantPaths(child.getId());
@@ -505,9 +523,21 @@ public class FileServiceImpl implements FileService {
             assertNameUnique(parentId, newName);
         }
 
-        // MinIO 重命名：逻辑操作，仅更新 DB storageKey（旧对象保留无引用）
-        if (file.getStorageKey() != null) {
+        // MinIO 重命名：复制到新 key + 删除旧 key（非文件夹）
+        String oldKey = file.getStorageKey();
+        if (oldKey != null) {
             String newKey = resolveRelativePath(parentId, newName);
+            if (!newKey.equals(oldKey)) {
+                if (file.getIsFolder() == null || file.getIsFolder() != 1) {
+                    try {
+                        minioUtil.copyObject(oldKey, newKey);
+                        minioUtil.removeObject(oldKey);
+                    } catch (Exception e) {
+                        log.error("MinIO 重命名失败: {} -> {}", oldKey, newKey, e);
+                        Asserts.fail("文件重命名失败");
+                    }
+                }
+            }
             file.setStorageKey(newKey);
         }
 
