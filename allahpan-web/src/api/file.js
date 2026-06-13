@@ -18,10 +18,15 @@ export function uploadFile(file, parentId, onProgress) {
   formData.append('file', file)
   formData.append('parentId', parentId || 0)
   return request.post('/file/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000, // 5 分钟超时，覆盖默认 30s，给慢速网络和 MinIO 处理足够时间
     onUploadProgress: (event) => {
-      if (onProgress && event.total) {
-        onProgress(Math.round((event.loaded / event.total) * 100))
+      if (onProgress) {
+        if (event.total > 0) {
+          onProgress(Math.round((event.loaded / event.total) * 100))
+        } else if (event.loaded > 0) {
+          // event.total 可能为 0（如 chunked encoding），按文件大小估算进度
+          onProgress(Math.round((event.loaded / file.size) * 100))
+        }
       }
     },
   })

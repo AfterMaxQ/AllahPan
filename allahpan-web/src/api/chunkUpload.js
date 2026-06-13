@@ -4,7 +4,7 @@ import { useUserStore } from '@/stores/user'
 // 无超时限制的 axios 实例，用于分片上传/下载
 const noTimeoutAxios = axios.create({
   baseURL: '/api',
-  timeout: 0,
+  timeout: 300000, // 5 分钟超时，避免分片上传无限挂起
 })
 
 // 复用 JWT 拦截器
@@ -49,10 +49,14 @@ export function uploadChunk(uploadId, chunkIndex, chunkBlob, onProgress) {
   formData.append('chunk', chunkBlob, 'chunk')
 
   return noTimeoutAxios.post('/file/chunk/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: (event) => {
-      if (onProgress && event.total) {
-        onProgress(Math.round((event.loaded / event.total) * 100))
+      if (onProgress) {
+        if (event.total > 0) {
+          onProgress(Math.round((event.loaded / event.total) * 100))
+        } else if (event.loaded > 0) {
+          // event.total 可能为 0，按 5MB 分片大小估算进度
+          onProgress(Math.round((event.loaded / (5 * 1024 * 1024)) * 100))
+        }
       }
     },
   })

@@ -3,9 +3,9 @@ import { calculateMD5 } from '@/utils/md5'
 import { initUpload, uploadChunk, completeUpload } from '@/api/chunkUpload'
 import { uploadFile } from '@/api/file'
 
-const CHUNK_SIZE = 5 * 1024 * 1024 // 5MB
+const CHUNK_SIZE = 10 * 1024 * 1024 // 10MB
 const CHUNK_THRESHOLD = 10 * 1024 * 1024 // 10MB：超过此值使用分片上传
-const CONCURRENCY = 2
+const CONCURRENCY = 6
 
 // ====================== SpeedTracker ======================
 
@@ -172,8 +172,23 @@ export function useChunkUpload() {
       async function worker() {
         while (queue.length > 0 && !cancelFlag) {
           const chunk = queue.shift()
+          // 分片内部进度：实时反馈当前分片的上传进度
           await uploadChunk(uploadId, chunk.index, chunk.blob, (chunkPercent) => {
-            // chunkProgress 仅用于单个分片的进度细节，此处简化为不使用
+            const doneBeforeThis = totalChunks - queue.length - 1
+            if (doneBeforeThis >= 0) {
+              const loadedSoFar = Math.min(
+                doneBeforeThis * CHUNK_SIZE + Math.round(chunk.blob.size * chunkPercent / 100),
+                file.size
+              )
+              const remainingSoFar = file.size - loadedSoFar
+              emit({
+                percent: Math.round((loadedSoFar / file.size) * 100),
+                loaded: loadedSoFar,
+                speed: speedTracker.getSpeed(),
+                eta: speedTracker.getETA(remainingSoFar),
+                statusText: `${doneBeforeThis}/${totalChunks} 分片 · 当前分片 ${chunkPercent}%`,
+              })
+            }
           })
           speedTracker.addSample(chunk.blob.size)
           const done = totalChunks - queue.length
