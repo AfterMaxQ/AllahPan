@@ -9,6 +9,7 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
@@ -30,7 +31,8 @@ public class EsIndexServiceImpl implements EsIndexService {
     private FileMapper fileMapper;
 
     private final RestTemplate restTemplate = new RestTemplate();
-    private static final String SEARCH_SERVICE_URL = "http://localhost:8081/es-admin/files";
+    @Value("${allahpan.search.service-url:http://localhost:8081/es-admin/files}")
+    private String searchServiceUrl;
     private static final int MAX_RETRIES = 3;
 
     /** ES 操作失败补偿队列：fileId → "index"|"delete"，定时重试 */
@@ -47,7 +49,7 @@ public class EsIndexServiceImpl implements EsIndexService {
                 try {
                     // 用 GET /es-admin/files/search?keyword=__health_check__ 探测搜索服务
                     restTemplate.getForEntity(
-                            SEARCH_SERVICE_URL + "/search?keyword=__health__&pageNum=1&pageSize=1",
+                            searchServiceUrl + "/search?keyword=__health__&pageNum=1&pageSize=1",
                             String.class);
                     long count = rebuildAll();
                     LOG.info("ES 启动清理完成，索引 {} 个文件", count);
@@ -100,14 +102,14 @@ public class EsIndexServiceImpl implements EsIndexService {
         body.put("uploaderName", uploaderName);
         body.put("originText", file.getOriginText() != null ? file.getOriginText() : "");
         body.put("createTime", file.getCreateTime() != null ? file.getCreateTime().toString() : "");
-        restTemplate.postForEntity(SEARCH_SERVICE_URL + "/index", body, String.class);
+        restTemplate.postForEntity(searchServiceUrl + "/index", body, String.class);
     }
 
     @Override
     public void delete(Long fileId) {
         for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
             try {
-                restTemplate.delete(SEARCH_SERVICE_URL + "/" + fileId);
+                restTemplate.delete(searchServiceUrl + "/" + fileId);
                 return;
             } catch (Exception e) {
                 if (attempt == MAX_RETRIES - 1) {
@@ -124,7 +126,7 @@ public class EsIndexServiceImpl implements EsIndexService {
     public long rebuildAll() {
         // 1. 清空 ES 索引
         try {
-            restTemplate.delete(SEARCH_SERVICE_URL + "/_all");
+            restTemplate.delete(searchServiceUrl + "/_all");
         } catch (Exception e) {
             LOG.warn("清空 ES 索引失败: {}", e.getMessage());
             throw new RuntimeException("ES 全量删除失败，放弃重建", e);
@@ -181,7 +183,7 @@ public class EsIndexServiceImpl implements EsIndexService {
                         doIndex(f);
                     }
                 } else {
-                    restTemplate.delete(SEARCH_SERVICE_URL + "/" + entry.getKey());
+                    restTemplate.delete(searchServiceUrl + "/" + entry.getKey());
                 }
                 success++;
             } catch (Exception e) {

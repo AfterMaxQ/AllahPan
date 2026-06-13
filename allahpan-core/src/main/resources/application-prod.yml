@@ -1,0 +1,102 @@
+
+server:
+  port: ${SERVER_PORT:8088}
+
+spring:
+  servlet:
+    multipart:
+      max-file-size: 512MB
+      max-request-size: 1024MB
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3307}/allahpan?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf-8
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    type: com.alibaba.druid.pool.DruidDataSource
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 3000
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    connection-timeout: 10000
+
+mybatis:
+  mapper-locations:
+    - classpath:com/allahpan/mbg/mapper/*.xml
+    - classpath:dao/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+jwt:
+  tokenHeader: Authorization
+  tokenHead: "Bearer "
+  secret: ${JWT_SECRET:e7b2a3c94d1f5680fe912a7b4c3d8e5f6a1b7c2d3e4f5a6b7c8d9e0f1a2b3c4d5}
+  expiration: 604800
+
+secure:
+  ignored:
+    urls:
+      - /api/auth/send-code
+      - /api/auth/login-by-code
+      - /api/auth/login-by-password
+      - /swagger-ui/**
+      - /v3/api-docs/**
+      - /doc.html
+      - /webjars/**
+      - /api/share/**
+      - /api/file/*/thumbnail
+      - /api/file/*/stream
+      - /api/file/*/download
+      - /api/file/watch
+      - /error
+
+redis:
+  database: allahpan
+  key:
+    authCode: 'authCode'
+    member: 'member'
+  expire:
+    common: 86400
+    authCode: 300
+
+mail:
+  host: smtp.qq.com
+  port: 587
+  username: ${MAIL_USERNAME:1455726631@qq.com}
+  password: ${MAIL_PASSWORD}
+  from: AllahPan <${MAIL_USERNAME:1455726631@qq.com}>
+
+allahpan:
+  text:
+    max-length: 10000
+  thumbnail:
+    pdf-dpi: 150
+  search:
+    service-url: ${SEARCH_SERVICE_URL:http://localhost:8081/es-admin/files}
+
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  accessKey: ${MINIO_ACCESS_KEY:minioadmin}
+  secretKey: ${MINIO_SECRET_KEY:minioadmin}
+  bucketName: ${MINIO_BUCKET:allahpan-files}
+  thumbnailBucket: ${MINIO_THUMBNAIL_BUCKET:allahpan-thumbnails}
+  trashBucket: ${MINIO_TRASH_BUCKET:allahpan-trash}
+
+ollama:
+  base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+  model: qwen3.5:2b
+  timeout: 60
+  num-predict: 4096
+
+logging:
+  level:
+    root: WARN
+    com.allahpan: INFO
+  file:
+    path: ${LOG_PATH:./logs}
+    name: ${LOG_PATH:./logs}/allahpan-core.log

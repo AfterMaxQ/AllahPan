@@ -7,6 +7,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
@@ -22,7 +23,8 @@ import java.util.Map;
 public class SearchController {
 
     private static final Logger LOG = LoggerFactory.getLogger(SearchController.class);
-    private static final String SEARCH_SERVICE = "http://localhost:8081/es-admin/files/search";
+    @Value("${allahpan.search.service-url:http://localhost:8081/es-admin/files}")
+    private String searchServiceUrl;
 
     @Autowired
     private EsIndexService esIndexService;
@@ -41,7 +43,7 @@ public class SearchController {
         if (fileType != null && !fileType.isEmpty()) {
             query += "&fileType=" + URLEncoder.encode(fileType, StandardCharsets.UTF_8);
         }
-        URI uri = URI.create(SEARCH_SERVICE + "?" + query);
+        URI uri = URI.create(searchServiceUrl + "/search?" + query);
         LOG.info("搜索请求: keyword={}", keyword);
         try {
             Map<String, Object> result = rt.getForObject(uri, Map.class);
