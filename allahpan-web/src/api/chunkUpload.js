@@ -1,13 +1,11 @@
 import axios from 'axios'
 import { useUserStore } from '@/stores/user'
 
-// 无超时限制的 axios 实例，用于分片上传/下载
 const noTimeoutAxios = axios.create({
   baseURL: '/api',
-  timeout: 300000, // 5 分钟超时，避免分片上传无限挂起
+  timeout: 120000, // 单片 2MB，120s 足够；避免长时间挂死
 })
 
-// 复用 JWT 拦截器
 noTimeoutAxios.interceptors.request.use((config) => {
   const userStore = useUserStore()
   if (userStore.token) {
@@ -16,7 +14,6 @@ noTimeoutAxios.interceptors.request.use((config) => {
   return config
 })
 
-// 复用响应拦截器（解包 CommonResult）
 noTimeoutAxios.interceptors.response.use(
   (response) => {
     const res = response.data
@@ -27,21 +24,46 @@ noTimeoutAxios.interceptors.response.use(
   (error) => Promise.reject(error)
 )
 
-/**
- * 初始化上传会话（支持断点续传）
- * @returns {{ uploadId, uploadedChunks, status }}
- */
-export function initUpload(data) {
-  return noTimeoutAxios.post('/file/chunk/init', data)
+export function isRetryableUploadError(error) {
+  const status = error?.response?.status
+  if ([408, 429, 500, 502, 503, 504, 524].includes(status)) return true
+  const code = error?.code
+  if (code === 'ECONNABORTED' || code === 'ERR_NETWORK' || code === 'ETIMEDOUT') return true
+  const msg = (error?.message || '').toLowerCase()
+  return msg.includes('timeout') || msg.includes('network') || msg.includes('524')
 }
 
-/**
- * 上传单个分片
- * @param {string} uploadId
- * @param {number} chunkIndex
- * @param {Blob} chunkBlob
- * @param {Function} onProgress - (percent: 0-100)
- */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function withRetry(requestFn, { maxRetries = 4, baseDelay = 1500, signal } = {}) {
+  let lastError
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (signal?.aborted) {
+      throw new DOMException('上传已取消', 'AbortError')
+    }
+    try {
+      return await requestFn()
+    } catch (error) {
+      lastError = error
+      if (error?.name === 'AbortError' || error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') {
+        throw error
+      }
+      if (!isRetryableUploadError(error) || attempt === maxRetries) throw error
+      await sleep(baseDelay * Math.pow(2, attempt))
+    }
+  }
+  throw lastError
+}
+
+export function initUpload(data, signal) {
+  return withRetry(
+    () => noTimeoutAxios.post('/file/chunk/init', data, { signal }),
+    { maxRetries: 3, signal }
+  )
+}
+
 export function uploadChunk(uploadId, chunkIndex, chunkBlob, onProgress, signal) {
   const formData = new FormData()
   formData.append('uploadId', uploadId)
@@ -50,31 +72,32 @@ export function uploadChunk(uploadId, chunkIndex, chunkBlob, onProgress, signal)
 
   const actualSize = chunkBlob.size
 
-  return noTimeoutAxios.post('/file/chunk/upload', formData, {
-    signal,
-    onUploadProgress: (event) => {
-      if (onProgress) {
+  return withRetry(
+    () => noTimeoutAxios.post('/file/chunk/upload', formData, {
+      signal,
+      onUploadProgress: (event) => {
+        if (!onProgress) return
         if (event.total > 0) {
           onProgress(Math.round((event.loaded / event.total) * 100))
         } else if (event.loaded > 0) {
-          // event.total 可能为 0（chunked encoding），按实际分片大小估算进度
           onProgress(Math.min(99, Math.round((event.loaded / actualSize) * 100)))
         }
-      }
-    },
-  })
+      },
+    }),
+    { maxRetries: 5, baseDelay: 2000, signal }
+  )
 }
 
-/**
- * 合并分片并完成上传
- */
-export function completeUpload(uploadId) {
-  return noTimeoutAxios.post('/file/chunk/complete', { uploadId })
+export function completeUpload(uploadId, signal) {
+  return withRetry(
+    () => noTimeoutAxios.post('/file/chunk/complete', { uploadId }, {
+      signal,
+      timeout: 600000, // 大文件合并可能较久
+    }),
+    { maxRetries: 3, baseDelay: 3000, signal }
+  )
 }
 
-/**
- * 查询上传会话状态（用于断点续传恢复）
- */
 export function getUploadStatus(uploadId) {
   return noTimeoutAxios.get(`/file/chunk/status/${uploadId}`)
 }

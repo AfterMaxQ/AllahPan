@@ -54,14 +54,16 @@ const props = defineProps({
 defineEmits(['cancel', 'retry'])
 
 const statusText = computed(() => {
+  if (props.task.status === 'running') {
+    return props.task.type === 'download' ? '下载中' : '上传中'
+  }
   const map = {
     queued: '等待中',
-    running: props.task.statusText || '传输中',
-    success: props.task.statusText || '已完成',
-    exception: props.task.statusText || '失败',
+    success: '已完成',
+    exception: '失败',
     canceled: '已取消',
   }
-  return map[props.task.status] || props.task.statusText || '-'
+  return map[props.task.status] || '-'
 })
 
 const progressStatus = computed(() => {

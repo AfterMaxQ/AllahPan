@@ -3,11 +3,17 @@ import { defineStore } from 'pinia'
 import { ElMessage } from 'element-plus'
 import { uploadTransferFile } from '@/composables/useChunkUpload'
 import { downloadFileBlob, saveBlob } from '@/api/file'
+import { isRetryableUploadError } from '@/api/chunkUpload'
 import { SpeedTracker } from '@/utils/transfer'
 import { useFileStore } from '@/stores/file'
 
 const MAX_UPLOADS = 3
 const MAX_DOWNLOADS = 3
+const MAX_UPLOAD_AUTO_RETRIES = 2
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 function createId(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -17,6 +23,9 @@ function normalizeError(error, fallback) {
   if (error?.name === 'CanceledError' || error?.name === 'AbortError' || error?.code === 'ERR_CANCELED') {
     return '已取消'
   }
+  const status = error?.response?.status
+  if (status === 524 || status === 504) return '网络超时，请检查网络后重试'
+  if (status === 502 || status === 503) return '服务暂时不可用，请稍后重试'
   return error?.response?.data?.message || error?.message || fallback
 }
 
@@ -116,34 +125,62 @@ export const useTransferStore = defineStore('transfer', () => {
   }
 
   async function startUpload(task) {
-    task.controller = new AbortController()
-    updateTask(task, { status: 'running', statusText: '准备中...', error: '' })
+    let attempt = 0
+    while (attempt <= MAX_UPLOAD_AUTO_RETRIES) {
+      task.controller = new AbortController()
+      updateTask(task, {
+        status: 'running',
+        statusText: attempt > 0 ? '重试中...' : '准备中...',
+        error: '',
+      })
 
-    try {
-      await uploadTransferFile(task.file, task.parentId, task.id, (_, updates) => {
-        updateTask(task, updates)
-      }, task.controller.signal)
-      updateTask(task, {
-        status: 'success',
-        statusText: '上传完成',
-        progress: 100,
-        loaded: task.total,
-        speed: 0,
-        eta: 0,
-      })
-      useFileStore().triggerRefresh()
-    } catch (error) {
-      const canceled = task.controller?.signal.aborted
-      updateTask(task, {
-        status: canceled ? 'canceled' : 'exception',
-        statusText: canceled ? '已取消' : '上传失败',
-        speed: 0,
-        error: normalizeError(error, '上传失败'),
-      })
-      if (!canceled) console.error('上传任务失败:', error)
-    } finally {
-      task.controller = null
-      scheduleUploads()
+      try {
+        await uploadTransferFile(task.file, task.parentId, task.id, (_, updates) => {
+          updateTask(task, updates)
+        }, task.controller.signal)
+        updateTask(task, {
+          status: 'success',
+          statusText: '上传完成',
+          progress: 100,
+          loaded: task.total,
+          speed: 0,
+          eta: 0,
+        })
+        useFileStore().triggerRefresh()
+        task.controller = null
+        scheduleUploads()
+        return
+      } catch (error) {
+        const canceled = task.controller?.signal.aborted
+        task.controller = null
+        if (canceled) {
+          updateTask(task, {
+            status: 'canceled',
+            statusText: '已取消',
+            speed: 0,
+            error: '已取消',
+          })
+          scheduleUploads()
+          return
+        }
+
+        const canRetry = isRetryableUploadError(error) && attempt < MAX_UPLOAD_AUTO_RETRIES
+        if (canRetry) {
+          attempt += 1
+          await sleep(2000 * attempt)
+          continue
+        }
+
+        updateTask(task, {
+          status: 'exception',
+          statusText: '上传失败',
+          speed: 0,
+          error: normalizeError(error, '上传失败'),
+        })
+        console.error('上传任务失败:', error)
+        scheduleUploads()
+        return
+      }
     }
   }
 

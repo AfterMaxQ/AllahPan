@@ -5,14 +5,22 @@
  * 上传（useChunkUpload）和下载（FileDownloadDialog）共用。
  */
 export class SpeedTracker {
-  constructor(windowSize = 5) {
+  constructor(windowSize = 8) {
     this.samples = [] // [{ bytes, timestamp }]
     this.windowSize = windowSize
     this.totalBytes = 0
+    this.lastSampleAt = 0
+    this.lastInstantSpeed = 0
   }
 
   addSample(bytes) {
+    if (bytes <= 0) return
     const now = Date.now()
+    if (this.lastSampleAt > 0) {
+      const elapsed = (now - this.lastSampleAt) / 1000
+      if (elapsed > 0) this.lastInstantSpeed = bytes / elapsed
+    }
+    this.lastSampleAt = now
     this.samples.push({ bytes, timestamp: now })
     if (this.samples.length > this.windowSize) {
       this.samples.shift()
@@ -21,12 +29,14 @@ export class SpeedTracker {
   }
 
   getSpeed() {
-    if (this.samples.length < 2) return 0
-    const first = this.samples[0]
-    const last = this.samples[this.samples.length - 1]
-    const totalBytes = this.samples.slice(1).reduce((s, v) => s + v.bytes, 0)
-    const duration = (last.timestamp - first.timestamp) / 1000
-    return duration > 0 ? totalBytes / duration : 0
+    if (this.samples.length >= 2) {
+      const first = this.samples[0]
+      const last = this.samples[this.samples.length - 1]
+      const totalBytes = this.samples.slice(1).reduce((s, v) => s + v.bytes, 0)
+      const duration = (last.timestamp - first.timestamp) / 1000
+      if (duration > 0) return totalBytes / duration
+    }
+    return this.lastInstantSpeed
   }
 
   getETA(remainingBytes) {
@@ -37,6 +47,8 @@ export class SpeedTracker {
   reset() {
     this.samples = []
     this.totalBytes = 0
+    this.lastSampleAt = 0
+    this.lastInstantSpeed = 0
   }
 }
 

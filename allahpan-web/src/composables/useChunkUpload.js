@@ -4,9 +4,11 @@ import { SpeedTracker, formatSpeed, formatETA } from '@/utils/transfer'
 import { initUpload, uploadChunk, completeUpload } from '@/api/chunkUpload'
 import { uploadFile } from '@/api/file'
 
-const CHUNK_SIZE = 10 * 1024 * 1024 // 10MB
-const CHUNK_THRESHOLD = 10 * 1024 * 1024 // 10MB：超过此值使用分片上传
-const CONCURRENCY = 6
+// 2MB 分片：降低 Cloudflare/Nginx 单请求超时（524）风险
+const CHUNK_SIZE = 2 * 1024 * 1024
+const CHUNK_THRESHOLD = 10 * 1024 * 1024
+const CONCURRENCY = 3
+const UPLOAD_PROGRESS_MAX = 98 // 留 2% 给合并完成
 
 function isCanceledError(error) {
   return error?.name === 'CanceledError'
@@ -34,6 +36,15 @@ function createEmitter(taskId, file, onTaskUpdate) {
   })
 }
 
+function getChunkSize(fileSize, index) {
+  const start = index * CHUNK_SIZE
+  return Math.max(0, Math.min(CHUNK_SIZE, fileSize - start))
+}
+
+function toUploadProgress(loaded, fileSize) {
+  return Math.min(UPLOAD_PROGRESS_MAX, Math.round((loaded / fileSize) * UPLOAD_PROGRESS_MAX))
+}
+
 export async function uploadTransferFile(file, parentId, taskId, onTaskUpdate, signal) {
   if (file.size > CHUNK_THRESHOLD) {
     return uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal)
@@ -41,11 +52,9 @@ export async function uploadTransferFile(file, parentId, taskId, onTaskUpdate, s
   return uploadSingleStep(file, parentId, taskId, onTaskUpdate, signal)
 }
 
-// ---- 单步上传（小文件） ----
-
 async function uploadSingleStep(file, parentId, taskId, onTaskUpdate, signal) {
   const emit = createEmitter(taskId, file, onTaskUpdate)
-  const speedTracker = new SpeedTracker()
+  const speedTracker = new SpeedTracker(8)
   let previousLoaded = 0
 
   emit({ statusText: '上传中...' })
@@ -55,17 +64,17 @@ async function uploadSingleStep(file, parentId, taskId, onTaskUpdate, signal) {
       const delta = loaded - previousLoaded
       previousLoaded = loaded
       if (delta > 0) speedTracker.addSample(delta)
-      const speed = speedTracker.getSpeed()
       const progress = evt.percent || Math.round((loaded / file.size) * 100)
       emit({
         progress,
         percent: progress,
         loaded,
-        speed,
+        speed: speedTracker.getSpeed(),
         eta: speedTracker.getETA(Math.max(file.size - loaded, 0)),
+        statusText: '上传中...',
       })
     }, signal)
-    emit({ progress: 100, percent: 100, loaded: file.size, status: 'success', statusText: '上传成功' })
+    emit({ progress: 100, percent: 100, loaded: file.size, status: 'success', statusText: '上传完成' })
   } catch (e) {
     if (isCanceledError(e) || signal?.aborted) {
       emit({ status: 'canceled', statusText: '已取消' })
@@ -76,22 +85,34 @@ async function uploadSingleStep(file, parentId, taskId, onTaskUpdate, signal) {
   }
 }
 
-// ---- 分片上传（大文件） ----
-
 async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
   const emit = createEmitter(taskId, file, onTaskUpdate)
+  const speedTracker = new SpeedTracker(8)
+  let lastReportedLoaded = 0
+
+  const reportProgress = (loaded, statusText = '上传中...') => {
+    const safeLoaded = Math.min(Math.max(loaded, 0), file.size)
+    const delta = safeLoaded - lastReportedLoaded
+    if (delta > 0) speedTracker.addSample(delta)
+    lastReportedLoaded = safeLoaded
+    const speed = speedTracker.getSpeed()
+    const remaining = file.size - safeLoaded
+    emit({
+      progress: toUploadProgress(safeLoaded, file.size),
+      percent: toUploadProgress(safeLoaded, file.size),
+      loaded: safeLoaded,
+      speed,
+      eta: speedTracker.getETA(remaining),
+      statusText,
+    })
+  }
 
   try {
-    // 1. 计算 MD5
-    emit({ statusText: '计算文件指纹...' })
-    const fileMd5 = await calculateMD5(file, (p) => {
-      const progress = Math.round(p * 0.05)
-      emit({ progress, percent: progress, statusText: `计算指纹 ${p}%` }) // 前5%留给MD5
-    })
+    emit({ statusText: '准备中...', progress: 0, loaded: 0 })
+    const fileMd5 = await calculateMD5(file)
     ensureNotCanceled(signal)
 
-    // 2. 初始化上传会话
-    emit({ statusText: '初始化...' })
+    emit({ statusText: '准备中...' })
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
     const initResult = await initUpload({
       fileName: file.name,
@@ -101,21 +122,23 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
       parentId: parentId || 0,
       chunkSize: CHUNK_SIZE,
       totalChunks,
-    })
+    }, signal)
     ensureNotCanceled(signal)
 
     const uploadId = initResult.uploadId
     const uploadedChunks = new Set(initResult.uploadedChunks || [])
-    const isResumed = initResult.status === 'resumed'
 
-    emit({
-      statusText: isResumed ? `续传中...（已上传 ${uploadedChunks.size}/${totalChunks}）` : '上传中...',
-      progress: Math.round((uploadedChunks.size / totalChunks) * 100),
-      percent: Math.round((uploadedChunks.size / totalChunks) * 100),
-      loaded: uploadedChunks.size * CHUNK_SIZE,
-    })
+    let completedBytes = Array.from(uploadedChunks)
+      .reduce((sum, index) => sum + getChunkSize(file.size, index), 0)
+    const inFlightBytes = new Map()
 
-    // 3. 收集待上传分片
+    const getTotalLoaded = () => {
+      const partial = Array.from(inFlightBytes.values()).reduce((sum, n) => sum + n, 0)
+      return Math.min(completedBytes + partial, file.size)
+    }
+
+    reportProgress(completedBytes, '上传中...')
+
     const pendingChunks = []
     for (let i = 0; i < totalChunks; i++) {
       if (!uploadedChunks.has(i)) {
@@ -125,34 +148,7 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
       }
     }
 
-    // 4. 并发上传
-    const speedTracker = new SpeedTracker()
-    const getChunkSize = (index) => {
-      const start = index * CHUNK_SIZE
-      return Math.max(0, Math.min(CHUNK_SIZE, file.size - start))
-    }
-    let completedCount = uploadedChunks.size
-    let completedBytes = Array.from(uploadedChunks)
-      .reduce((sum, index) => sum + getChunkSize(index), 0)
-    const inFlightBytes = new Map()
     const queue = [...pendingChunks]
-
-    const emitUploadProgress = (statusText) => {
-      const partialBytes = Array.from(inFlightBytes.values())
-        .reduce((sum, bytes) => sum + bytes, 0)
-      const loaded = Math.min(completedBytes + partialBytes, file.size)
-      const remaining = file.size - loaded
-      const speed = speedTracker.getSpeed()
-      const progress = Math.round((loaded / file.size) * 100)
-      emit({
-        progress,
-        percent: progress,
-        loaded,
-        speed,
-        eta: speedTracker.getETA(remaining),
-        statusText,
-      })
-    }
 
     async function worker() {
       while (queue.length > 0) {
@@ -161,45 +157,57 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
         try {
           await uploadChunk(uploadId, chunk.index, chunk.blob, (chunkPercent) => {
             inFlightBytes.set(chunk.index, Math.round(chunk.blob.size * chunkPercent / 100))
-            emitUploadProgress(`分片 ${completedCount}/${totalChunks} · 正在上传第 ${chunk.index + 1} 片 (${chunkPercent}%)`)
+            reportProgress(getTotalLoaded(), '上传中...')
           }, signal)
         } catch (e) {
           inFlightBytes.delete(chunk.index)
-          if (isCanceledError(e) || signal?.aborted) {
-            return
-          }
+          if (isCanceledError(e) || signal?.aborted) return
           throw e
         }
         inFlightBytes.delete(chunk.index)
-        completedCount += 1
         completedBytes = Math.min(completedBytes + chunk.blob.size, file.size)
-        speedTracker.addSample(chunk.blob.size)
-        emitUploadProgress(`分片 ${completedCount}/${totalChunks}`)
+        reportProgress(completedBytes, '上传中...')
       }
     }
 
-    const workers = Array.from({ length: Math.min(CONCURRENCY, pendingChunks.length) }, () => worker())
-    await Promise.all(workers)
+    const workerCount = Math.min(CONCURRENCY, Math.max(pendingChunks.length, 1))
+    await Promise.all(Array.from({ length: workerCount }, () => worker()))
     ensureNotCanceled(signal)
 
-    // 5. 完成上传
-    emit({ statusText: '合并分片中...' })
-    const result = await completeUpload(uploadId)
-    emit({ progress: 100, percent: 100, loaded: file.size, status: 'success', statusText: '上传成功' })
-    return result
-
+    emit({ statusText: '正在完成...', progress: 99, loaded: file.size })
+    await completeUpload(uploadId, signal)
+    emit({
+      progress: 100,
+      percent: 100,
+      loaded: file.size,
+      speed: 0,
+      eta: 0,
+      status: 'success',
+      statusText: '上传完成',
+    })
+    return initResult
   } catch (e) {
     if (isCanceledError(e) || signal?.aborted) {
       emit({ status: 'canceled', statusText: '已取消' })
       throw e
     }
-    const errMsg = e?.response?.data?.message || e?.message || '未知错误'
-    emit({ status: 'exception', statusText: `上传失败：${errMsg}` })
-    throw e
+    const errMsg = normalizeUploadError(e)
+    emit({
+      status: 'exception',
+      statusText: '上传失败',
+      loaded: lastReportedLoaded,
+      progress: toUploadProgress(lastReportedLoaded, file.size),
+    })
+    throw new Error(errMsg)
   }
 }
 
-// ====================== useChunkUpload ======================
+function normalizeUploadError(error) {
+  const status = error?.response?.status
+  if (status === 524 || status === 504) return '网络超时，请检查网络后重试'
+  if (status === 502 || status === 503) return '服务暂时不可用，请稍后重试'
+  return error?.response?.data?.message || error?.message || '上传失败'
+}
 
 export function useChunkUpload() {
   const uploading = ref(false)
