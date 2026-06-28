@@ -123,4 +123,4 @@ private void assertNameUnique(Long parentId, String fileName) {
 
 - [03 — 文件上传流程](../architecture/03-file-upload-flow.md)
 - [04 — 文件操作](../architecture/04-file-operations.md)
-- [08 — RabbitMQ 管线](../architecture/08-rabbitmq-pipeline.md)
+- [06 — 文件上传与处理流水线](../architecture/06-file-upload-pipeline.md)

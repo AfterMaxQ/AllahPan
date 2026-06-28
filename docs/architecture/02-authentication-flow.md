@@ -145,17 +145,49 @@ graph TD
 
 | 步骤 | 文件 | 方法 |
 |------|------|------|
-| 发送验证码 | `AuthController.java:35` | `sendCode()` |
-| 生成/存储验证码 | `AuthCodeServiceImpl.java:28` | `sendCode()` |
+| 发送验证码 | `AuthController.java` | `sendCode()` |
+| 生成/存储验证码 | `AuthCodeServiceImpl.java` | `sendCode()` |
 | 邮件发送 | `MailService.java` | `send()` (QQ邮箱SMTP) |
-| 验证码校验 | `AuthCodeServiceImpl.java:48` | `verifyCode()` |
-| 验证码登录 | `UserServiceImpl.java:28` | `loginByCode()` |
-| 密码登录 | `UserServiceImpl.java:50` | `loginByPassword()` |
-| JWT 生成 | `AuthController.java:75` | `buildLoginResponse()` |
+| 验证码校验 | `AuthCodeServiceImpl.java` | `verifyCode()` |
+| 验证码登录 | `UserServiceImpl.java` | `loginByCode()` |
+| 密码登录 | `UserServiceImpl.java` | `loginByPassword()` |
+| JWT 生成 | `AuthController.java` | `buildLoginResponse()` |
 | JWT 工具 | `JwtTokenUtil.java` | `generateToken()` / `validateToken()` |
-| 请求过滤器 | `JwtAuthenticationTokenFilter.java:40` | `doFilterInternal()` |
-| 用户加载 | `MallSecurityConfig.java:18` | `loadUserByUsername()` |
+| 请求过滤器 | `JwtAuthenticationTokenFilter.java` | `doFilterInternal()` |
+| 用户加载 | `MallSecurityConfig.java` | `loadUserByUsername()` |
 | 用户详情 | `AdminUserDetails.java` | `getUserId()` / `getUsername()` |
-| 缓存读取 | `UserCacheServiceImpl.java:23` | `getUser()` |
-| 缓存写入 | `UserCacheServiceImpl.java:30` | `setUser()` |
-| 缓存删除 | `UserCacheServiceImpl.java:37` | `delUser()` |
+| 缓存读取 | `UserCacheServiceImpl.java` | `getUser()` |
+| 缓存写入 | `UserCacheServiceImpl.java` | `setUser()` |
+| 缓存删除 | `UserCacheServiceImpl.java` | `delUser()` |
+| 布隆过滤器 | `BloomFilterInitializer.java` | 启动时加载所有邮箱到 Redis bitmap |
+| 布隆预检 | `UserCacheServiceImpl.java` | `getUser()` 先调 `bloomFilterService.mightContain(email)` |
+
+## 布隆过滤器预检
+
+`UserCacheServiceImpl.getUser()` 在查 Redis/MySQL 之前，先调用 `bloomFilterService.mightContain(email)`：
+
+- **返回 false**：该邮箱绝对不存在，直接返回 null，跳过 Redis + MySQL 查询
+- **返回 true**：该邮箱可能存在，继续正常的 Redis → MySQL 查询流程
+
+`BloomFilterInitializer` (`ApplicationRunner`) 在应用启动时重建布隆过滤器，加载所有已有用户邮箱。
+
+## 随机 TTL 防雪崩
+
+`UserCacheServiceImpl` 在写入用户缓存时添加 0-300s 的随机抖动 (`ThreadLocalRandom`)：
+
+```
+实际 TTL = 86400 (24h) + random(0, 300)
+```
+
+这避免了大量用户缓存在同一时刻过期导致的缓存雪崩。
+
+## 密码登录流程
+
+`POST /api/auth/login-by-password` 支持已设密码的用户直接登录：
+
+1. 根据 email 查询用户（缓存 → DB）
+2. `BCryptPasswordEncoder.matches(rawPassword, storedHash)` 验证密码
+3. 成功 → 生成 JWT Token 返回
+4. 失败 → `CommonResult.failed("密码错误")`
+
+密码首次设置通过 `POST /api/user/set-password`，设置后 `first_login` 标记从 1 变为 0。`hasPassword` 字段反映在 JWT claims 中。

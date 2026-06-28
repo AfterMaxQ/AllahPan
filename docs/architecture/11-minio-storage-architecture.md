@@ -73,6 +73,8 @@ public MinioClient minioClient() {
 | `copyToTrash(key)` | files → trash | 软删除：复制到垃圾站 |
 | `restoreFromTrash(key)` | trash → files | 恢复：复制回文件桶 |
 | `removeFromTrash(key)` | trash | 物理删除：从垃圾站删除 |
+| `copyObject(sourceKey, destKey)` | files → files | 桶内复制（用于 rename/move） |
+| `listObjectNames(bucket)` | * | 列出桶内所有对象名（用于孤儿扫描） |
 
 **Bucket 初始化** (`@PostConstruct`): 启动时自动检查并创建 3 个 bucket（`allahpan-files`、`allahpan-thumbnails`、`allahpan-trash`）。
 
@@ -162,4 +164,23 @@ minio:
 | 文件上传 | `FileController.java` | `upload()` multipart 上传 |
 | 文件服务 | `FileServiceImpl.java` | 上传/下载/删除/重命名/移动 |
 | 流水线状态推送 | `FileProcessReceiver.java` | 处理完成时广播 `file-updated` |
-| 定时清理 | `TrashCleanupTask.java` | 垃圾站过期清理 |
+| 定时清理 | `TrashCleanupTask.java` | 垃圾站过期清理（60天） |
+| 孤儿清理 | `MinioOrphanCleanupTask.java` | 每日 4:00 双向扫描 3 个 bucket，清理无 DB 引用的 MinIO 对象 |
+
+## MinioOrphanCleanupTask — 孤儿对象清理
+
+`@Scheduled(cron = "0 0 4 * * ?")` 每天凌晨 4 点执行双向一致性扫描：
+
+1. **MinIO → DB**: 遍历 3 个 bucket 的所有对象名（`listObjectNames()`），对比 DB 中所有 `storageKey`/`thumbnailKey` 引用。MinIO 中存在但 DB 无引用的对象 → 删除。
+2. **DB → MinIO**: 分页遍历 DB 中所有 `storageKey`/`thumbnailKey`，调用 `statObject()` 检查是否存在。DB 有记录但 MinIO 无对应对象 → 记录 WARN 日志。
+3. 使用 `getBucketName()`/`getThumbnailBucket()`/`getTrashBucket()` 获取配置的 bucket 名称。
+
+## 生产部署
+
+生产环境通过 **Nginx (:88) + Cloudflare Tunnel (cloudflared)** 对外暴露，MinIO 不直接对外服务：
+
+```
+公网 → Cloudflare Edge (SSL) → cloudflared → localhost:88 (nginx) → /api/* → :8088
+```
+
+详见 [00-project-overview.md](00-project-overview.md) 第 8.1 节。

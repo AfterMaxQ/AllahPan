@@ -1,4 +1,4 @@
-# 06 — 请求处理全链路图
+# 07 — 请求处理全链路图
 
 ## HTTP 请求 → 响应 完整路径
 
@@ -87,6 +87,9 @@ sequenceDiagram
 | `SearchController` | `/api/search` | 2 | GET search（代理转发）, POST rebuild-index |
 | `FavoriteController` | `/api/favorite` | 4 | `POST /{fileId}`, `DELETE /{fileId}`, `GET /check/{fileId}`, `GET /list` |
 | `ShareController` | `/api/share` | 3 | POST create（需认证）, GET access（公开）, DELETE revoke（需认证） |
+| `ChunkController` | `/api/file/chunk` | 4 | `init`, `upload`, `complete`, `status/{uploadId}` — 大文件分片上传 |
+
+> **端点总数**: core 模块共有 ~34 个端点（含 chunk 4 个），search 模块 5 个，合计约 39 个。
 
 ## 安全配置
 
@@ -185,4 +188,7 @@ ErrorMessage: 文件不存在, Spend: 8ms
 | 断言工具 | `Asserts.java` | `fail()`, `isTrue()` |
 | 搜索代理 | `SearchController.java` | `search()` / `rebuildIndex()` — RestTemplate → `:8081` |
 | 分享 | `ShareController.java` | `createShare()`, `getShare()`, `deleteShare()` |
+| 分片上传 | `ChunkController.java` | `init()`, `uploadChunk()`, `complete()`, `status()` |
+| 布隆过滤 | `BloomFilterService.java` | `mightContain(email)` — Redis bitmap 预检 |
+| 布隆初始化 | `BloomFilterInitializer.java` | `ApplicationRunner` — 启动时加载用户邮箱 |
 | 收藏 | `FavoriteController.java` | `addFavorite()`, `removeFavorite()`, `isFavorited()`, `listFavorites()` |

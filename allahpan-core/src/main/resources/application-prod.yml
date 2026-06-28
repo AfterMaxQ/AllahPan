@@ -49,9 +49,6 @@ secure:
       - /doc.html
       - /webjars/**
       - /api/share/**
-      - /api/file/*/thumbnail
-      - /api/file/*/stream
-      - /api/file/*/download
       - /api/file/watch
       - /error
 

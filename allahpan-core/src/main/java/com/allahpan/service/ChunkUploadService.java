@@ -2,6 +2,8 @@ package com.allahpan.service;
 
 import java.util.Map;
 
+import org.springframework.web.multipart.MultipartFile;
+
 public interface ChunkUploadService {
 
     /**
@@ -17,7 +19,7 @@ public interface ChunkUploadService {
      * @param chunkIndex 分片序号 (0-based)
      * @param chunkBytes 分片数据
      */
-    void uploadChunk(String uploadId, int chunkIndex, byte[] chunkBytes);
+    void uploadChunk(String uploadId, int chunkIndex, MultipartFile chunk);
 
     /**
      * 合并分片并完成上传：合并 → MinIO → MD5 秒传检测 → DB → RabbitMQ

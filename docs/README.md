@@ -4,15 +4,16 @@
 
 系统架构说明，含 Mermaid 图表。
 
+- [00 — 项目总览](architecture/00-project-overview.md)
 - [01 — 模块依赖全景图](architecture/01-module-dependency.md)
 - [02 — 认证流程架构图](architecture/02-authentication-flow.md)
 - [03 — 文件上传流程架构图](architecture/03-file-upload-flow.md)
 - [04 — 文件管理操作架构图](architecture/04-file-operations.md)
 - [05 — 缓存与 AOP 架构图](architecture/05-cache-architecture.md)
-- [06 — 请求处理全链路图](architecture/06-request-pipeline.md)
-- [07 — 数据模型 ER 图](architecture/07-data-model.md)
-- [08 — RabbitMQ 文件处理流水线](architecture/08-rabbitmq-pipeline.md)
-- [09 — 搜索模块](architecture/09-search-module.md)
+- [06 — 文件上传与处理流水线](architecture/06-file-upload-pipeline.md)
+- [07 — 请求处理全链路图](architecture/07-request-pipeline.md)
+- [08 — 搜索系统架构](architecture/08-search-architecture.md)
+- [09 — 数据模型 ER 图](architecture/09-data-model.md)
 - [10 — 收藏模块](architecture/10-favorites-module.md)
 - [11 — MinIO 存储架构](architecture/11-minio-storage-architecture.md)
 

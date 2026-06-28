@@ -1,13 +1,16 @@
 package com.allahpan.controller;
 
 import com.allahpan.common.api.CommonResult;
+import com.allahpan.common.exception.Asserts;
 import com.allahpan.component.EsIndexService;
+import com.allahpan.bo.AdminUserDetails;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
@@ -57,8 +60,18 @@ public class SearchController {
     @PostMapping("/rebuild-index")
     @Operation(summary = "重建 ES 搜索索引（清空孤儿文档，重新索引全部有效文件）")
     public CommonResult<Map<String, Object>> rebuildIndex() {
+        assertInitialAdmin();
         long count = esIndexService.rebuildAll();
         LOG.info("搜索索引已重建: {} 个文件", count);
         return CommonResult.success(Map.of("indexedCount", count));
+    }
+
+    private void assertInitialAdmin() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof AdminUserDetails details) {
+            Asserts.isTrue(Long.valueOf(1L).equals(details.getUserId()), "仅管理员可重建搜索索引");
+            return;
+        }
+        Asserts.fail("未授权");
     }
 }

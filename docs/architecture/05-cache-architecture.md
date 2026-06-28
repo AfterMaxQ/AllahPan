@@ -17,6 +17,7 @@ graph TD
     subgraph "服务层 (allahpan-common)"
         RedisSvc["RedisService<br/>接口"]
         RedisImpl["RedisServiceImpl<br/>@Service"]
+        BloomFilter["BloomFilterService<br/>@Service<br/>Redis bitmap 布隆"]
     end
 
     subgraph "配置层 (allahpan-common)"
@@ -31,12 +32,14 @@ graph TD
     end
 
     UserCache --> Aspect
+    UserCache --> BloomFilter
     AuthCode -.->|"不走切面(类名不匹配)"| RedisSvc
     Aspect -->|"拦截 *CacheService.*"| UserCache
     Aspect -->|"默认吞异常"| UserCache
     Annotation -.->|"标记后异常传播"| Aspect
     UserCache --> RedisSvc
     AuthCode --> RedisSvc
+    BloomFilter --> RedisSvc
     RedisSvc --> RedisImpl
     RedisImpl --> Template
     Template --> Redis
@@ -133,6 +136,76 @@ sequenceDiagram
     Cache->>Redis: DEL allahpan:member:{email}
 ```
 
+## 布隆过滤器 — Redis Bitmap 邮件预检
+
+`BloomFilterService` (位于 `allahpan-common`) 使用 Redis Bitmap 实现布隆过滤器，快速判断邮箱是否**绝对不存在**：
+
+| 参数 | 值 |
+|------|-----|
+| 预期元素数 | 10000 |
+| 误判率 (FPP) | 1% |
+| Bitmap 大小 | ~95850 bits (~12 KB) |
+| 哈希函数数 | 7 (SHA-256 派生) |
+| Redis Key | `{redis.database}:bloom:user:email` |
+
+**查询流程** (在 `UserCacheServiceImpl.getUser()` 中):
+
+```
+bloomFilterService.mightContain(email)
+  ├── 返回 false → 邮箱绝对不存在 → 直接返回 null（跳过 Redis + MySQL）
+  └── 返回 true  → 邮箱可能存在 → 继续正常 Redis → MySQL 流程
+```
+
+`BloomFilterInitializer` (`ApplicationRunner`, `@Component`) 在应用启动时：
+1. 调用 `bloomFilterService.reset()` 清空位图
+2. 分页查询所有用户邮箱 → `bloomFilterService.add(email)` 逐条添加
+
+## 随机 TTL 防缓存雪崩
+
+`UserCacheServiceImpl` 写入缓存时添加随机 TTL 抖动：
+
+```
+实际 TTL = 86400s (24h) + ThreadLocalRandom.nextInt(0, 300)
+```
+
+0-300 秒的随机偏移避免了大量用户缓存在同一时刻过期导致的 Redis 瞬时高压。
+
+## 分享链接缓存
+
+`ShareServiceImpl` 使用 Redis 存储分享链接（**无 MySQL 表**）：
+
+| Redis Key | 值 | TTL |
+|-----------|-----|-----|
+| `{redis.database}:share:{code}` | `{fileId, creatorId, expireTime}` (Map) | `expireHours * 3600 + 3600` (最大 168h + 1h buffer) |
+
+- 分享码：8 位随机 hex（`RandomUtil.randomString(8)`）
+- 最大有效期：168 小时（7 天）
+- 额外 1 小时 buffer 允许过期后短暂访问
+
+## 分片上传 Redis 会话
+
+`ChunkUploadServiceImpl` 使用 Redis 管理分片上传状态：
+
+| Redis Key | 类型 | 内容 |
+|-----------|------|------|
+| `chunk:upload:{uploadId}` | Hash | fileName, totalChunks, fileSize, parentId, md5 |
+| `chunk:upload:{uploadId}:chunks` | Set | 已上传的分片索引集合 |
+
+TTL: `allahpan.chunk.expire-hours`（默认 24h），配合 `@Scheduled(cron="0 0 * * * ?")` 每小时清理过期会话和临时文件。
+
+## 更新后的 Redis Key 命名空间
+
+```
+allahpan                                    ← redis.database (默认值)
+├── allahpan:member:{email}                 ← UserCacheService (TTL 24h±0-300s)
+├── allahpan:authCode:{email}               ← AuthCodeService (TTL 5min)
+├── allahpan:sendLimit:{email}              ← 发送间隔 (TTL 30s)
+├── allahpan:attempts:{email}               ← 小时上限 50 次 (TTL 1h)
+├── allahpan:bloom:user:email               ← BloomFilter bitmap (~12KB)
+├── allahpan:share:{code}                   ← ShareService (TTL expireHours+1h, max 168h)
+└── chunk:upload:{uploadId}                 ← ChunkUploadService (TTL 24h)
+```
+
 ## 关键文件索引
 
 | 组件 | 文件 | 关键方法/注解 |
@@ -144,3 +217,7 @@ sequenceDiagram
 | 异常标记 | `CacheException.java` | `@Target({METHOD, TYPE})` |
 | 用户缓存 | `UserCacheServiceImpl.java` | `getUser/setUser/delUser` |
 | 验证码缓存 | `AuthCodeServiceImpl.java` | `sendCode/verifyCode` |
+| 布隆过滤器 | `BloomFilterService.java` | `mightContain/add/reset` — Redis bitmap |
+| 布隆初始化 | `BloomFilterInitializer.java` | `ApplicationRunner` — 启动时加载邮箱 |
+| 分享缓存 | `ShareServiceImpl.java` | `createShare/getShare/deleteShare` — Redis-only |
+| 分片会话 | `ChunkUploadServiceImpl.java` | Redis Hash+Set — 分片上传状态 |

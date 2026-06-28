@@ -108,6 +108,84 @@ flowchart TD
     G --> H["触发 RabbitMQ 流水线"]
 ```
 
+## 分片上传流程（大文件）
+
+大文件通过 `ChunkController` 分片上传，支持断点续传：
+
+```
+POST /api/file/chunk/init        — 初始化上传会话
+POST /api/file/chunk/upload      — 上传分片
+POST /api/file/chunk/complete    — 合并分片并完成
+GET  /api/file/chunk/status/{uploadId}  — 查询上传进度
+```
+
+### 完整分片上传时序
+
+```mermaid
+sequenceDiagram
+    actor 浏览器
+    participant ChunkController as ChunkController
+    participant ChunkService as ChunkUploadServiceImpl
+    participant Redis as Redis
+    participant Disk as 本地临时目录
+    participant MinioUtil as MinioUtil
+    participant FileService as FileServiceImpl
+    participant MySQL as MySQL
+    participant RabbitMQ as RabbitMQ
+
+    Note over 浏览器,RabbitMQ: ═══ Step 1: 初始化 ═══
+    浏览器->>ChunkController: POST /api/file/chunk/init<br/>{fileName, totalChunks, fileSize, parentId}
+    ChunkController->>ChunkService: init(fileName, totalChunks, fileSize, parentId)
+    ChunkService->>ChunkService: 生成 uploadId (UUID)
+    ChunkService->>Redis: HSET chunk:upload:{uploadId}<br/>(fileName, totalChunks, parentId, ...)
+    ChunkService->>Disk: mkdir {tempDir}/allahpan-chunks/{uploadId}
+    ChunkService-->>浏览器: {uploadId, uploadedChunks: []}
+
+    Note over 浏览器,RabbitMQ: ═══ Step 2: 逐片上传 ═══
+    loop 每个分片
+        浏览器->>ChunkController: POST /api/file/chunk/upload<br/>{uploadId, chunkIndex, chunk: binary}
+        ChunkController->>ChunkService: uploadChunk(uploadId, chunkIndex, file)
+        ChunkService->>Disk: write chunk to {tempDir}/{uploadId}/{chunkIndex}
+        ChunkService->>Redis: SADD chunk:upload:{uploadId}:chunks {chunkIndex}
+        ChunkService-->>浏览器: {chunkIndex, success: true}
+    end
+
+    Note over 浏览器,RabbitMQ: ═══ Step 3: 合并完成 ═══
+    浏览器->>ChunkController: POST /api/file/chunk/complete<br/>{uploadId}
+    ChunkController->>ChunkService: complete(uploadId)
+    ChunkService->>Redis: HGETALL chunk:upload:{uploadId}
+    ChunkService->>Disk: 合并所有分片 → 完整文件
+    ChunkService->>MinioUtil: putObject(storageKey, mergedFile)
+    ChunkService->>FileService: MD5 秒传检测 + DB 插入
+    FileService->>MySQL: INSERT files 记录
+    FileService->>RabbitMQ: sendProcess(UPLOADED)
+    ChunkService->>Redis: DEL chunk:upload:{uploadId}*
+    ChunkService->>Disk: 清理临时目录
+    ChunkService-->>浏览器: {fileId, fileName, processStatus: 0}
+```
+
+### 断点续传
+
+如果 `uploadId` 已存在（会话未过期），`init` 返回已上传的分片索引列表：
+
+```
+GET /api/file/chunk/status/{uploadId}
+→ {uploadId, totalChunks, uploadedChunks: [0, 1, 3], ...}
+```
+
+前端跳过已上传的分片，只补传缺失部分。
+
+### Redis 会话结构
+
+| Key | 类型 | TTL | 内容 |
+|-----|------|-----|------|
+| `chunk:upload:{uploadId}` | Hash | 24h | fileName, totalChunks, fileSize, parentId, md5 |
+| `chunk:upload:{uploadId}:chunks` | Set | 24h | 已上传的分片索引集合 |
+
+### 定时清理
+
+`ChunkUploadServiceImpl` 使用 `@Scheduled(cron = "0 0 * * * ?")` 每小时清理超过 `allahpan.chunk.expire-hours`（默认 24h）的过期临时目录和 Redis 会话。
+
 ## 关键文件索引
 
 | 步骤 | 文件 | 方法 |
@@ -121,3 +199,8 @@ flowchart TD
 | 文件夹创建 | `FileServiceImpl.java` | `createFolder()` |
 | RabbitMQ 流水线 | `FileProcessReceiver.java` | `handle()` |
 | SSE 事件广播 | `SseBroadcaster.java` | `broadcast()` |
+| 分片初始化 | `ChunkController.java` | `init()` |
+| 分片上传 | `ChunkController.java` | `uploadChunk()` |
+| 分片合并 | `ChunkUploadServiceImpl.java` | `complete()` |
+| 分片状态 | `ChunkController.java` | `status()` |
+| 过期清理 | `ChunkUploadServiceImpl.java` | `@Scheduled(cron="0 0 * * * ?")` |

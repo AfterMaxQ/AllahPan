@@ -5,8 +5,8 @@
       <el-icon :size="size" color="#C4946B"><Folder /></el-icon>
     </template>
     <!-- 图片缩略图 -->
-    <template v-else-if="fileType === 'IMAGE' && thumbUrl">
-      <el-image :src="thumbUrl" fit="cover" class="img-thumb" lazy>
+    <template v-else-if="fileType === 'IMAGE' && displayThumbUrl">
+      <el-image :src="displayThumbUrl" fit="cover" class="img-thumb" lazy>
         <template #error>
           <el-icon :size="size" color="#A89F91"><Picture /></el-icon>
         </template>
@@ -22,14 +22,48 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Folder, Picture, VideoCamera, Document, Files } from '@element-plus/icons-vue'
+import { createObjectUrlFromApi } from '@/api/file'
 
 const props = defineProps({
   isFolder: { type: [Boolean, Number], default: false },
   fileType: { type: String, default: 'OTHER' },
   thumbUrl: { type: String, default: '' },
   size: { type: Number, default: 48 },
+})
+
+const displayThumbUrl = ref('')
+let controller = null
+
+function revokeThumb() {
+  if (displayThumbUrl.value?.startsWith('blob:')) {
+    window.URL.revokeObjectURL(displayThumbUrl.value)
+  }
+  displayThumbUrl.value = ''
+}
+
+watch(
+  () => props.thumbUrl,
+  async (url) => {
+    controller?.abort()
+    revokeThumb()
+    if (!url || props.fileType !== 'IMAGE') return
+    controller = new AbortController()
+    try {
+      displayThumbUrl.value = await createObjectUrlFromApi(url, controller.signal)
+    } catch (e) {
+      if (e?.code !== 'ERR_CANCELED' && e?.name !== 'AbortError') {
+        displayThumbUrl.value = ''
+      }
+    }
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  controller?.abort()
+  revokeThumb()
 })
 
 const iconStyle = computed(() => {

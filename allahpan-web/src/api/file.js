@@ -13,19 +13,26 @@ noTimeoutAxios.interceptors.request.use((config) => {
 })
 
 // 单步上传（multipart）
-export function uploadFile(file, parentId, onProgress) {
+export function uploadFile(file, parentId, onProgress, signal) {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('parentId', parentId || 0)
   return request.post('/file/upload', formData, {
     timeout: 300000, // 5 分钟超时，覆盖默认 30s，给慢速网络和 MinIO 处理足够时间
+    signal,
     onUploadProgress: (event) => {
       if (onProgress) {
         if (event.total > 0) {
-          onProgress(Math.round((event.loaded / event.total) * 100))
+          onProgress({
+            percent: Math.round((event.loaded / event.total) * 100),
+            loaded: event.loaded,
+          })
         } else if (event.loaded > 0) {
           // event.total 可能为 0（如 chunked encoding），按文件大小估算进度
-          onProgress(Math.round((event.loaded / file.size) * 100))
+          onProgress({
+            percent: Math.round((event.loaded / file.size) * 100),
+            loaded: event.loaded,
+          })
         }
       }
     },
@@ -62,20 +69,19 @@ export function moveFile(fileId, targetParentId) {
   return request.put(`/file/${fileId}/move`, { targetParentId })
 }
 
-// 下载文件（以 blob 方式获取并触发浏览器下载，支持进度回调）
-export async function downloadFile(fileId, fileName, onProgress) {
-  const blob = await noTimeoutAxios.get(`/file/${fileId}/download`, {
-    responseType: 'blob',
-    onDownloadProgress: (event) => {
-      if (onProgress && event.total) {
-        onProgress({
-          percent: Math.round((event.loaded / event.total) * 100),
-          loaded: event.loaded,
-          total: event.total,
-        })
-      }
-    },
-  })
+async function readBlobError(response) {
+  const contentType = response.headers?.['content-type'] || ''
+  if (!contentType.includes('application/json')) return null
+  try {
+    const text = await response.data.text()
+    const data = JSON.parse(text)
+    return data.message || data.msg || '请求失败'
+  } catch {
+    return '请求失败'
+  }
+}
+
+export function saveBlob(blob, fileName) {
   const url = window.URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -84,6 +90,52 @@ export async function downloadFile(fileId, fileName, onProgress) {
   a.click()
   document.body.removeChild(a)
   window.URL.revokeObjectURL(url)
+}
+
+export async function requestBlob(url, onProgress, signal) {
+  const response = await noTimeoutAxios.get(url, {
+    responseType: 'blob',
+    signal,
+    onDownloadProgress: (event) => {
+      if (onProgress && event.loaded > 0) {
+        onProgress({
+          percent: event.total > 0 ? Math.round((event.loaded / event.total) * 100) : 0,
+          loaded: event.loaded,
+          total: event.total || 0,
+        })
+      }
+    },
+  })
+  const blobError = await readBlobError(response)
+  if (blobError) throw new Error(blobError)
+  return response.data
+}
+
+// 下载文件（以 blob 方式获取，调用方决定是否触发保存）
+export async function downloadFile(fileId, fileName, onProgress, signal) {
+  const blob = await requestBlob(`/file/${fileId}/download`, onProgress, signal)
+  saveBlob(blob, fileName)
+  return blob
+}
+
+export async function downloadFileBlob(fileId, onProgress, signal) {
+  return requestBlob(`/file/${fileId}/download`, onProgress, signal)
+}
+
+export async function createFileObjectUrl(fileId, signal) {
+  const blob = await requestBlob(`/file/${fileId}/stream`, null, signal)
+  return window.URL.createObjectURL(blob)
+}
+
+export async function createThumbnailObjectUrl(fileId, signal) {
+  const blob = await requestBlob(`/file/${fileId}/thumbnail`, null, signal)
+  return window.URL.createObjectURL(blob)
+}
+
+export async function createObjectUrlFromApi(url, signal) {
+  const apiUrl = url?.startsWith('/api') ? url.slice(4) : url
+  const blob = await requestBlob(apiUrl, null, signal)
+  return window.URL.createObjectURL(blob)
 }
 
 // 预览流 URL

@@ -10,6 +10,8 @@ public interface RedisService {
     void set(String key, Object value);
     // 存数据 + 设置过期时间（默认单位：秒）
     void set(String key, Object value, long time);
+    // key 不存在时设置数据 + 过期时间（默认单位：秒）
+    Boolean setIfAbsent(String key, Object value, long time);
     // 存数据 + 自定义时间单位（秒/分钟/小时）
     void set(String key, Object value, long time, TimeUnit timeUnit);
     // 根据 key 取数据

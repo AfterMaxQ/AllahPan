@@ -155,5 +155,5 @@ try {
 
 - [012 — Ollama OCR 管线](./012-ollama-ocr-pipeline-complete.md) — 类似的跨服务调用问题
 - [013 — 搜索页同时出现 token 过期和未找到相关内容](./013-search-auth-error-and-empty-results.md) — 前一次搜索 bug 修复（401 处理缺失）
-- [08 — RabbitMQ 管线](../architecture/08-rabbitmq-pipeline.md) — 文件处理管线架构
-- [09 — 搜索模块](../architecture/09-search-module.md) — 搜索架构概览
+- [06 — 文件上传与处理流水线](../architecture/06-file-upload-pipeline.md) — 文件处理管线架构
+- [08 — 搜索系统架构](../architecture/08-search-architecture.md) — 搜索架构概览

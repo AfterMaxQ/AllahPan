@@ -42,20 +42,23 @@ export function initUpload(data) {
  * @param {Blob} chunkBlob
  * @param {Function} onProgress - (percent: 0-100)
  */
-export function uploadChunk(uploadId, chunkIndex, chunkBlob, onProgress) {
+export function uploadChunk(uploadId, chunkIndex, chunkBlob, onProgress, signal) {
   const formData = new FormData()
   formData.append('uploadId', uploadId)
   formData.append('chunkIndex', chunkIndex)
   formData.append('chunk', chunkBlob, 'chunk')
 
+  const actualSize = chunkBlob.size
+
   return noTimeoutAxios.post('/file/chunk/upload', formData, {
+    signal,
     onUploadProgress: (event) => {
       if (onProgress) {
         if (event.total > 0) {
           onProgress(Math.round((event.loaded / event.total) * 100))
         } else if (event.loaded > 0) {
-          // event.total 可能为 0，按 5MB 分片大小估算进度
-          onProgress(Math.round((event.loaded / (5 * 1024 * 1024)) * 100))
+          // event.total 可能为 0（chunked encoding），按实际分片大小估算进度
+          onProgress(Math.min(99, Math.round((event.loaded / actualSize) * 100)))
         }
       }
     },

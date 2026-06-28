@@ -46,10 +46,7 @@ public class FileServiceImpl implements FileService {
 
         // 验证 parentId 指向文件夹
         if (pid > 0) {
-            File parent = fileMapper.selectByPrimaryKey(pid);
-            if (parent == null || parent.getIsFolder() == null || parent.getIsFolder() != 1) {
-                Asserts.fail(ResultCode.VALIDATE_FAILED);
-            }
+            validateActiveFolder(pid);
         }
 
         String originalName = file.getOriginalFilename();
@@ -141,6 +138,9 @@ public class FileServiceImpl implements FileService {
         Asserts.isTrue(folderName.length() <= MAX_FILE_NAME_LENGTH,
                 "文件夹名过长（最大" + MAX_FILE_NAME_LENGTH + "字符）");
         Long pid = parentId != null ? parentId : 0L;
+        if (pid > 0) {
+            validateActiveFolder(pid);
+        }
         assertNameUnique(pid, folderName);
 
         File file = new File();
@@ -321,15 +321,18 @@ public class FileServiceImpl implements FileService {
             esIndexService.index(file);
         }
         if (file.getIsFolder() == 1) {
-            restoreChildren(fileId);
+            restoreChildren(fileId, oldDeleteTime);
         }
     }
 
-    private void restoreChildren(Long folderId) {
+    private void restoreChildren(Long folderId, Date cascadeDeleteTime) {
         FileExample example = new FileExample();
         example.createCriteria().andParentIdEqualTo(folderId).andDeleteTimeIsNotNull();
         var children = fileMapper.selectByExample(example);
         for (File child : children) {
+            if (child.getDeleteTime() != null && child.getDeleteTime().before(cascadeDeleteTime)) {
+                continue;
+            }
             Date oldDeleteTime = child.getDeleteTime();
             child.setDeleteTime(null);
             fileMapper.updateByPrimaryKey(child);
@@ -345,7 +348,7 @@ public class FileServiceImpl implements FileService {
                 esIndexService.index(child);
             }
             if (child.getIsFolder() == 1) {
-                restoreChildren(child.getId());
+                restoreChildren(child.getId(), cascadeDeleteTime);
             }
         }
     }
@@ -409,6 +412,7 @@ public class FileServiceImpl implements FileService {
         while (pid != null && pid > 0) {
             File parent = fileMapper.selectByPrimaryKey(pid);
             if (parent == null) break;
+            Asserts.isTrue(parent.getDeleteTime() == null, "父目录已在垃圾站中");
             parts.add(0, parent.getFileName());
             pid = parent.getParentId();
         }
@@ -428,6 +432,7 @@ public class FileServiceImpl implements FileService {
         while (pid != null && pid > 0) {
             File parent = fileMapper.selectByPrimaryKey(pid);
             if (parent == null) break;
+            Asserts.isTrue(parent.getDeleteTime() == null, "父目录已在垃圾站中");
             path.insert(0, "/" + parent.getFileName());
             pid = parent.getParentId();
         }
@@ -448,6 +453,13 @@ public class FileServiceImpl implements FileService {
                 .andDeleteTimeIsNull();
         Asserts.isTrue(fileMapper.selectByExample(example).isEmpty(),
                 "同名文件或文件夹已存在");
+    }
+
+    private void validateActiveFolder(Long folderId) {
+        File parent = fileMapper.selectByPrimaryKey(folderId);
+        Asserts.isTrue(parent != null && parent.getIsFolder() != null && parent.getIsFolder() == 1,
+                "父目录不存在或不是文件夹");
+        Asserts.isTrue(parent.getDeleteTime() == null, "父目录已在垃圾站中");
     }
 
     /**
@@ -515,7 +527,10 @@ public class FileServiceImpl implements FileService {
      * 解决文件名冲突：如果 MinIO 中已存在同名对象，追加序号
      */
     private String resolveConflict(String relativePath, Long parentId) {
-        if (!minioUtil.objectExists(relativePath)) return relativePath;
+        if (!minioUtil.objectExists(relativePath)
+                && !activeNameExists(parentId, relativePath.substring(relativePath.lastIndexOf('/') + 1))) {
+            return relativePath;
+        }
 
         int lastSlash = relativePath.lastIndexOf('/');
         String dir = lastSlash >= 0 ? relativePath.substring(0, lastSlash + 1) : "";
@@ -534,9 +549,19 @@ public class FileServiceImpl implements FileService {
             String newName = nameBody + " (" + counter + ")" + ext;
             newPath = dir + newName;
             counter++;
-        } while (minioUtil.objectExists(newPath));
+        } while (minioUtil.objectExists(newPath)
+                || activeNameExists(parentId, newPath.substring(newPath.lastIndexOf('/') + 1)));
 
         return newPath;
+    }
+
+    private boolean activeNameExists(Long parentId, String fileName) {
+        FileExample example = new FileExample();
+        example.createCriteria()
+                .andParentIdEqualTo(parentId != null ? parentId : 0L)
+                .andFileNameEqualTo(fileName)
+                .andDeleteTimeIsNull();
+        return !fileMapper.selectByExample(example).isEmpty();
     }
 
     // ========== 工具方法 ==========

@@ -68,6 +68,22 @@ public class ShareServiceImpl implements ShareService {
 
     @Override
     public Map<String, Object> getShare(String code) {
+        File file = getSharedFile(code);
+
+        String downloadUrl = "/api/share/" + code + "/download";
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("fileId", file.getId());
+        result.put("fileName", file.getFileName());
+        result.put("fileSize", file.getFileSize());
+        result.put("fileType", file.getFileType());
+        result.put("downloadUrl", downloadUrl);
+        result.put("createTime", file.getCreateTime());
+        return result;
+    }
+
+    @Override
+    public File getSharedFile(String code) {
         Object data = redisService.get(SHARE_KEY_PREFIX + code);
         Asserts.isTrue(data instanceof Map, "分享链接不存在或已过期");
 
@@ -92,17 +108,9 @@ public class ShareServiceImpl implements ShareService {
         Long fileId = fileIdNum.longValue();
         File file = fileMapper.selectByPrimaryKey(fileId);
         Asserts.isTrue(file != null && file.getDeleteTime() == null, "文件不存在或已删除");
-
-        String downloadUrl = "/api/file/" + file.getId() + "/download";
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("fileId", file.getId());
-        result.put("fileName", file.getFileName());
-        result.put("fileSize", file.getFileSize());
-        result.put("fileType", file.getFileType());
-        result.put("downloadUrl", downloadUrl);
-        result.put("createTime", file.getCreateTime());
-        return result;
+        Asserts.isTrue(file.getIsFolder() != 1, "文件夹不支持分享下载");
+        Asserts.isTrue(file.getStorageKey() != null, "文件无存储对象");
+        return file;
     }
 
     @Override

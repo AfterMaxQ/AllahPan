@@ -42,8 +42,8 @@
             {{ downloading ? '下载中...' : '下载文件' }}
           </el-button>
           <div v-if="downloading" class="download-hint">
-            <el-progress :percentage="100" :indeterminate="true" :stroke-width="4" :duration="3" />
-            <p>正在准备下载，请稍候...</p>
+            <el-progress :percentage="downloadProgress" :stroke-width="4" />
+            <p>{{ downloadText }}</p>
           </div>
         </div>
       </template>
@@ -55,8 +55,9 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { Share } from '@element-plus/icons-vue'
-import { getSharedContent } from '@/api/share'
+import { downloadSharedFile, getSharedContent } from '@/api/share'
 import { formatBytes, formatDate } from '@/utils/format'
+import { SpeedTracker, formatSpeed } from '@/utils/transfer'
 import FileIcon from '@/components/common/FileIcon.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 
@@ -67,6 +68,8 @@ const sharedItem = ref(null)
 
 const errorMessage = ref('')
 const downloading = ref(false)
+const downloadProgress = ref(0)
+const downloadText = ref('正在准备下载...')
 
 const loadShare = async () => {
   const code = route.params.code
@@ -86,18 +89,30 @@ const loadShare = async () => {
   }
 }
 
-const handleDownload = () => {
+const handleDownload = async () => {
   if (downloading.value) return
   downloading.value = true
-  if (sharedItem.value?.downloadUrl) {
-    const a = document.createElement('a')
-    a.href = sharedItem.value.downloadUrl
-    a.download = ''
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+  downloadProgress.value = 0
+  downloadText.value = '正在准备下载...'
+  const speedTracker = new SpeedTracker()
+  let prevLoaded = 0
+  try {
+    await downloadSharedFile(route.params.code, sharedItem.value?.fileName, (evt) => {
+      const total = evt.total || sharedItem.value?.fileSize || 0
+      const loaded = evt.loaded || 0
+      const delta = loaded - prevLoaded
+      prevLoaded = loaded
+      if (delta > 0) speedTracker.addSample(delta)
+      downloadProgress.value = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0
+      downloadText.value = `${formatSpeed(speedTracker.getSpeed())} · ${formatBytes(loaded)}/${formatBytes(total)}`
+    })
+    downloadProgress.value = 100
+    downloadText.value = '下载完成'
+  } catch (e) {
+    errorMessage.value = e?.message || '下载失败，请稍后重试'
+  } finally {
+    downloading.value = false
   }
-  setTimeout(() => { downloading.value = false }, 3000)
 }
 
 onMounted(loadShare)

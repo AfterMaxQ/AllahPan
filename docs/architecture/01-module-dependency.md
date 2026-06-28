@@ -47,7 +47,8 @@ graph TD
 | `common.service` | `RedisService` | Redis 操作接口（String/Hash/Set/List） |
 | `common.service.impl` | `RedisServiceImpl` | RedisTemplate 实现 |
 | `common.config` | `BaseRedisConfig` | RedisTemplate + RedisCacheManager Bean |
-| `common.util` | — | —（原 MinioUtil 已移除） |
+| `common.service` | `BloomFilterService` | Redis 位图布隆过滤器（邮件查重，10000 预期 / 1% FPP / 7 哈希） |
+| `common.util` | — | 工具类（预留） |
 | `common.domain` | `WebLog` | HTTP 请求日志实体 |
 | `common.log` | `WebLogAspect` | `@Aspect` — 所有 Controller 方法自动打日志 |
 
@@ -68,7 +69,7 @@ graph TD
 | 类型 | 文件 | 对应表 |
 |---|---|---|
 | 实体 | `User.java` | `users` (10 字段) |
-| 实体 | `File.java` | `files` (16 字段 + BLOB origin_text) |
+| 实体 | `File.java` | `files` (17 字段，含 LONGTEXT origin_text) |
 | 实体 | `FileFavorite.java` | `file_favorites` (4 字段) |
 | Example | `UserExample.java` | users 条件构造器 |
 | Example | `FileExample.java` | files 条件构造器 |
@@ -80,7 +81,7 @@ graph TD
 | XML | `FileMapper.xml` | SQL 映射（含 BLOB 列） |
 | XML | `FileFavoriteMapper.xml` | SQL 映射 |
 | 工具 | `Generator.java` | MyBatis Generator 代码生成入口 |
-| 工具 | `CommentGenerator.java` | 自定义注释生成（Lombok @Data） |
+| 工具 | `CommentGenerator.java` | 自定义注释生成（添加 lombok import） |
 
 ### allahpan-core（主应用 — 依赖 common + security + mbg）
 
@@ -94,6 +95,7 @@ graph TD
 | **控制器** | `AuthController.java` | `/api/auth/send-code`, `/login-by-code`, `/login-by-password` |
 | **控制器** | `UserController.java` | `/api/user/set-password`, `/me` |
 | **控制器** | `FileController.java` | `/api/file/*` — 16 个端点（含 SSE watch, stream, thumbnail） |
+| **控制器** | `ChunkController.java` | `/api/file/chunk/*` — 4 个端点（init / upload / complete / status） |
 | **控制器** | `SearchController.java` | `/api/search` — 搜索代理（GET 搜索, POST 重建索引） |
 | **控制器** | `FavoriteController.java` | `/api/favorite/*` — 收藏/取消/检查/列表 |
 | **控制器** | `ShareController.java` | `/api/share/*` — 创建/访问/删除分享 |
@@ -101,7 +103,8 @@ graph TD
 | **服务** | `AuthCodeService/Impl` | 验证码生成/验证、三层限流 |
 | **服务** | `UserCacheService/Impl` | Redis 用户缓存 get/set/del |
 | **服务** | `FileService/Impl` | 文件 CRUD、文件夹树、垃圾站、递归操作 |
-| **服务** | `FavoriteService/Impl` | 收藏添加/移除/检查/分页列表 |
+| **服务** | `ShareService/Impl` | 分享创建/访问/删除（Redis-only，无 MySQL 表） |
+| **服务** | `ChunkUploadService/Impl` | 大文件分片上传：init→upload→complete，Redis 会话管理 |
 | **组件** | `MailService` | QQ 邮箱 SMTP 验证码发送（替换 SmsService） |
 | **组件** | `FileProcessSender` | RabbitMQ 生产者：`sendProcess()` + `sendRetry()` |
 | **组件** | `FileProcessReceiver` | `@RabbitListener` — 3 阶段流水线消费者 + 最多 3 次重试 |
@@ -109,9 +112,12 @@ graph TD
 | **组件** | `SseBroadcaster` | SSE 连接管理 + 事件广播（从 FileController 提取） |
 | **组件** | `ThumbnailGenerator` | IMAGE 缩略图生成（缩放 300px），PDF via PDFBox (150 DPI) |
 | **组件** | `TextExtractor` | IMAGE→Ollama OCR，PDF/DOCX/DOC/XLSX/XLS/PPTX/PPT/Text via PDFBox + POI |
-| **组件** | `OllamaService` | Ollama vision API `/api/chat`，qwen3.5:2b 模型，think=false，num_predict=4096，String.format 构建 JSON |
+| **组件** | `OllamaService` | `@Service` — Ollama vision API `/api/chat`，qwen3.5:2b，think=false，num_predict=16384，timeout=120s |
+| **组件** | `BloomFilterInitializer` | `@Component` `ApplicationRunner` — 启动时加载用户邮箱到布隆过滤器 |
 | **组件** | `EsIndexService/Impl` | ES 索引 HTTP 调用 → search 应用 `:8081` |
 | **任务** | `TrashCleanupTask` | `@Scheduled(cron="0 0 3 * * ?")` — 每天 3AM 清理 60 天前垃圾 |
+| **任务** | `MinioOrphanCleanupTask` | `@Scheduled(cron="0 0 4 * * ?")` — 每天 4AM 双向扫描 MinIO↔DB 孤儿对象 |
+| **任务** | ChunkUploadServiceImpl 清理 | `@Scheduled(cron="0 0 * * * ?")` — 每小时清理过期分片临时目录 |
 | **领域** | `AdminUserDetails` | Spring Security UserDetails 实现，位于 `com.allahpan.bo` |
 | **领域** | `LoginRequest` | 登录请求 DTO（email + code/password） |
 | **领域** | `FileUploadResult` | 上传结果 DTO（instant/needUpload） |

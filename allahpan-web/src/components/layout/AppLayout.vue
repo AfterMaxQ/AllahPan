@@ -18,6 +18,7 @@
         </router-view>
       </div>
     </div>
+    <TransferPanel />
   </div>
 </template>
 
@@ -26,6 +27,7 @@ import { ref } from 'vue'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
 import BreadcrumbNav from '@/components/file/BreadcrumbNav.vue'
+import TransferPanel from '@/components/transfer/TransferPanel.vue'
 
 const sidebarCollapsed = ref(false)
 </script>

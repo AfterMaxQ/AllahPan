@@ -33,7 +33,6 @@ public class EsIndexServiceImpl implements EsIndexService {
     private final RestTemplate restTemplate = new RestTemplate();
     @Value("${allahpan.search.service-url:http://localhost:8081/es-admin/files}")
     private String searchServiceUrl;
-    private static final int MAX_RETRIES = 3;
 
     /** ES 操作失败补偿队列：fileId → "index"|"delete"，定时重试 */
     private final Map<Long, String> pendingOps = new ConcurrentHashMap<>();
@@ -69,19 +68,12 @@ public class EsIndexServiceImpl implements EsIndexService {
 
     @Override
     public void index(File file) {
-        for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            try {
-                doIndex(file);
-                return;
-            } catch (Exception e) {
-                if (attempt == MAX_RETRIES - 1) {
-                    LOG.warn("ES 索引失败（重试 {} 次后放弃）: {}, 原因: {}",
-                            MAX_RETRIES, file.getFileName(), e.getMessage());
-                    pendingOps.put(file.getId(), "index");
-                } else {
-                    try { Thread.sleep(2000L * (attempt + 1)); } catch (InterruptedException ignored) {}
-                }
-            }
+        try {
+            doIndex(file);
+        } catch (Exception e) {
+            LOG.warn("ES 索引失败，已加入补偿队列: {}, 原因: {}",
+                    file.getFileName(), e.getMessage());
+            pendingOps.put(file.getId(), "index");
         }
     }
 
@@ -107,18 +99,11 @@ public class EsIndexServiceImpl implements EsIndexService {
 
     @Override
     public void delete(Long fileId) {
-        for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            try {
-                restTemplate.delete(searchServiceUrl + "/" + fileId);
-                return;
-            } catch (Exception e) {
-                if (attempt == MAX_RETRIES - 1) {
-                    LOG.warn("ES 删除失败（重试 {} 次后放弃）: fileId={}", MAX_RETRIES, fileId);
-                    pendingOps.put(fileId, "delete");
-                } else {
-                    try { Thread.sleep(2000L * (attempt + 1)); } catch (InterruptedException ignored) {}
-                }
-            }
+        try {
+            restTemplate.delete(searchServiceUrl + "/" + fileId);
+        } catch (Exception e) {
+            LOG.warn("ES 删除失败，已加入补偿队列: fileId={}", fileId);
+            pendingOps.put(fileId, "delete");
         }
     }
 
@@ -150,24 +135,16 @@ public class EsIndexServiceImpl implements EsIndexService {
     }
 
     /**
-     * 每 30 分钟自动全量对账，清理 ES 中可能残留的孤儿文档。
-     * 首次延迟 10 分钟（给启动清理留时间），之后每 30 分钟。
+     * 定时轻量对账：不再自动 delete + rebuild 全量索引，避免搜索服务和 DB 压力尖峰。
+     * 日常一致性由增量写入和 retryFailedOps 补偿保障，全量重建保留给手动运维入口。
      */
     @Scheduled(fixedDelay = 30 * 60 * 1000, initialDelay = 10 * 60 * 1000)
     public void scheduledReconciliation() {
-        try {
-            long count = rebuildAll();
-            if (count > 0) {
-                LOG.info("ES 定时对账完成: {} 个文件", count);
-            }
-        } catch (Exception e) {
-            LOG.warn("ES 定时对账失败: {}", e.getMessage());
-        }
+        retryFailedOps();
     }
 
     /**
      * 每 5 分钟重试失败的 ES 操作（增量补偿，不走全量重建）。
-     * 全量对账（30 分钟）仍为最终兜底。
      */
     @Scheduled(fixedDelay = 5 * 60 * 1000, initialDelay = 2 * 60 * 1000)
     public void retryFailedOps() {

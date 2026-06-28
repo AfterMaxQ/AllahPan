@@ -16,6 +16,7 @@
           multiple
           :auto-upload="false"
           :on-change="handleFileChange"
+          :show-file-list="false"
         >
           <el-icon class="el-icon--upload" size="40" color="var(--el-color-primary-light-3)">
             <UploadFilled />
@@ -46,23 +47,8 @@
         style="display: none"
         @change="handleFolderChange"
       />
-
-      <!-- 上传任务列表 -->
-      <div v-if="tasks.length > 0" class="task-list">
-        <div v-for="task in tasks" :key="task.id" class="task-item">
-          <div class="task-info">
-            <span class="task-name" :title="task.name">{{ task.name }}</span>
-            <span class="task-status" :class="task.status">{{ task.statusText }}</span>
-          </div>
-          <el-progress
-            :percentage="task.progress"
-            :status="task.progressStatus"
-            :stroke-width="4"
-          />
-          <div v-if="task.status === 'pending' && task.speed > 0" class="task-detail">
-            {{ formatSpeed(task.speed) }} · {{ formatETA(task.eta) }} · {{ formatSize(task.loaded) }}/{{ formatSize(task.total) }}
-          </div>
-        </div>
+      <div class="upload-hint">
+        选择后会加入右侧传输列表，可在那里查看实时速度、进度并取消或重试。
       </div>
     </div>
   </el-dialog>
@@ -73,37 +59,25 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, FolderOpened } from '@element-plus/icons-vue'
 import { useFileStore } from '@/stores/file'
+import { useTransferStore } from '@/stores/transfer'
 import { createFolder } from '@/api/file'
-import { useChunkUpload } from '@/composables/useChunkUpload'
 
 const visible = ref(false)
 const mode = ref('file') // 'file' | 'folder'
 const fileStore = useFileStore()
-const tasks = ref([])
+const transferStore = useTransferStore()
 const folderInputRef = ref(null)
 const selectedFolderName = ref('')
 const folderFileCount = ref(0)
 
-const { uploadFiles, formatSpeed, formatETA } = useChunkUpload()
-
-function formatSize(bytes) {
-  if (bytes == null || bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
-}
-
 const open = () => {
   mode.value = 'file'
   visible.value = true
-  tasks.value = []
 }
 
 const openFolder = () => {
   mode.value = 'folder'
   visible.value = true
-  tasks.value = []
   selectedFolderName.value = ''
   folderFileCount.value = 0
 }
@@ -115,48 +89,13 @@ const triggerFolderInput = () => {
   folderInputRef.value?.click()
 }
 
-// 创建任务并注册回调
-const createTask = (name) => {
-  const taskId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-  const task = {
-    id: taskId,
-    name,
-    progress: 0,
-    speed: 0,
-    eta: 0,
-    loaded: 0,
-    total: 0,
-    status: 'pending',
-    statusText: '准备中...',
-    progressStatus: '',
-  }
-  tasks.value.push(task)
-  return taskId
-}
-
-const onTaskUpdate = (taskId, updates) => {
-  const t = tasks.value.find((task) => task.id === taskId)
-  if (!t) return
-  Object.assign(t, {
-    ...updates,
-    progressStatus: updates.status === 'success' ? 'success'
-      : updates.status === 'exception' ? 'exception' : '',
-  })
-}
-
 // 文件模式：el-upload on-change 逐文件触发
-const handleFileChange = async (uploadFile) => {
+const handleFileChange = (uploadFile) => {
   const file = uploadFile.raw
-  const taskId = createTask(file.name)
-
-  try {
-    await uploadFiles([file], fileStore.currentFolderId, onTaskUpdate, taskId)
-    ElMessage.success(`${file.name} 上传成功`)
-    emit('uploaded')
-  } catch (error) {
-    console.error('上传失败:', error)
-    ElMessage.error(`${file.name} 上传失败`)
-  }
+  if (!file) return
+  transferStore.enqueueUpload(file, fileStore.currentFolderId)
+  transferStore.notifyQueued(1, '上传')
+  visible.value = false
 }
 
 // 文件夹模式：解析目录结构 -> 创建文件夹 -> 上传文件
@@ -192,34 +131,10 @@ const handleFolderChange = async (event) => {
     const parentPath = parts.slice(0, -1).join('/')
     const parentId = pathToId.get(parentPath)
 
-    const taskId = 'folder-' + dir
-    tasks.value.push({
-      id: taskId,
-      name: dir,
-      progress: 0,
-      speed: 0, eta: 0, loaded: 0, total: 0,
-      status: 'pending',
-      statusText: '创建文件夹...',
-      progressStatus: '',
-    })
-
     try {
       const result = await createFolder(folderName, parentId)
       pathToId.set(dir, result.id)
-      const t = tasks.value.find((task) => task.id === taskId)
-      if (t) {
-        t.progress = 100
-        t.status = 'success'
-        t.statusText = '已创建'
-        t.progressStatus = 'success'
-      }
     } catch (e) {
-      const t = tasks.value.find((task) => task.id === taskId)
-      if (t) {
-        t.status = 'exception'
-        t.statusText = '创建失败（可能已存在同名文件夹）'
-        t.progressStatus = 'exception'
-      }
       ElMessage.error(`创建文件夹 "${dir}" 失败，请检查是否有同名文件夹已存在`)
       return
     }
@@ -238,21 +153,15 @@ const handleFolderChange = async (event) => {
     fileTaskIds.push(parentId)
   }
 
-  // 按 parentId 分组处理，每组独立上传
   for (let i = 0; i < fileList.length; i++) {
     const file = fileList[i]
     const parentId = fileTaskIds[i]
-    const name = (file.webkitRelativePath || file.name).split('/').pop()
-    const taskId = createTask(name)
-
-    try {
-      await uploadFiles([file], parentId, onTaskUpdate, taskId)
-      ElMessage.success(`${name} 上传成功`)
-    } catch (e) {
-      ElMessage.error(`${name} 上传失败`)
-    }
+    transferStore.enqueueUpload(file, parentId, (file.webkitRelativePath || file.name).split('/').pop())
   }
 
+  transferStore.notifyQueued(fileList.length, '上传')
+  visible.value = false
+  event.target.value = ''
   emit('uploaded')
 }
 </script>
@@ -294,44 +203,12 @@ const handleFolderChange = async (event) => {
   font-size: 13px;
   color: var(--ap-text-main);
 }
-.task-list {
-  max-height: 240px;
-  overflow-y: auto;
-  border: 1px solid var(--ap-border-color);
+.upload-hint {
+  padding: 10px 12px;
   border-radius: 10px;
-  padding: 12px;
   background-color: var(--ap-bg-page);
-}
-.task-item {
-  margin-bottom: 12px;
-}
-.task-item:last-child {
-  margin-bottom: 0;
-}
-.task-info {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 6px;
-  font-size: 13px;
-}
-.task-name {
-  color: var(--ap-text-main);
-  font-weight: 500;
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.task-status {
+  border: 1px solid var(--ap-border-color);
   font-size: 12px;
-  color: var(--ap-text-sub);
-  flex-shrink: 0;
-}
-.task-status.success { color: #67c23a; }
-.task-status.exception { color: #f56c6c; }
-.task-detail {
-  margin-top: 4px;
-  font-size: 11px;
   color: var(--ap-text-sub);
 }
 </style>

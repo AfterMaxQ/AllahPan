@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
+import java.time.Instant;
 
 @Component
 public class MinioUtil {
@@ -100,12 +101,21 @@ public class MinioUtil {
 
     /** Get object metadata */
     public StatObjectResponse statObject(String objectKey) throws Exception {
+        return statObject(bucketName, objectKey);
+    }
+
+    /** Get object metadata from the specified bucket. */
+    public StatObjectResponse statObject(String bucket, String objectKey) throws Exception {
         return minioClient.statObject(
                 StatObjectArgs.builder()
-                        .bucket(bucketName)
+                        .bucket(bucket)
                         .object(objectKey)
                         .build()
         );
+    }
+
+    public Instant objectLastModified(String bucket, String objectKey) throws Exception {
+        return statObject(bucket, objectKey).lastModified().toInstant();
     }
 
     /** Check if object exists in files bucket */

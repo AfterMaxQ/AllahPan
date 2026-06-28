@@ -1,4 +1,4 @@
-# 05 — 文件上传与处理流水线
+# 06 — 文件上传与处理流水线
 
 **最后更新**: 2026-06-13
 
@@ -18,17 +18,42 @@ AllahPan 的文件处理采用 **异步流水线** 架构，基于 RabbitMQ 消�
 
 ## 2. 架构全景
 
-```
-┌──────────────┐     ┌─────────────────────┐     ┌───────────────┐
-│  FileController │ ──→ │  RabbitMQ           │ ──→ │  FileProcess  │
-│  (REST API)    │     │  allahpan.file.     │     │  Receiver      │
-│  :8088         │     │  process            │     │  (消费者)      │
-└──────┬─────────┘     └─────────┬───────────┘     └───────┬───────┘
-       │                         │                         │
-       ▼                         │ 重试队列(TTL+DLX)        ├── ThumbnailGenerator
-  FileServiceImpl                │ 30s/60s/120s 退避       ├── TextExtractor
-  (上传+去重+DB)                  │                         ├── EsIndexService
-                                 │                         └── SSE 推送
+```mermaid
+graph TD
+    subgraph "生产者"
+        Controller["FileController<br/>confirmUpload()"]
+        Sender["FileProcessSender<br/>@Component"]
+    end
+
+    subgraph "RabbitMQ 拓扑"
+        Exchange["DirectExchange<br/>allahpan.file.process"]
+        Queue["主队列<br/>allahpan.file.process"]
+        RetryExchange["RetryExchange<br/>allahpan.file.retry.direct"]
+        TTLQueue["TTL 延迟队列<br/>allahpan.file.retry.ttl<br/>x-message-ttl:动态<br/>DLX → 主交换机"]
+    end
+
+    subgraph "消费者"
+        Receiver["FileProcessReceiver<br/>@RabbitListener"]
+    end
+
+    subgraph "处理组件"
+        Thumb["ThumbnailGenerator<br/>缩略图生成"]
+        Text["TextExtractor<br/>文字提取"]
+        ES["EsIndexService<br/>ES 索引"]
+        Ollama["OllamaService<br/>qwen3.5:2b OCR<br/>think=false"]
+    end
+
+    Controller -->|"sendProcess(UPLOADED)"| Sender
+    Sender --> Exchange
+    Exchange --> Queue
+    Queue --> Receiver
+    Receiver --> Thumb
+    Thumb --> Text
+    Text --> Ollama
+    Text --> ES
+    Receiver -.->|"失败重试"| RetryExchange
+    RetryExchange --> TTLQueue
+    TTLQueue -.->|"TTL 过期 + DLX"| Exchange
 ```
 
 ---
@@ -209,6 +234,28 @@ handle(message)
 | `3` | COMPLETED — 全部完成（已索引） |
 | `-1` | FAILED — 致命错误，放弃处理 |
 
+```mermaid
+stateDiagram-v2
+    [*] --> UPLOADED: confirmUpload()
+
+    UPLOADED --> THUMBNAILED: "ThumbnailGenerator.generate()"
+    UPLOADED --> FAILED: "重试耗尽(3次)"
+
+    THUMBNAILED --> TEXT_EXTRACTED: "TextExtractor.extract()"
+    THUMBNAILED --> FAILED: "重试耗尽(3次)"
+
+    TEXT_EXTRACTED --> INDEXED: "EsIndexService.index()"
+    TEXT_EXTRACTED --> FAILED: "重试耗尽(3次)"
+
+    INDEXED --> [*]
+
+    note right of UPLOADED: processStatus = 0
+    note right of THUMBNAILED: processStatus = 1
+    note right of TEXT_EXTRACTED: processStatus = 2
+    note right of INDEXED: processStatus = 3
+    note right of FAILED: processStatus = -1
+```
+
 ### 5.6 失败与重试
 
 ```
@@ -227,6 +274,30 @@ handle(message)
     └── 致命异常 (数据库错误/DataAccessException)
         → processStatus = -1
 ```
+
+实现方式：TTL + DLX（Dead Letter Exchange）模式。
+
+```mermaid
+sequenceDiagram
+    participant Receiver as FileProcessReceiver
+    participant Sender as FileProcessSender
+    participant RetryExchange as RETRY_EXCHANGE
+    participant TTLQueue as RETRY_QUEUE_TTL
+    participant MainExchange as PROCESS_EXCHANGE
+    participant MainQueue as PROCESS_QUEUE
+
+    Receiver->>Receiver: 处理失败 catch Exception
+    Receiver->>Receiver: retryCount < 3?
+    Receiver->>Sender: sendRetry(message, delayMs)
+    Sender->>RetryExchange: publish(message, expiration=delayMs)
+    RetryExchange->>TTLQueue: route(message)
+    Note over TTLQueue: 等待 delayMs 过期
+    TTLQueue->>MainExchange: DLX 转发
+    MainExchange->>MainQueue: route(message)
+    MainQueue->>Receiver: 重新消费
+```
+
+> `RabbitMqConfig.java` 配置了完整的交换机/队列/绑定关系。重试和主处理共用同一个 `PROCESS_EXCHANGE`，通过 DLX 自动回环。
 
 ---
 
@@ -274,7 +345,7 @@ handle(message)
   ② Base64 编码
   ③ POST {ollama.base-url}/api/chat
      模型: qwen3.5:2b (vision)
-     参数: stream=false, think=false, num_predict=4096, num_ctx=8192
+     参数: stream=false, think=false, num_predict=16384, num_ctx=8192
      
 Prompt 策略:
   - 含文字图像 → 逐行提取 + 1-2句概括 + 5-10个搜索标签
@@ -352,6 +423,17 @@ POST /es-admin/files/index
 
 前端 FileBrowser 收到事件后自动刷新对应目录的文件列表。
 
+```mermaid
+flowchart LR
+    A["FileProcessReceiver"] --> B["handleMessage()"]
+    B --> C["Stage 完成"]
+    C --> D["update processStatus<br/>+ 更新数据库"]
+    D --> E["notifyStatusChange(file)"]
+    E --> F["SseBroadcaster.broadcast()"]
+    F --> G["SSE push: file-updated"]
+    G --> H["前端实时更新"]
+```
+
 ---
 
 ## 10. 异常分类与处理
@@ -360,6 +442,19 @@ POST /es-admin/files/index
 |----------|---------|---------------|
 | 基础设施异常 | ConnectException, SocketTimeoutException, Ollama 超时, 图片读取失败 | **优雅降级** — 不标记 FAILED，文件仍可用（缺少缩略图/文本/索引） |
 | 致命异常 | DataAccessException (DB)、其他未分类异常 | 标记 processStatus = -1 |
+
+```mermaid
+flowchart TD
+    A["第 4 次失败<br/>retryCount = 3"] --> B{"isInfrastructureError(ex)?"}
+    B -->|"是"| C["降解，不标记 -1<br/>文件保持在当前 processStatus"]
+    B -->|"否"| D["processStatus = -1<br/>标记为彻底失败"]
+
+    C --> E["基础设施错误:<br/>ConnectException<br/>SocketTimeoutException<br/>SocketException<br/>IOException<br/>MinioException<br/>Ollama/HTTP 超时"]
+    D --> F["致命错误:<br/>DataAccessException<br/>DB 操作失败"]
+```
+
+- **基础设施错误**：Ollama/ES/网络不可达、超时时，不标记 -1，文件可正常使用（已生成的缩略图、已提取的文字保持有效）
+- **致命错误**：数据库操作失败才标记 -1
 
 ---
 
@@ -371,8 +466,48 @@ POST /es-admin/files/index
 | `allahpan.thumbnail.pdf-dpi` | 150 | PDF 缩略图渲染 DPI |
 | `ollama.base-url` | `http://localhost:11434` | Ollama 服务地址 |
 | `ollama.model` | `qwen3.5:2b` | OCR 模型 |
-| `ollama.timeout` | 60 | OCR 超时（秒） |
-| `ollama.num-predict` | 4096 | 最大输出 token 数 |
+| `ollama.timeout` | 120 | OCR 超时（秒） |
+| `ollama.num-predict` | 16384 | 最大输出 token 数 |
 | `minio.bucketName` | `allahpan-files` | 文件存储桶 |
 | `minio.thumbnailBucket` | `allahpan-thumbnails` | 缩略图存储桶 |
 | `minio.trashBucket` | `allahpan-trash` | 回收站存储桶 |
+
+---
+
+## 12. 功能完成度
+
+| 功能 | 状态 | 备注 |
+|------|------|------|
+| IMAGE 缩略图 | ✅ 完成 | 300px 宽等比缩放，JPEG 格式，MinIO 读写 |
+| PDF 缩略图 | ✅ 完成 | PDFBox 渲染首帧，可配置 DPI（默认 150） |
+| IMAGE OCR | ✅ 完成 | Ollama qwen3.5:2b，think=false，num_predict=16384，timeout=120s |
+| PDF 文字提取 | ✅ 完成 | PDFBox PDFTextStripper，跳过加密文件 |
+| DOCX 文字提取 | ✅ 完成 | Apache POI XWPFWordExtractor |
+| DOC 文字提取 | ✅ 完成 | Apache POI HWPFWordExtractor |
+| XLSX 文字提取 | ✅ 完成 | Apache POI XSSFExcelExtractor |
+| XLS 文字提取 | ✅ 完成 | Apache POI HSSFExcelExtractor |
+| PPTX 文字提取 | ✅ 完成 | Apache POI XSLFPowerPointExtractor |
+| PPT 文字提取 | ✅ 完成 | Apache POI PowerPointExtractor + HSLFSlideShow |
+| 纯文本提取 | ✅ 完成 | UTF-8 读取，截断至 10000 字符 |
+| VIDEO 缩略图 | ❌ TODO | — |
+| ES 索引 | ✅ 完成 | HTTP → search :8081，失败降级不标记 -1 |
+| ES 删除 | ✅ 完成 | permanentDelete/restore 调用，异常吞没 |
+| ES 全量重建 | ✅ 完成 | rebuildAll() 先清空再全量索引 |
+
+---
+
+## 13. 关键文件索引
+
+| 组件 | 文件 | 关键方法 |
+|------|------|----------|
+| RabbitMQ 配置 | `RabbitMqConfig.java` | 完整拓扑（交换机/队列/绑定/DLX） |
+| 消息生产者 | `FileProcessSender.java` | `sendProcess()`, `sendRetry()` |
+| 消息消费者 | `FileProcessReceiver.java` | `handle()` — 状态机 + 重试 |
+| 消息实体 | `FileProcessMessage.java` | `Stage` 枚举 + `retryCount` |
+| 缩略图生成 | `ThumbnailGenerator.java` | `generate()` — IMAGE + PDF done, MinIO 读写 |
+| 文字提取 | `TextExtractor.java` | `extract()` — 7 种格式, MinIO 读取 |
+| OCR 服务 | `OllamaService.java` | `ocr()` — Ollama vision API |
+| ES 索引 | `EsIndexServiceImpl.java` | `index()`, `delete()` — HTTP → :8081，失败降级 |
+| MinIO 操作 | `MinioUtil.java` | `getObject()`, `putThumbnail()` — 流水线文件读写 |
+| SSE 广播 | `SseBroadcaster.java` | `broadcast()` — 状态变更推送 |
+| 文件表更新 | `FileMapper.java` | `updateByPrimaryKeySelective()` / `updateByPrimaryKeyWithBLOBs()` |

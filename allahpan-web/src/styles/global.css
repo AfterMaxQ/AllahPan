@@ -140,3 +140,8 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ===== 进度条平滑过渡 ===== */
+.el-progress-bar__inner {
+  transition: width 0.3s ease !important;
+}

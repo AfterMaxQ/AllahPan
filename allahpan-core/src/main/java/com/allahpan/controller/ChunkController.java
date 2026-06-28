@@ -41,7 +41,7 @@ public class ChunkController {
             @RequestParam("chunkIndex") int chunkIndex,
             @RequestParam("chunk") MultipartFile chunk) {
         try {
-            chunkUploadService.uploadChunk(uploadId, chunkIndex, chunk.getBytes());
+            chunkUploadService.uploadChunk(uploadId, chunkIndex, chunk);
         } catch (Exception e) {
             return CommonResult.failed("分片上传失败: " + e.getMessage());
         }

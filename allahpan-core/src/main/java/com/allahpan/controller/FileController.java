@@ -54,7 +54,7 @@ public class FileController {
             @RequestParam("file") MultipartFile file,
             @RequestParam(defaultValue = "0") Long parentId) {
         File saved = fileService.upload(file, parentId);
-        if (!"FOLDER".equals(saved.getFileType())) {
+        if (!"FOLDER".equals(saved.getFileType()) && (saved.getProcessStatus() == null || saved.getProcessStatus() != 3)) {
             fileProcessSender.sendProcess(new FileProcessMessage(saved.getId(), FileProcessMessage.Stage.UPLOADED));
         }
         // Notify SSE clients about the new file
@@ -144,11 +144,14 @@ public class FileController {
             }
             InputStream stream = minioUtil.getObject(key);
             InputStreamResource resource = new InputStreamResource(stream);
-            return ResponseEntity.ok()
+            var response = ResponseEntity.ok()
                     .contentType(MediaType.parseMediaType(
                             file.getContentType() != null ? file.getContentType() : "application/octet-stream"))
-                    .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
-                    .body(resource);
+                    .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition);
+            if (file.getFileSize() != null && file.getFileSize() >= 0) {
+                response.contentLength(file.getFileSize());
+            }
+            return response.body(resource);
         } catch (Exception e) {
             LOG.error("Failed to stream file: fileId={} storageKey='{}' error={}",
                     file.getId(), key, e.toString(), e);
@@ -208,6 +211,7 @@ public class FileController {
     public CommonResult<Map<String, Object>> batchDelete(@RequestBody Map<String, Object> req) {
         @SuppressWarnings("unchecked")
         List<Number> rawIds = (List<Number>) req.get("fileIds");
+        com.allahpan.common.exception.Asserts.isTrue(rawIds != null && !rawIds.isEmpty(), "请选择要删除的文件");
         List<Long> fileIds = rawIds.stream().map(Number::longValue).toList();
         return CommonResult.success(fileService.batchDelete(fileIds));
     }

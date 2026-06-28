@@ -140,7 +140,13 @@ ORDER BY is_folder DESC, create_time DESC
 | PUT | `/api/file/trash/{fileId}/restore` | 恢复 | MinioUtil.restoreFromTrash() |
 | DELETE | `/api/file/trash/{fileId}` | 永久删除 | MinioUtil.removeFromTrash() |
 | PUT | `/api/file/{fileId}/rename` | 重命名 | — |
-| PUT | `/api/file/{fileId}/move` | 移动 | — |
+| PUT | `/api/file/{fileId}/move` | 移动 | MinioUtil.copyObject() + removeObject() |
+| POST | `/api/file/chunk/init` | 分片上传初始化 | Redis 会话 |
+| POST | `/api/file/chunk/upload` | 上传分片 | 本地临时目录 |
+| POST | `/api/file/chunk/complete` | 合并分片 | MinioUtil.putObject() |
+| GET | `/api/file/chunk/status/{uploadId}` | 查询分片进度 | Redis 会话 |
+
+> **重命名/移动 MinIO 模式**: `MinioUtil.copyObject(srcKey, dstKey)` 桶内复制 → 更新 DB → 删除旧对象。MinIO 失败时回滚 DB 变更。
 
 ## 下载/预览/缩略图 — MinIO 流式访问
 
@@ -238,6 +244,8 @@ flowchart TD
 | 重命名 | `FileServiceImpl.java` | `renameFile()` |
 | 移动 | `FileServiceImpl.java` | `moveFile()` |
 | 批量删除 | `FileServiceImpl.java` | `batchDelete()` |
-| MinIO 对象 I/O | `MinioUtil.java` | `putObject()`, `getObject()`, `removeObject()`, `copyToTrash()`, `restoreFromTrash()`, `removeFromTrash()`, `putThumbnail()`, `getThumbnail()`, `removeThumbnail()` |
+| MinIO 对象 I/O | `MinioUtil.java` | `putObject()`, `getObject()`, `removeObject()`, `copyObject()`, `listObjectNames()`, `copyToTrash()`, `restoreFromTrash()`, `removeFromTrash()`, `putThumbnail()`, `getThumbnail()`, `removeThumbnail()` |
 | SSE 广播 | `SseBroadcaster.java` | `broadcast()` |
-| 定时清理 | `TrashCleanupTask.java` | `cleanExpiredTrash()` |
+| 定时清理 | `TrashCleanupTask.java` | `cleanExpiredTrash()` (60天) |
+| 孤儿清理 | `MinioOrphanCleanupTask.java` | `@Scheduled(cron="0 0 4 * * ?")` — 双向扫描 MinIO↔DB |
+| 分片清理 | `ChunkUploadServiceImpl.java` | `@Scheduled(cron="0 0 * * * ?")` — 每小时清理过期临时文件 |

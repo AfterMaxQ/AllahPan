@@ -61,9 +61,10 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { Document, Cpu, ArrowRight } from '@element-plus/icons-vue'
-import { getFileDetail, getStreamUrl, downloadFile } from '@/api/file'
+import { getFileDetail, createFileObjectUrl } from '@/api/file'
+import { useTransferStore } from '@/stores/transfer'
 import { formatBytes } from '@/utils/format'
 
 const visible = ref(false)
@@ -72,8 +73,20 @@ const file = ref(null)
 const mediaUrl = ref('')
 const ocrText = ref('')
 const ocrExpanded = ref(false)
+const transferStore = useTransferStore()
+let previewController = null
+
+const revokeMediaUrl = () => {
+  if (mediaUrl.value?.startsWith('blob:')) {
+    window.URL.revokeObjectURL(mediaUrl.value)
+  }
+  mediaUrl.value = ''
+}
 
 const open = async (targetFile) => {
+  previewController?.abort()
+  previewController = new AbortController()
+  revokeMediaUrl()
   file.value = targetFile
   visible.value = true
   loading.value = true
@@ -88,22 +101,35 @@ const open = async (targetFile) => {
     }
 
     if (detail.fileType === 'IMAGE' || detail.fileType === 'VIDEO') {
-      mediaUrl.value = getStreamUrl(targetFile.id)
+      mediaUrl.value = await createFileObjectUrl(targetFile.id, previewController.signal)
     }
   } catch (e) {
-    console.error('加载预览失败', e)
+    if (e?.code !== 'ERR_CANCELED' && e?.name !== 'AbortError') {
+      console.error('加载预览失败', e)
+    }
   } finally {
     loading.value = false
   }
 }
 
-const triggerDownload = async () => {
-  try {
-    await downloadFile(file.value.id, file.value.fileName)
-  } catch (e) {
-    console.error('下载失败', e)
+const triggerDownload = () => {
+  if (file.value) {
+    transferStore.enqueueDownload(file.value)
+    transferStore.notifyQueued(1, '下载')
   }
 }
+
+watch(visible, (value) => {
+  if (!value) {
+    previewController?.abort()
+    revokeMediaUrl()
+  }
+})
+
+onBeforeUnmount(() => {
+  previewController?.abort()
+  revokeMediaUrl()
+})
 
 defineExpose({ open })
 </script>

@@ -43,35 +43,44 @@ public class FileProcessReceiver {
         try {
             switch (message.getCurrentStage()) {
                 case UPLOADED -> {
+	                    if (file.getProcessStatus() != null && file.getProcessStatus() >= 1) {
+	                        LOG.info("跳过已处理的缩略图阶段: fileId={}", file.getId());
+	                        return;
+	                    }
                     if (file.getThumbnailKey() == null) {
                         String thumbnailKey = thumbnailGenerator.generate(file);
                         if (thumbnailKey != null) {
                             file.setThumbnailKey(thumbnailKey);
                         }
                     }
-                    // 先发送下一阶段消息，再更新 DB 状态。
-                    // 如果发送失败抛异常，DB 未修改，重试从当前 stage 重新开始。
+	                    file.setProcessStatus((byte) 1);
+	                    fileMapper.updateByPrimaryKeySelective(file);
+	                    notifyStatusChange(file);
                     if (needsTextExtraction(file)) {
                         sender.sendProcess(new FileProcessMessage(file.getId(), Stage.THUMBNAILED));
                     } else {
                         sender.sendProcess(new FileProcessMessage(file.getId(), Stage.TEXT_EXTRACTED));
                     }
-                    file.setProcessStatus((byte) 1);
-                    fileMapper.updateByPrimaryKeySelective(file);
-                    notifyStatusChange(file);
                 }
                 case THUMBNAILED -> {
+	                    if (file.getProcessStatus() != null && file.getProcessStatus() >= 2) {
+	                        LOG.info("跳过已处理的文本提取阶段: fileId={}", file.getId());
+	                        return;
+	                    }
                     String text = textExtractor.extract(file);
                     if (text != null && !text.isEmpty()) {
                         file.setOriginText(text);
                     }
-                    // 先发送下一阶段消息，再更新 DB 状态
-                    sender.sendProcess(new FileProcessMessage(file.getId(), Stage.TEXT_EXTRACTED));
                     file.setProcessStatus((byte) 2);
                     fileMapper.updateByPrimaryKeySelective(file);
                     notifyStatusChange(file);
+	                    sender.sendProcess(new FileProcessMessage(file.getId(), Stage.TEXT_EXTRACTED));
                 }
                 case TEXT_EXTRACTED -> {
+	                    if (file.getProcessStatus() != null && file.getProcessStatus() >= 3) {
+	                        LOG.info("跳过已完成的索引阶段: fileId={}", file.getId());
+	                        return;
+	                    }
                     esIndexService.index(file);
                     file.setProcessStatus((byte) 3);
                     fileMapper.updateByPrimaryKeySelective(file);
@@ -95,6 +104,9 @@ public class FileProcessReceiver {
                     // 非关键组件（缩略图/Ollama/ES）不可用 → 降级，不标记失败
                     LOG.warn("非关键组件不可用，文件部分功能降级: {} (阶段: {})",
                             file.getFileName(), message.getCurrentStage());
+	                    file.setProcessStatus((byte) 3);
+	                    fileMapper.updateByPrimaryKeySelective(file);
+	                    notifyStatusChange(file);
                 } else {
                     file.setProcessStatus((byte) -1);
                     fileMapper.updateByPrimaryKeySelective(file);

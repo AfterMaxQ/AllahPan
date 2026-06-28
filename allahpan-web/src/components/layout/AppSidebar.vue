@@ -30,6 +30,13 @@
       </el-menu-item>
     </el-menu>
 
+    <div class="transfer-entry" @click="transferStore.togglePanel">
+      <el-badge :value="transferStore.activeCount" :hidden="transferStore.activeCount === 0" class="transfer-badge">
+        <el-icon><UploadFilled /></el-icon>
+      </el-badge>
+      <span v-show="!isCollapsed">传输列表</span>
+    </div>
+
     <!-- 底部用户信息 -->
     <div class="footer-area">
       <el-dropdown trigger="click" @command="handleCommand">
@@ -55,8 +62,9 @@
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { useTransferStore } from '@/stores/transfer'
 import { getMyInfo } from '@/api/user'
-import { HomeFilled, FolderOpened, Star, Delete } from '@element-plus/icons-vue'
+import { HomeFilled, FolderOpened, Star, Delete, UploadFilled } from '@element-plus/icons-vue'
 
 defineProps({
   isCollapsed: { type: Boolean, default: false },
@@ -65,6 +73,7 @@ defineProps({
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const transferStore = useTransferStore()
 
 const activeMenu = computed(() => route.path)
 
@@ -117,6 +126,28 @@ const handleCommand = (cmd) => {
   border-right: none;
   flex: 1;
   padding-top: 8px;
+}
+.transfer-entry {
+  margin: 4px 8px 8px;
+  height: 44px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  color: #3D3226;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+.transfer-entry:hover {
+  background-color: var(--el-color-primary-light-9);
+}
+.sidebar-wrapper.collapsed .transfer-entry {
+  justify-content: center;
+  padding: 0;
+}
+.transfer-badge {
+  display: inline-flex;
 }
 :deep(.el-menu-item) {
   height: 48px;

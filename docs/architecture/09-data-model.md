@@ -1,4 +1,4 @@
-# 07 — 数据模型 ER 图
+# 09 — 数据模型 ER 图
 
 ## 数据库 ER 图
 
@@ -69,7 +69,7 @@ graph TD
     GC -->|"MyBatis Generator"| Example
     GC -->|"MyBatis Generator"| Mapper
     GC -->|"MyBatis Generator"| XML
-    GC -->|"CommentGenerator"| Comment["自定义注释:<br/>Lombok @Data<br/>+ 表名/字段注释"]
+    GC -->|"CommentGenerator"| Comment["自定义注释:<br/>添加 lombok import<br/>+ 表名/字段注释"]
 
     Entity --> Mapper
     Example --> Mapper
@@ -118,14 +118,17 @@ UNIQUE KEY (email)
 
 -- files
 PRIMARY KEY (id)
-KEY (parent_id)
-KEY (md5)              -- 秒传检测
-KEY (uploader_id)
+KEY idx_parent_delete (parent_id, delete_time)              -- 目录列表查询
+KEY idx_md5_delete (md5, delete_time)                        -- 秒传检测
+KEY idx_delete_time (delete_time)                             -- 垃圾站查询
+UNIQUE KEY uk_parent_name_delete (parent_id, file_name, delete_time)  -- 同目录唯一文件名
 
 -- file_favorites
 PRIMARY KEY (id)
 UNIQUE KEY (user_id, file_id)  -- 防止重复收藏
 ```
+
+> **注意**: 实际 DDL 中的 files 表使用复合索引（含 `delete_time`），而非单列索引。`uploader_id` 无独立索引。
 
 ## processStatus 枚举
 
@@ -162,6 +165,27 @@ UNIQUE KEY (user_id, file_id)  -- 防止重复收藏
 | `status` | `1` | 正常 |
 | `first_login` | `0` | 已设置密码 |
 | `first_login` | `1` | 首次登录（未设密码） |
+
+## 分享存储（Redis-only）
+
+分享功能**不使用 MySQL 表**，数据完全存储在 Redis 中：
+
+| Redis Key | 内容 | TTL |
+|-----------|------|-----|
+| `{redis.database}:share:{code}` | `{fileId, creatorId, expireTime}` (Map) | `expireHours * 3600 + 3600`（最大 168h） |
+
+- 分享码为 8 位随机 hex
+- 通过 `ShareServiceImpl` 管理创建/访问/删除
+- 详见 [05-cache-architecture.md](05-cache-architecture.md) 缓存架构部分
+
+## 分片上传 Redis 结构
+
+| Redis Key | 类型 | 内容 |
+|-----------|------|------|
+| `chunk:upload:{uploadId}` | Hash | 上传元数据（fileName, totalChunks, parentId 等） |
+| `chunk:upload:{uploadId}:chunks` | Set | 已上传的分片索引 |
+
+TTL：`allahpan.chunk.expire-hours`（默认 24 小时），过期后由定时任务清理临时文件。
 
 ## 关键文件索引
 

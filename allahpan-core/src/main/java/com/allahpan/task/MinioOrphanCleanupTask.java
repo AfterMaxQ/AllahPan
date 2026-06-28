@@ -13,6 +13,8 @@ import org.springframework.stereotype.Component;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.time.Duration;
+import java.time.Instant;
 
 /**
  * MinIO 孤儿对象定时扫描：每天凌晨 4 点检查 MinIO 与 MySQL 的一致性。
@@ -26,6 +28,7 @@ public class MinioOrphanCleanupTask {
 
     private static final Logger log = LoggerFactory.getLogger(MinioOrphanCleanupTask.class);
     private static final int PAGE_SIZE = 1000;
+    private static final Duration ORPHAN_GRACE_PERIOD = Duration.ofHours(24);
 
     @Autowired
     private MinioUtil minioUtil;
@@ -62,6 +65,10 @@ public class MinioOrphanCleanupTask {
                         ? dbThumbnailKeys.contains(key)
                         : dbStorageKeys.contains(key);
                 if (!inDb) {
+                    if (isTooNewToDelete(bucket, key)) {
+                        log.info("跳过新近 MinIO 对象，等待下次扫描确认: bucket={}, key={}", bucketLabel, key);
+                        continue;
+                    }
                     orphanCount++;
                     log.warn("发现孤儿 MinIO 对象: bucket={}, key={}", bucketLabel, key);
                     // 安全清理：只删除确认无引用的对象
@@ -82,6 +89,16 @@ public class MinioOrphanCleanupTask {
             log.info("{} bucket 扫描完成: 孤儿={}", bucketLabel, orphanCount);
         } catch (Exception e) {
             log.error("扫描 {} bucket 失败", bucketLabel, e);
+        }
+    }
+
+    private boolean isTooNewToDelete(String bucket, String key) {
+        try {
+            Instant lastModified = minioUtil.objectLastModified(bucket, key);
+            return lastModified != null && lastModified.plus(ORPHAN_GRACE_PERIOD).isAfter(Instant.now());
+        } catch (Exception e) {
+            log.warn("读取 MinIO 对象时间失败，跳过本次清理: bucket={}, key={}", bucket, key, e);
+            return true;
         }
     }
 

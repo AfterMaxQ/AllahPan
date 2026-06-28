@@ -27,6 +27,10 @@ public class RedisServiceImpl implements RedisService {
         set(key, value, time, TimeUnit.SECONDS);
     }
     @Override
+    public Boolean setIfAbsent(String key, Object value, long time) {
+        return redisTemplate.opsForValue().setIfAbsent(key, value, time, TimeUnit.SECONDS);
+    }
+    @Override
     // 存数据 + 自定义时间单位（秒/分钟/小时）
     public void set(String key, Object value, long time, TimeUnit timeUnit) {
         redisTemplate.opsForValue().set(key, value, time, timeUnit);
