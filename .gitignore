@@ -35,5 +35,9 @@ logs/
 # === Docs ===
 docs/
 
+# === Project ===
+CLAUDE.md
+AGENTS.md
+
 # === Playwright ===
 .playwright-mcp/
