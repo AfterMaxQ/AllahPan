@@ -13,6 +13,13 @@
         />
       </template>
 
+      <template v-else-if="errorMessage">
+        <EmptyState
+          title="加载失败"
+          :description="errorMessage"
+        />
+      </template>
+
       <template v-else-if="sharedItem">
         <div class="share-info">
           <div class="preview-block">
@@ -29,9 +36,15 @@
               &nbsp;|&nbsp; {{ formatDate(sharedItem.createTime) }}
             </template>
           </p>
-          <el-button type="primary" size="large" class="dl-btn" @click="handleDownload">
-            下载文件
+          <el-button type="primary" size="large" class="dl-btn"
+            :loading="downloading" :disabled="downloading"
+            @click="handleDownload">
+            {{ downloading ? '下载中...' : '下载文件' }}
           </el-button>
+          <div v-if="downloading" class="download-hint">
+            <el-progress :percentage="100" :indeterminate="true" :stroke-width="4" :duration="3" />
+            <p>正在准备下载，请稍候...</p>
+          </div>
         </div>
       </template>
     </div>
@@ -52,13 +65,21 @@ const loading = ref(false)
 const expired = ref(false)
 const sharedItem = ref(null)
 
+const errorMessage = ref('')
+const downloading = ref(false)
+
 const loadShare = async () => {
   const code = route.params.code
   loading.value = true
   try {
     sharedItem.value = await getSharedContent(code)
   } catch (err) {
-    expired.value = true
+    const status = err?.response?.status
+    if (status === 404 || err?.data?.message?.includes('过期') || err?.data?.message?.includes('不存在')) {
+      expired.value = true
+    } else {
+      errorMessage.value = status ? `服务器错误 (${status})` : '网络连接失败，请稍后重试'
+    }
     console.error('加载分享失败', err)
   } finally {
     loading.value = false
@@ -66,9 +87,17 @@ const loadShare = async () => {
 }
 
 const handleDownload = () => {
+  if (downloading.value) return
+  downloading.value = true
   if (sharedItem.value?.downloadUrl) {
-    window.open(sharedItem.value.downloadUrl, '_blank')
+    const a = document.createElement('a')
+    a.href = sharedItem.value.downloadUrl
+    a.download = ''
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
   }
+  setTimeout(() => { downloading.value = false }, 3000)
 }
 
 onMounted(loadShare)
@@ -124,5 +153,13 @@ onMounted(loadShare)
 }
 .dl-btn {
   width: 100%;
+}
+.download-hint {
+  margin-top: 16px;
+}
+.download-hint p {
+  margin: 8px 0 0 0;
+  font-size: 12px;
+  color: var(--ap-text-sub);
 }
 </style>

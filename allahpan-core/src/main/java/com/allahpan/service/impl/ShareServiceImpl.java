@@ -37,14 +37,15 @@ public class ShareServiceImpl implements ShareService {
         Asserts.isTrue(expireHours > 0 && expireHours <= MAX_EXPIRE_HOURS,
                 "有效期需在 1~" + MAX_EXPIRE_HOURS + " 小时之间");
 
-        // 生成唯一分享码（最多重试 3 次）
+        // 生成唯一分享码（最多重试 10 次）
         String code = null;
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 10; i++) {
             String candidate = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
             if (!redisService.hasKey(SHARE_KEY_PREFIX + candidate)) {
                 code = candidate;
                 break;
             }
+            log.warn("分享码碰撞: candidate={}, attempt={}", candidate, i + 1);
         }
         Asserts.isTrue(code != null, "生成分享码失败，请重试");
 
@@ -72,9 +73,17 @@ public class ShareServiceImpl implements ShareService {
 
         Map<?, ?> shareData = (Map<?, ?>) data;
         Number fileIdNum = (Number) shareData.get("fileId");
-        Object expireObj = shareData.get("expireTime");
-        long expireTime = expireObj instanceof Number ? ((Number) expireObj).longValue() : 0;
+        Asserts.isTrue(fileIdNum != null, "分享数据异常");
 
+        Object expireObj = shareData.get("expireTime");
+        long expireTime;
+        if (expireObj instanceof Number) {
+            expireTime = ((Number) expireObj).longValue();
+        } else {
+            log.warn("分享数据 expireTime 类型异常: code={}, type={}", code,
+                    expireObj != null ? expireObj.getClass().getName() : "null");
+            expireTime = 0;
+        }
         if (System.currentTimeMillis() > expireTime) {
             redisService.del(SHARE_KEY_PREFIX + code);
             Asserts.fail("分享链接已过期");

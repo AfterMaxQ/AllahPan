@@ -1,0 +1,10 @@
+# Docker 环境配置 — application-docker.yml 自动绑定 docker profile
+server:
+  address: 0.0.0.0
+
+spring:
+  elasticsearch:
+    uris: http://elasticsearch:9200
+  data:
+    redis:
+      host: redis

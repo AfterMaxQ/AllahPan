@@ -19,6 +19,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -113,13 +114,27 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     // ==================== uploadChunk ====================
 
     @Override
-    public void uploadChunk(String uploadId, int chunkIndex, byte[] chunkBytes) {
+    public void uploadChunk(String uploadId, int chunkIndex, MultipartFile chunk) {
         String hk = hashKey(uploadId);
         Asserts.isTrue(Boolean.TRUE.equals(redisService.hasKey(hk)), "上传会话不存在或已过期");
 
+        Map<Object, Object> meta = redisService.hGetAll(hk);
+        int totalChunks = Integer.parseInt((String) meta.get("totalChunks"));
+        long fileSize = Long.parseLong((String) meta.get("fileSize"));
+        int chunkSize = Integer.parseInt((String) meta.get("chunkSize"));
+        Asserts.isTrue(chunkIndex >= 0 && chunkIndex < totalChunks, "分片序号无效");
+
+        long expectedSize = chunkIndex == totalChunks - 1
+                ? fileSize - (long) chunkIndex * chunkSize
+                : chunkSize;
+        Asserts.isTrue(chunk.getSize() == expectedSize,
+                String.format("分片大小不匹配: %d/%d", chunk.getSize(), expectedSize));
+
+        Path chunkDir = Path.of(tempDir, uploadId);
         Path chunkFile = Path.of(tempDir, uploadId, String.valueOf(chunkIndex));
         try {
-            Files.write(chunkFile, chunkBytes);
+            Files.createDirectories(chunkDir);
+            chunk.transferTo(chunkFile);
         } catch (IOException e) {
             log.error("写入分片失败: {}", chunkFile, e);
             Asserts.fail("分片保存失败");
@@ -127,7 +142,6 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         redisService.sAdd(setKey(uploadId), String.valueOf(chunkIndex));
         redisService.expire(setKey(uploadId), expireHours * 3600L);
-        redisService.hIncr(hk, "uploadedCount", 1L);
 
         // 刷新主 hash TTL
         redisService.expire(hk, expireHours * 3600L);
@@ -341,16 +355,26 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     }
 
     private String resolveConflict(String key) {
-        String base = key;
-        int dotIdx = base.lastIndexOf('.');
-        String nameBody = dotIdx > 0 ? base.substring(0, dotIdx) : base;
-        String ext = dotIdx > 0 ? base.substring(dotIdx) : "";
-        int counter = 1;
-        while (minioUtil.objectExists(key)) {
-            key = nameBody + " (" + counter + ")" + ext;
-            counter++;
+        if (!minioUtil.objectExists(key)) return key;
+
+        int lastSlash = key.lastIndexOf('/');
+        String dir = lastSlash >= 0 ? key.substring(0, lastSlash + 1) : "";
+        String baseName = key.substring(lastSlash + 1);
+        String nameBody = baseName;
+        String ext = "";
+        int dotIdx = baseName.lastIndexOf('.');
+        if (dotIdx > 0) {
+            nameBody = baseName.substring(0, dotIdx);
+            ext = baseName.substring(dotIdx);
         }
-        return key;
+        int counter = 1;
+        String newKey;
+        do {
+            String newName = nameBody + " (" + counter + ")" + ext;
+            newKey = dir + newName;
+            counter++;
+        } while (minioUtil.objectExists(newKey));
+        return newKey;
     }
 
     /** 与 FileServiceImpl.buildPath 一致：虚拟路径含斜杠前缀 */

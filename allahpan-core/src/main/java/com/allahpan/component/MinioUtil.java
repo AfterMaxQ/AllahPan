@@ -58,13 +58,15 @@ public class MinioUtil {
         putObject(thumbnailBucket, objectKey, data, size, contentType);
     }
 
+    private static final long MINIO_PART_SIZE = 10 * 1024 * 1024; // 10MB，启用分片上传
+
     private void putObject(String bucket, String objectKey, InputStream data, long size,
                            String contentType) throws Exception {
         minioClient.putObject(
                 PutObjectArgs.builder()
                         .bucket(bucket)
                         .object(objectKey)
-                        .stream(data, size, -1)
+                        .stream(data, size, MINIO_PART_SIZE)
                         .contentType(contentType)
                         .build()
         );

@@ -29,8 +29,10 @@ allahpan/
 ├── allahpan-core/        主应用 :8088（入口 AllahPanApplication）
 ├── allahpan-search/      搜索服务 :8081（入口 SearchApplication）
 ├── allahpan-web/         前端 Vue 3（独立项目，非 Maven 模块）
+├── docker/               Dockerfile（core / search / frontend+nginx）
 ├── docs/                 架构 & API 文档
-├── docker-compose.yml    基础设施编排
+├── docker-compose.yml    全部 8 个服务容器编排
+├── start-all.ps1         一键启动脚本
 └── init.sql              数据库 DDL
 ```
 
@@ -41,12 +43,31 @@ allahpan/
 
 ## 构建与运行
 
+### 容器化部署（推荐）
+
+```powershell
+# 一键启动全部 8 个服务（首次/代码修改后加 -Build）
+.\start-all.ps1 -Build
+
+# 日常重启
+.\start-all.ps1
+
+# 停止
+docker-compose down
+```
+
+`-Build` 会自动执行 `mvn package -DskipTests` 编译后端 JAR，然后 `docker-compose up -d --build` 构建镜像并启动所有容器。
+
+### 开发模式
+
+仅启动基础设施，后端和前端手动运行（方便热重载）：
+
 ```bash
 # 1. 启动基础设施
-docker-compose up -d
+docker-compose up -d mysql redis rabbitmq elasticsearch minio
 
-# 2. 构建全部模块（core 模块运行测试，其他跳过）
-mvn clean package -DskipTests
+# 2. 编译后端
+mvn package -DskipTests
 
 # 3. 启动主应用 (8088)
 cd allahpan-core
@@ -56,27 +77,56 @@ mvn spring-boot:run
 cd allahpan-search
 mvn spring-boot:run
 
-# 5. 启动前端 (5173)
+# 5. 启动前端 dev server (5173，热重载)
 cd allahpan-web
-npm install
 npm run dev
 ```
 
 ## 基础设施 (docker-compose)
+
+全部 8 个服务由 `docker-compose.yml` 编排，其中 3 个应用服务由 `docker/` 下的 Dockerfile 构建。
 
 | 服务 | 端口 | 备注 |
 |------|------|------|
 | MySQL 8.0 | 3307 | 数据库 `allahpan`，密码 `123456` |
 | Redis 7.0 | 6379 | 无密码 |
 | RabbitMQ 3.12 | 5672 / 15672 | 管理界面，guest/guest |
-| Elasticsearch 8.11 | 9200 | 单节点，安全已禁用 |
+| Elasticsearch 8.11 | 9200 | 单节点，安全已禁用，IK 分词器 |
+| MinIO | 9000 / 9001 | 对象存储，minioadmin/minioadmin |
+| allahpan-core | 8088 | 主后端 API（Spring Boot JAR） |
+| allahpan-search | 8081 | 搜索服务（Spring Boot JAR） |
+| allahpan-nginx | 88 | 前端静态文件 + `/api/` 反代到 core |
+
+基础设施容器启动后无需重建；应用容器通过 `docker-compose up -d --build` 增量更新。
+
+Docker 环境变量覆盖（`docker-compose.yml` 中 `environment`）：
+- 服务间通过 Docker 服务名通信（`mysql`/`redis`/`rabbitmq`/`minio`/`elasticsearch`）
+- 本地开发用 `localhost`，Docker 用服务名，环境变量自动适配
+
+## 公网部署 (Nginx + Cloudflare Tunnel)
+
+生产环境通过 Nginx 反向代理 + Cloudflare Tunnel 对外提供 HTTPS：
+
+```
+Cloudflare Edge (SSL 终止) → cloudflared (Windows 服务) → Nginx :88 → Core :8088
+```
+
+| 组件 | 位置 | 说明 |
+|------|------|------|
+| cloudflared | Windows 服务 | 出站 WebSocket 隧道，无需开放入站端口 |
+| Nginx | 容器 `allahpan-nginx:88` | 前端 SPA + `/api/` 反代 |
+| 公网地址 | https://allahpan.cn | Cloudflare 自动 SSL/DDoS 防护 |
+
+容器化部署后，外部 Nginx（`C:\nginx-1.26.3`）不再需要，所有流量走容器内 nginx。
 
 ## 架构要点
 
 ### 端口分配
+- `88` — 生产 Nginx 反代（前端 SPA + `/api/` → `:8088`）
 - `8088` — 主后端 API（allahpan-core）
-- `8081` — 搜索服务 API（allahpan-search，绑定 127.0.0.1）
-- `5173` — 前端开发服务器（Vite，API 代理到 8088）
+- `8081` — 搜索服务 API（allahpan-search）
+- `5173` — 前端开发服务器（Vite，仅 dev 模式）
+- `9000/9001` — MinIO API / 控制台
 
 ### 文件处理流水线 (RabbitMQ)
 
@@ -90,7 +140,7 @@ UPLOADED → 缩略图生成 → THUMBNAILED → 文本提取(含Ollama OCR) →
 邮箱验证码登录 → JWT 令牌（Hutool JWT，7 天过期）→ Spring Security 过滤器链
 
 ### 存储模型
-本地磁盘 `ALLAHPAN_ROOT`（默认 `C:/Users/ray/AllahPan`），每用户独立目录。`FileSystemWatcher` 双向同步文件系统变更。MD5 去重实现秒传。
+MinIO 对象存储（容器 `minio:9000`），3 个 bucket：`allahpan-files`（文件）、`allahpan-thumbnails`（缩略图）、`allahpan-trash`（回收站）。storageKey 基于文件路径+文件名拼接（如 `folderA/vacation/photo.jpg`），MD5 去重实现秒传。
 
 ### 关键组件 (allahpan-core)
 - `FileProcessSender` / `FileProcessReceiver` — RabbitMQ 流水线消息收发

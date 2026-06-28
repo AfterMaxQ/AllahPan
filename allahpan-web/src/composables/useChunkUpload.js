@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { calculateMD5 } from '@/utils/md5'
+import { SpeedTracker, formatSpeed, formatETA } from '@/utils/transfer'
 import { initUpload, uploadChunk, completeUpload } from '@/api/chunkUpload'
 import { uploadFile } from '@/api/file'
 
@@ -7,60 +8,12 @@ const CHUNK_SIZE = 10 * 1024 * 1024 // 10MB
 const CHUNK_THRESHOLD = 10 * 1024 * 1024 // 10MB：超过此值使用分片上传
 const CONCURRENCY = 6
 
-// ====================== SpeedTracker ======================
-
-class SpeedTracker {
-  constructor(windowSize = 5) {
-    this.samples = [] // [{ bytes, timestamp }]
-    this.windowSize = windowSize
-    this.totalBytes = 0
-  }
-
-  addSample(bytes) {
-    const now = Date.now()
-    this.samples.push({ bytes, timestamp: now })
-    if (this.samples.length > this.windowSize) {
-      this.samples.shift()
-    }
-    this.totalBytes += bytes
-  }
-
-  getSpeed() {
-    if (this.samples.length < 2) return 0
-    const first = this.samples[0]
-    const last = this.samples[this.samples.length - 1]
-    const totalBytes = this.samples.slice(1).reduce((s, v) => s + v.bytes, 0)
-    const duration = (last.timestamp - first.timestamp) / 1000
-    return duration > 0 ? totalBytes / duration : 0
-  }
-
-  getETA(remainingBytes) {
-    const speed = this.getSpeed()
-    return speed > 0 ? remainingBytes / speed : Infinity
-  }
-}
-
-// ====================== Format helpers ======================
-
-function formatSpeed(bytesPerSec) {
-  if (bytesPerSec >= 1e6) return (bytesPerSec / 1e6).toFixed(1) + ' MB/s'
-  if (bytesPerSec >= 1e3) return (bytesPerSec / 1e3).toFixed(0) + ' KB/s'
-  return bytesPerSec.toFixed(0) + ' B/s'
-}
-
-function formatETA(seconds) {
-  if (!isFinite(seconds)) return '--'
-  if (seconds < 60) return Math.ceil(seconds) + 's'
-  const m = Math.floor(seconds / 60)
-  const s = Math.ceil(seconds % 60)
-  return m + 'm ' + s + 's'
-}
-
 // ====================== useChunkUpload ======================
 
 export function useChunkUpload() {
   const uploading = ref(false)
   let cancelFlag = false
+  let abortController = null
 
   /**
    * 上传一批文件（自动选择单步/分片）
@@ -72,6 +25,7 @@ export function useChunkUpload() {
   async function uploadFiles(files, parentId, onTaskUpdate, taskId) {
     uploading.value = true
     cancelFlag = false
+    abortController = new AbortController()
 
     for (const file of files) {
       if (cancelFlag) break
@@ -90,6 +44,9 @@ export function useChunkUpload() {
 
   function cancel() {
     cancelFlag = true
+    if (abortController) {
+      abortController.abort()
+    }
   }
 
   // ---- 单步上传（小文件，复用原有逻辑） ----
@@ -103,8 +60,8 @@ export function useChunkUpload() {
 
     emit({ statusText: '上传中...' })
     try {
-      await uploadFile(file, parentId, (p) => {
-        emit({ percent: p, loaded: Math.round(file.size * p / 100) })
+      await uploadFile(file, parentId, (evt) => {
+        emit({ percent: evt.percent, loaded: evt.loaded })
       })
       emit({ percent: 100, loaded: file.size, status: 'success', statusText: '上传成功' })
     } catch (e) {
@@ -166,44 +123,52 @@ export function useChunkUpload() {
 
       // 4. 并发上传
       const speedTracker = new SpeedTracker()
-      const uploadedBytes = uploadedChunks.size * CHUNK_SIZE
+      const getChunkSize = (index) => {
+        const start = index * CHUNK_SIZE
+        return Math.max(0, Math.min(CHUNK_SIZE, file.size - start))
+      }
+      let completedCount = uploadedChunks.size
+      let completedBytes = Array.from(uploadedChunks)
+        .reduce((sum, index) => sum + getChunkSize(index), 0)
+      const inFlightBytes = new Map()
       const queue = [...pendingChunks]
+
+      const emitUploadProgress = (statusText) => {
+        const partialBytes = Array.from(inFlightBytes.values())
+          .reduce((sum, bytes) => sum + bytes, 0)
+        const loaded = Math.min(completedBytes + partialBytes, file.size)
+        const remaining = file.size - loaded
+        const speed = speedTracker.getSpeed()
+        emit({
+          percent: Math.round((loaded / file.size) * 100),
+          loaded,
+          speed,
+          eta: speedTracker.getETA(remaining),
+          statusText,
+        })
+      }
 
       async function worker() {
         while (queue.length > 0 && !cancelFlag) {
           const chunk = queue.shift()
           // 分片内部进度：实时反馈当前分片的上传进度
-          await uploadChunk(uploadId, chunk.index, chunk.blob, (chunkPercent) => {
-            const doneBeforeThis = totalChunks - queue.length - 1
-            if (doneBeforeThis >= 0) {
-              const loadedSoFar = Math.min(
-                doneBeforeThis * CHUNK_SIZE + Math.round(chunk.blob.size * chunkPercent / 100),
-                file.size
-              )
-              const remainingSoFar = file.size - loadedSoFar
-              emit({
-                percent: Math.round((loadedSoFar / file.size) * 100),
-                loaded: loadedSoFar,
-                speed: speedTracker.getSpeed(),
-                eta: speedTracker.getETA(remainingSoFar),
-                statusText: `${doneBeforeThis}/${totalChunks} 分片 · 当前分片 ${chunkPercent}%`,
-              })
+          try {
+            await uploadChunk(uploadId, chunk.index, chunk.blob, (chunkPercent) => {
+              inFlightBytes.set(chunk.index, Math.round(chunk.blob.size * chunkPercent / 100))
+              emitUploadProgress(`分片 ${completedCount}/${totalChunks} · 正在上传第 ${chunk.index + 1} 片 (${chunkPercent}%)`)
+            }, abortController.signal)
+          } catch (e) {
+            if (e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') {
+              inFlightBytes.delete(chunk.index)
+              return
             }
-          })
+            throw e
+          }
+          inFlightBytes.delete(chunk.index)
+          completedCount += 1
+          completedBytes = Math.min(completedBytes + chunk.blob.size, file.size)
           speedTracker.addSample(chunk.blob.size)
-          const done = totalChunks - queue.length
-          const loaded = Math.min(done * CHUNK_SIZE, file.size)
-          const remaining = file.size - loaded
-          const speed = speedTracker.getSpeed()
-          const eta = speedTracker.getETA(remaining)
-
-          emit({
-            percent: Math.round((done / totalChunks) * 100),
-            loaded,
-            speed,
-            eta,
-            statusText: `${done}/${totalChunks} 分片`,
-          })
+          emitUploadProgress(`分片 ${completedCount}/${totalChunks}`)
         }
       }
 
@@ -219,7 +184,8 @@ export function useChunkUpload() {
 
     } catch (e) {
       if (!cancelFlag) {
-        emit({ status: 'exception', statusText: '上传失败' })
+        const errMsg = e?.response?.data?.message || e?.message || '未知错误'
+        emit({ status: 'exception', statusText: `上传失败：${errMsg}` })
       }
       throw e
     }

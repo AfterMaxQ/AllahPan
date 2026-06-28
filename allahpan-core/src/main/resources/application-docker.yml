@@ -1,0 +1,18 @@
+# Docker 环境配置 — application-docker.yml 自动绑定 docker profile
+spring:
+  datasource:
+    url: jdbc:mysql://mysql:3306/allahpan?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf-8
+  data:
+    redis:
+      host: redis
+  rabbitmq:
+    host: rabbitmq
+  elasticsearch:
+    uris: http://elasticsearch:9200
+
+minio:
+  endpoint: http://minio:9000
+
+allahpan:
+  chunk:
+    temp-dir: /tmp/allahpan-chunks
