@@ -78,6 +78,7 @@ services:
       SPRING_RABBITMQ_HOST: rabbitmq
       MINIO_ENDPOINT: http://minio:9000
       ALLAHPAN_CHUNK_TEMP_DIR: /tmp/allahpan-chunks
+      ALLAHPAN_SEARCH_SERVICE_URL: http://search:8081/es-admin/files
     depends_on:
       mysql:
         condition: service_started
