@@ -12,10 +12,13 @@
     />
 
     <div class="task-meta">
-      <span>{{ formatBytes(task.loaded) }}/{{ formatBytes(task.total) }}</span>
-      <span v-if="task.status === 'running'">{{ formatSpeed(task.speed || 0) }}</span>
-      <span v-if="task.status === 'running'">{{ formatETA(task.eta) }}</span>
-      <span v-if="task.error" class="task-error" :title="task.error">{{ task.error }}</span>
+      <template v-if="task.status === 'running'">
+        <span class="speed">{{ formatSpeed(task.speed || 0) }}</span>
+        <span class="sep">·</span>
+        <span>剩余 {{ formatETA(task.eta) }}</span>
+      </template>
+      <span v-else-if="task.error" class="task-error" :title="task.error">{{ task.error }}</span>
+      <span v-else>{{ formatBytes(task.total) }}</span>
     </div>
 
     <div class="task-actions">
@@ -110,12 +113,19 @@ const progressStatus = computed(() => {
 }
 .task-meta {
   display: flex;
-  gap: 10px;
+  gap: 6px;
   align-items: center;
   margin-top: 6px;
   font-size: 11px;
   color: var(--ap-text-sub);
   min-height: 18px;
+}
+.task-meta .speed {
+  font-variant-numeric: tabular-nums;
+  color: var(--ap-text-main);
+}
+.task-meta .sep {
+  opacity: 0.5;
 }
 .task-error {
   color: #f56c6c;

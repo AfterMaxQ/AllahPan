@@ -63,7 +63,7 @@
 <script setup>
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { Document, Cpu, ArrowRight } from '@element-plus/icons-vue'
-import { getFileDetail, createFileObjectUrl } from '@/api/file'
+import { getFileDetail, createPreviewObjectUrl, createThumbnailObjectUrl, createFileObjectUrl } from '@/api/file'
 import { useTransferStore } from '@/stores/transfer'
 import { formatBytes } from '@/utils/format'
 
@@ -83,6 +83,23 @@ const revokeMediaUrl = () => {
   mediaUrl.value = ''
 }
 
+/** 图片预览：preview → thumbnail → stream 降级链 */
+async function loadImagePreview(fileId, signal) {
+  const loaders = [
+    () => createPreviewObjectUrl(fileId, signal),
+    () => createThumbnailObjectUrl(fileId, signal),
+    () => createFileObjectUrl(fileId, signal),
+  ]
+  for (const load of loaders) {
+    try {
+      return await load()
+    } catch (e) {
+      if (e?.code === 'ERR_CANCELED' || e?.name === 'AbortError') throw e
+    }
+  }
+  throw new Error('无法加载图片预览')
+}
+
 const open = async (targetFile) => {
   previewController?.abort()
   previewController = new AbortController()
@@ -100,7 +117,9 @@ const open = async (targetFile) => {
       ocrText.value = detail.originText || ''
     }
 
-    if (detail.fileType === 'IMAGE' || detail.fileType === 'VIDEO') {
+    if (detail.fileType === 'IMAGE') {
+      mediaUrl.value = await loadImagePreview(targetFile.id, previewController.signal)
+    } else if (detail.fileType === 'VIDEO') {
       mediaUrl.value = await createFileObjectUrl(targetFile.id, previewController.signal)
     }
   } catch (e) {

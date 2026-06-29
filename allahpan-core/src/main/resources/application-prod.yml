@@ -75,6 +75,9 @@ allahpan:
   text:
     max-length: 10000
   thumbnail:
+    list-width: 320
+    preview-width: 1280
+    jpeg-quality: 0.88
     pdf-dpi: 150
   search:
     service-url: ${SEARCH_SERVICE_URL:http://localhost:8081/es-admin/files}

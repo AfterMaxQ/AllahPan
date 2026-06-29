@@ -65,10 +65,16 @@ public class File {
     private String contentType;
 
     /**
-     * 缩略图 MinIO key
+     * 列表缩略图 MinIO key
      * 表字段 : files.thumbnail_key
      */
     private String thumbnailKey;
+
+    /**
+     * 预览高清图 MinIO key
+     * 表字段 : files.preview_key
+     */
+    private String previewKey;
 
     /**
      * 0=文件 1=文件夹
@@ -190,6 +196,14 @@ public class File {
 
     public void setThumbnailKey(String thumbnailKey) {
         this.thumbnailKey = thumbnailKey;
+    }
+
+    public String getPreviewKey() {
+        return previewKey;
+    }
+
+    public void setPreviewKey(String previewKey) {
+        this.previewKey = previewKey;
     }
 
     public Byte getIsFolder() {

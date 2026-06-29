@@ -6,8 +6,8 @@
     @click="$emit('toggle-select')"
     @dblclick="$emit('open')"
   >
-    <div class="select-checkbox">
-      <el-checkbox :model-value="isSelected" @change="$emit('toggle-select')" />
+    <div class="select-checkbox" @click.stop="$emit('toggle-select')">
+      <el-checkbox :model-value="isSelected" @click.stop="$emit('toggle-select')" />
     </div>
 
     <div class="preview-area">
@@ -67,11 +67,24 @@ defineEmits(['contextmenu', 'toggle-select', 'open'])
 }
 .select-checkbox {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 2px;
+  left: 2px;
+  /* 扩大点击热区，方便点中左上角圆点 */
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
   opacity: 0;
-  transition: opacity 0.2s;
-  z-index: 1;
+  transition: opacity 0.2s, background-color 0.2s;
+  z-index: 2;
+  cursor: pointer;
+}
+.select-checkbox:hover {
+  background-color: var(--el-color-primary-light-9);
+}
+.select-checkbox :deep(.el-checkbox) {
+  height: auto;
 }
 .file-card:hover .select-checkbox,
 .file-card.selected .select-checkbox {

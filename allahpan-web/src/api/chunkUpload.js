@@ -37,7 +37,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function withRetry(requestFn, { maxRetries = 4, baseDelay = 1500, signal } = {}) {
+async function withRetry(requestFn, { maxRetries = 4, baseDelay = 1500, signal, onRetry } = {}) {
   let lastError
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (signal?.aborted) {
@@ -51,6 +51,7 @@ async function withRetry(requestFn, { maxRetries = 4, baseDelay = 1500, signal }
         throw error
       }
       if (!isRetryableUploadError(error) || attempt === maxRetries) throw error
+      onRetry?.(attempt + 1, lastError)
       await sleep(baseDelay * Math.pow(2, attempt))
     }
   }
@@ -64,7 +65,7 @@ export function initUpload(data, signal) {
   )
 }
 
-export function uploadChunk(uploadId, chunkIndex, chunkBlob, onProgress, signal) {
+export function uploadChunk(uploadId, chunkIndex, chunkBlob, onProgress, signal, onRetry) {
   const formData = new FormData()
   formData.append('uploadId', uploadId)
   formData.append('chunkIndex', chunkIndex)
@@ -84,17 +85,17 @@ export function uploadChunk(uploadId, chunkIndex, chunkBlob, onProgress, signal)
         }
       },
     }),
-    { maxRetries: 5, baseDelay: 2000, signal }
+    { maxRetries: 5, baseDelay: 2000, signal, onRetry }
   )
 }
 
-export function completeUpload(uploadId, signal) {
+export function completeUpload(uploadId, signal, onRetry) {
   return withRetry(
     () => noTimeoutAxios.post('/file/chunk/complete', { uploadId }, {
       signal,
-      timeout: 600000, // 大文件合并可能较久
+      timeout: 600000,
     }),
-    { maxRetries: 3, baseDelay: 3000, signal }
+    { maxRetries: 3, baseDelay: 3000, signal, onRetry }
   )
 }
 

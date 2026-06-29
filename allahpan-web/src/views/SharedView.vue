@@ -95,14 +95,11 @@ const handleDownload = async () => {
   downloadProgress.value = 0
   downloadText.value = '正在准备下载...'
   const speedTracker = new SpeedTracker()
-  let prevLoaded = 0
   try {
     await downloadSharedFile(route.params.code, sharedItem.value?.fileName, (evt) => {
       const total = evt.total || sharedItem.value?.fileSize || 0
       const loaded = evt.loaded || 0
-      const delta = loaded - prevLoaded
-      prevLoaded = loaded
-      if (delta > 0) speedTracker.addSample(delta)
+      speedTracker.update(loaded)
       downloadProgress.value = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0
       downloadText.value = `${formatSpeed(speedTracker.getSpeed())} · ${formatBytes(loaded)}/${formatBytes(total)}`
     })

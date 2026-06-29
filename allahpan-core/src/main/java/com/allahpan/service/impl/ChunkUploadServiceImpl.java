@@ -211,6 +211,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                     dup.setMd5(actualMd5);
                     dup.setFileType(existing.getFileType());
                     dup.setThumbnailKey(existing.getThumbnailKey());
+                    dup.setPreviewKey(existing.getPreviewKey());
                     dup.setIsFolder((byte) 0);
                     dup.setProcessStatus((byte) 3);
                     dup.setCreateTime(new Date());
@@ -494,6 +495,10 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         map.put("thumbnailKey", f.getThumbnailKey());
         if (f.getThumbnailKey() != null) {
             map.put("thumbnailUrl", "/api/file/" + f.getId() + "/thumbnail");
+        }
+        map.put("previewKey", f.getPreviewKey());
+        if (f.getPreviewKey() != null) {
+            map.put("previewUrl", "/api/file/" + f.getId() + "/preview");
         }
         map.put("isFolder", f.getIsFolder());
         map.put("processStatus", f.getProcessStatus());

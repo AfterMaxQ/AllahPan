@@ -127,6 +127,11 @@ export async function createFileObjectUrl(fileId, signal) {
   return window.URL.createObjectURL(blob)
 }
 
+export async function createPreviewObjectUrl(fileId, signal) {
+  const blob = await requestBlob(`/file/${fileId}/preview`, null, signal)
+  return window.URL.createObjectURL(blob)
+}
+
 export async function createThumbnailObjectUrl(fileId, signal) {
   const blob = await requestBlob(`/file/${fileId}/thumbnail`, null, signal)
   return window.URL.createObjectURL(blob)
@@ -141,6 +146,11 @@ export async function createObjectUrlFromApi(url, signal) {
 // 预览流 URL
 export function getStreamUrl(fileId) {
   return `/api/file/${fileId}/stream`
+}
+
+// 预览高清图 URL
+export function getPreviewUrl(fileId) {
+  return `/api/file/${fileId}/preview`
 }
 
 // 缩略图 URL

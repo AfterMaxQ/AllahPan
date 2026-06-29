@@ -31,6 +31,8 @@ class FileProcessReceiverTest {
     @Mock private EsIndexService esIndexService;
     @Mock private FileMapper fileMapper;
     @Mock private FileProcessSender sender;
+    @Mock private OllamaService ollamaService;
+    @Mock private SseBroadcaster sseBroadcaster;
 
     @InjectMocks
     private FileProcessReceiver receiver;
@@ -61,6 +63,7 @@ class FileProcessReceiverTest {
         when(fileMapper.selectByPrimaryKey(2L)).thenReturn(otherFile);
         when(fileMapper.updateByPrimaryKeySelective(any())).thenReturn(1);
         when(fileMapper.updateByPrimaryKeyWithBLOBs(any())).thenReturn(1);
+        when(ollamaService.isAvailable()).thenReturn(true);
     }
 
     // ======== RED 测试：基础设施错误不应标记文件为 -1 ========
@@ -85,12 +88,13 @@ class FileProcessReceiverTest {
 
     @Test
     void shouldDegradeNotFailWhenOllamaExhaustsRetries() throws Exception {
-        when(thumbnailGenerator.generate(imageFile)).thenReturn("thumb/test.jpg");
+        when(thumbnailGenerator.generate(imageFile))
+                .thenReturn(new ThumbnailGenerator.ThumbnailResult("thumb/list.jpg", "thumb/preview.jpg"));
         when(textExtractor.extract(imageFile))
                 .thenThrow(new RuntimeException("Ollama 连接超时"));
 
         FileProcessMessage msg = new FileProcessMessage(1L, Stage.THUMBNAILED);
-        msg.setRetryCount((byte) 3);
+        msg.setRetryCount((byte) 12);
         receiver.handle(msg);
 
         // ★ 期望：OCR 不可用时文件不标记为 -1，而是跳过 OCR 继续
@@ -121,7 +125,8 @@ class FileProcessReceiverTest {
     @Test
     void shouldCompletePipelineWhenTextExtractorThrows() throws Exception {
         // 缩略图成功
-        when(thumbnailGenerator.generate(imageFile)).thenReturn("thumb/abc.jpg");
+        when(thumbnailGenerator.generate(imageFile))
+                .thenReturn(new ThumbnailGenerator.ThumbnailResult("thumb/list.jpg", "thumb/preview.jpg"));
         when(textExtractor.extract(imageFile))
                 .thenThrow(new RuntimeException("Ollama 服务不可达"));
 
@@ -181,23 +186,23 @@ class FileProcessReceiverTest {
     @Test
     void shouldRetryWithIncreasingDelay() throws Exception {
         when(thumbnailGenerator.generate(imageFile))
-                .thenThrow(new RuntimeException("失败"));
+                .thenThrow(new RuntimeException("connection refused"));
 
         // retryCount = 0 → delay = 30s
         FileProcessMessage msg0 = new FileProcessMessage(1L, Stage.UPLOADED);
         receiver.handle(msg0);
-        verify(sender).sendRetry(any(), eq(30_000L));
+        verify(sender).sendRetry(any(), org.mockito.ArgumentMatchers.longThat(d -> d >= 30_000L && d <= 36_000L));
 
         // retryCount = 1 → delay = 60s
         FileProcessMessage msg1 = new FileProcessMessage(1L, Stage.UPLOADED);
         msg1.setRetryCount((byte) 1);
         receiver.handle(msg1);
-        verify(sender).sendRetry(any(), eq(60_000L));
+        verify(sender).sendRetry(any(), org.mockito.ArgumentMatchers.longThat(d -> d >= 60_000L && d <= 72_000L));
 
         // retryCount = 2 → delay = 120s
         FileProcessMessage msg2 = new FileProcessMessage(1L, Stage.UPLOADED);
         msg2.setRetryCount((byte) 2);
         receiver.handle(msg2);
-        verify(sender).sendRetry(any(), eq(120_000L));
+        verify(sender).sendRetry(any(), org.mockito.ArgumentMatchers.longThat(d -> d >= 120_000L && d <= 144_000L));
     }
 }

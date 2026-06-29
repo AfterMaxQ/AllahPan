@@ -13,6 +13,11 @@ spring:
 minio:
   endpoint: http://minio:9000
 
+# 容器内通过 host.docker.internal 访问宿主机上的 Ollama 服务
+# （docker profile 在 dev 之后加载，覆盖 dev 中的 localhost）
+ollama:
+  base-url: ${OLLAMA_BASE_URL:http://host.docker.internal:11434}
+
 allahpan:
   chunk:
     temp-dir: /tmp/allahpan-chunks

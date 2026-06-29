@@ -4,11 +4,10 @@ import { SpeedTracker, formatSpeed, formatETA } from '@/utils/transfer'
 import { initUpload, uploadChunk, completeUpload } from '@/api/chunkUpload'
 import { uploadFile } from '@/api/file'
 
-// 2MB 分片：降低 Cloudflare/Nginx 单请求超时（524）风险
 const CHUNK_SIZE = 2 * 1024 * 1024
 const CHUNK_THRESHOLD = 10 * 1024 * 1024
-const CONCURRENCY = 3
-const UPLOAD_PROGRESS_MAX = 98 // 留 2% 给合并完成
+const CONCURRENCY = 4
+const UPLOAD_PROGRESS_MAX = 98
 
 function isCanceledError(error) {
   return error?.name === 'CanceledError'
@@ -54,16 +53,13 @@ export async function uploadTransferFile(file, parentId, taskId, onTaskUpdate, s
 
 async function uploadSingleStep(file, parentId, taskId, onTaskUpdate, signal) {
   const emit = createEmitter(taskId, file, onTaskUpdate)
-  const speedTracker = new SpeedTracker(8)
-  let previousLoaded = 0
+  const speedTracker = new SpeedTracker()
 
   emit({ statusText: '上传中...' })
   try {
     await uploadFile(file, parentId, (evt) => {
       const loaded = evt.loaded || 0
-      const delta = loaded - previousLoaded
-      previousLoaded = loaded
-      if (delta > 0) speedTracker.addSample(delta)
+      speedTracker.update(loaded)
       const progress = evt.percent || Math.round((loaded / file.size) * 100)
       emit({
         progress,
@@ -87,14 +83,16 @@ async function uploadSingleStep(file, parentId, taskId, onTaskUpdate, signal) {
 
 async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
   const emit = createEmitter(taskId, file, onTaskUpdate)
-  const speedTracker = new SpeedTracker(8)
+  const speedTracker = new SpeedTracker()
   let lastReportedLoaded = 0
+  let maxReportedLoaded = 0
+  let mergeTimer = null
 
   const reportProgress = (loaded, statusText = '上传中...') => {
-    const safeLoaded = Math.min(Math.max(loaded, 0), file.size)
-    const delta = safeLoaded - lastReportedLoaded
-    if (delta > 0) speedTracker.addSample(delta)
+    const safeLoaded = Math.min(Math.max(loaded, maxReportedLoaded, 0), file.size)
+    maxReportedLoaded = safeLoaded
     lastReportedLoaded = safeLoaded
+    speedTracker.update(safeLoaded)
     const speed = speedTracker.getSpeed()
     const remaining = file.size - safeLoaded
     emit({
@@ -105,6 +103,31 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
       eta: speedTracker.getETA(remaining),
       statusText,
     })
+  }
+
+  const stopMergeTimer = () => {
+    if (mergeTimer) {
+      clearInterval(mergeTimer)
+      mergeTimer = null
+    }
+  }
+
+  /** 分片传完后服务器合并阶段：保持 99% 并清零测速，避免旧速度/ETA 误导 */
+  const startMergeKeepalive = () => {
+    stopMergeTimer()
+    speedTracker.reset()
+    const tick = () => {
+      emit({
+        statusText: '上传中...',
+        progress: 99,
+        percent: 99,
+        loaded: file.size,
+        speed: 0,
+        eta: Infinity,
+      })
+    }
+    tick()
+    mergeTimer = setInterval(tick, 1000)
   }
 
   try {
@@ -128,16 +151,24 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
     const uploadId = initResult.uploadId
     const uploadedChunks = new Set(initResult.uploadedChunks || [])
 
-    let completedBytes = Array.from(uploadedChunks)
-      .reduce((sum, index) => sum + getChunkSize(file.size, index), 0)
-    const inFlightBytes = new Map()
-
-    const getTotalLoaded = () => {
-      const partial = Array.from(inFlightBytes.values()).reduce((sum, n) => sum + n, 0)
-      return Math.min(completedBytes + partial, file.size)
+    const chunkBytes = new Map()
+    for (const index of uploadedChunks) {
+      chunkBytes.set(index, getChunkSize(file.size, index))
     }
 
-    reportProgress(completedBytes, '上传中...')
+    const setChunkProgress = (index, bytes) => {
+      const size = getChunkSize(file.size, index)
+      const prev = chunkBytes.get(index) || 0
+      chunkBytes.set(index, Math.min(Math.max(prev, bytes), size))
+    }
+
+    const getTotalLoaded = () => {
+      let sum = 0
+      for (const bytes of chunkBytes.values()) sum += bytes
+      return Math.min(sum, file.size)
+    }
+
+    reportProgress(getTotalLoaded(), '上传中...')
 
     const pendingChunks = []
     for (let i = 0; i < totalChunks; i++) {
@@ -155,18 +186,22 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
         ensureNotCanceled(signal)
         const chunk = queue.shift()
         try {
-          await uploadChunk(uploadId, chunk.index, chunk.blob, (chunkPercent) => {
-            inFlightBytes.set(chunk.index, Math.round(chunk.blob.size * chunkPercent / 100))
-            reportProgress(getTotalLoaded(), '上传中...')
-          }, signal)
+          await uploadChunk(
+            uploadId,
+            chunk.index,
+            chunk.blob,
+            (chunkPercent) => {
+              setChunkProgress(chunk.index, Math.round(chunk.blob.size * chunkPercent / 100))
+              reportProgress(getTotalLoaded(), '上传中...')
+            },
+            signal,
+          )
         } catch (e) {
-          inFlightBytes.delete(chunk.index)
           if (isCanceledError(e) || signal?.aborted) return
           throw e
         }
-        inFlightBytes.delete(chunk.index)
-        completedBytes = Math.min(completedBytes + chunk.blob.size, file.size)
-        reportProgress(completedBytes, '上传中...')
+        setChunkProgress(chunk.index, chunk.blob.size)
+        reportProgress(getTotalLoaded(), '上传中...')
       }
     }
 
@@ -174,8 +209,10 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
     await Promise.all(Array.from({ length: workerCount }, () => worker()))
     ensureNotCanceled(signal)
 
-    emit({ statusText: '正在完成...', progress: 99, loaded: file.size })
+    startMergeKeepalive()
     await completeUpload(uploadId, signal)
+    stopMergeTimer()
+
     emit({
       progress: 100,
       percent: 100,
@@ -187,6 +224,7 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
     })
     return initResult
   } catch (e) {
+    stopMergeTimer()
     if (isCanceledError(e) || signal?.aborted) {
       emit({ status: 'canceled', statusText: '已取消' })
       throw e

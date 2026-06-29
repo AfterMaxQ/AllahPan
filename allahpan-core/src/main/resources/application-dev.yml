@@ -77,7 +77,10 @@ allahpan:
   text:
     max-length: 10000     # 文本提取最大字符数（DB origin_text 截断值）
   thumbnail:
-    pdf-dpi: 150           # PDF 缩略图渲染 DPI（默认 150）
+    list-width: 320          # 列表卡片缩略图宽度
+    preview-width: 1280      # 预览弹窗高清图宽度
+    jpeg-quality: 0.88       # JPEG 压缩质量
+    pdf-dpi: 150             # PDF 缩略图渲染 DPI（默认 150）
 
 minio:
   endpoint: http://localhost:9000

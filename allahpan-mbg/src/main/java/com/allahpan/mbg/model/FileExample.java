@@ -774,6 +774,21 @@ public class FileExample {
             return (Criteria) this;
         }
 
+        public Criteria andPreviewKeyIsNull() {
+            addCriterion("preview_key is null");
+            return (Criteria) this;
+        }
+
+        public Criteria andPreviewKeyIsNotNull() {
+            addCriterion("preview_key is not null");
+            return (Criteria) this;
+        }
+
+        public Criteria andPreviewKeyEqualTo(String value) {
+            addCriterion("preview_key =", value, "previewKey");
+            return (Criteria) this;
+        }
+
         public Criteria andIsFolderIsNull() {
             addCriterion("is_folder is null");
             return (Criteria) this;

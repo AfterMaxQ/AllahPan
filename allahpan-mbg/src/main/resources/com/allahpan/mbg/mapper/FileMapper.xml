@@ -12,6 +12,7 @@
     <result column="file_size" jdbcType="BIGINT" property="fileSize" />
     <result column="content_type" jdbcType="VARCHAR" property="contentType" />
     <result column="thumbnail_key" jdbcType="VARCHAR" property="thumbnailKey" />
+    <result column="preview_key" jdbcType="VARCHAR" property="previewKey" />
     <result column="is_folder" jdbcType="TINYINT" property="isFolder" />
     <result column="process_status" jdbcType="TINYINT" property="processStatus" />
     <result column="md5" jdbcType="VARCHAR" property="md5" />
@@ -82,7 +83,7 @@
   </sql>
   <sql id="Base_Column_List">
     id, uploader_id, parent_id, file_name, file_path, storage_key, file_type, file_size, 
-    content_type, thumbnail_key, is_folder, process_status, md5, create_time, update_time, 
+    content_type, thumbnail_key, preview_key, is_folder, process_status, md5, create_time, update_time, 
     delete_time
   </sql>
   <sql id="Blob_Column_List">
@@ -142,13 +143,13 @@
     </selectKey>
     insert into files (uploader_id, parent_id, file_name, 
       file_path, storage_key, file_type, 
-      file_size, content_type, thumbnail_key, 
+      file_size, content_type, thumbnail_key, preview_key,
       is_folder, process_status, md5, 
       create_time, update_time, delete_time, 
       origin_text)
     values (#{uploaderId,jdbcType=BIGINT}, #{parentId,jdbcType=BIGINT}, #{fileName,jdbcType=VARCHAR}, 
       #{filePath,jdbcType=VARCHAR}, #{storageKey,jdbcType=VARCHAR}, #{fileType,jdbcType=VARCHAR}, 
-      #{fileSize,jdbcType=BIGINT}, #{contentType,jdbcType=VARCHAR}, #{thumbnailKey,jdbcType=VARCHAR}, 
+      #{fileSize,jdbcType=BIGINT}, #{contentType,jdbcType=VARCHAR}, #{thumbnailKey,jdbcType=VARCHAR}, #{previewKey,jdbcType=VARCHAR},
       #{isFolder,jdbcType=TINYINT}, #{processStatus,jdbcType=TINYINT}, #{md5,jdbcType=VARCHAR}, 
       #{createTime,jdbcType=TIMESTAMP}, #{updateTime,jdbcType=TIMESTAMP}, #{deleteTime,jdbcType=TIMESTAMP}, 
       #{originText,jdbcType=LONGVARCHAR})
@@ -185,6 +186,9 @@
       </if>
       <if test="thumbnailKey != null">
         thumbnail_key,
+      </if>
+      <if test="previewKey != null">
+        preview_key,
       </if>
       <if test="isFolder != null">
         is_folder,
@@ -235,6 +239,9 @@
       </if>
       <if test="thumbnailKey != null">
         #{thumbnailKey,jdbcType=VARCHAR},
+      </if>
+      <if test="previewKey != null">
+        #{previewKey,jdbcType=VARCHAR},
       </if>
       <if test="isFolder != null">
         #{isFolder,jdbcType=TINYINT},
@@ -298,6 +305,9 @@
       <if test="row.thumbnailKey != null">
         thumbnail_key = #{row.thumbnailKey,jdbcType=VARCHAR},
       </if>
+      <if test="row.previewKey != null">
+        preview_key = #{row.previewKey,jdbcType=VARCHAR},
+      </if>
       <if test="row.isFolder != null">
         is_folder = #{row.isFolder,jdbcType=TINYINT},
       </if>
@@ -336,6 +346,7 @@
       file_size = #{row.fileSize,jdbcType=BIGINT},
       content_type = #{row.contentType,jdbcType=VARCHAR},
       thumbnail_key = #{row.thumbnailKey,jdbcType=VARCHAR},
+      preview_key = #{row.previewKey,jdbcType=VARCHAR},
       is_folder = #{row.isFolder,jdbcType=TINYINT},
       process_status = #{row.processStatus,jdbcType=TINYINT},
       md5 = #{row.md5,jdbcType=VARCHAR},
@@ -359,6 +370,7 @@
       file_size = #{row.fileSize,jdbcType=BIGINT},
       content_type = #{row.contentType,jdbcType=VARCHAR},
       thumbnail_key = #{row.thumbnailKey,jdbcType=VARCHAR},
+      preview_key = #{row.previewKey,jdbcType=VARCHAR},
       is_folder = #{row.isFolder,jdbcType=TINYINT},
       process_status = #{row.processStatus,jdbcType=TINYINT},
       md5 = #{row.md5,jdbcType=VARCHAR},
@@ -399,6 +411,9 @@
       <if test="thumbnailKey != null">
         thumbnail_key = #{thumbnailKey,jdbcType=VARCHAR},
       </if>
+      <if test="previewKey != null">
+        preview_key = #{previewKey,jdbcType=VARCHAR},
+      </if>
       <if test="isFolder != null">
         is_folder = #{isFolder,jdbcType=TINYINT},
       </if>
@@ -434,6 +449,7 @@
       file_size = #{fileSize,jdbcType=BIGINT},
       content_type = #{contentType,jdbcType=VARCHAR},
       thumbnail_key = #{thumbnailKey,jdbcType=VARCHAR},
+      preview_key = #{previewKey,jdbcType=VARCHAR},
       is_folder = #{isFolder,jdbcType=TINYINT},
       process_status = #{processStatus,jdbcType=TINYINT},
       md5 = #{md5,jdbcType=VARCHAR},
@@ -454,6 +470,7 @@
       file_size = #{fileSize,jdbcType=BIGINT},
       content_type = #{contentType,jdbcType=VARCHAR},
       thumbnail_key = #{thumbnailKey,jdbcType=VARCHAR},
+      preview_key = #{previewKey,jdbcType=VARCHAR},
       is_folder = #{isFolder,jdbcType=TINYINT},
       process_status = #{processStatus,jdbcType=TINYINT},
       md5 = #{md5,jdbcType=VARCHAR},

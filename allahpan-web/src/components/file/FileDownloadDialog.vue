@@ -54,7 +54,6 @@ const open = (fileId, name, fileSize) => {
   loaded.value = 0
   total.value = 0
   speedTracker.reset()
-  let prevLoaded = 0
 
   downloadFile(fileId, name, (evt) => {
     const effectiveTotal = evt.total || fileSize || 0
@@ -63,9 +62,7 @@ const open = (fileId, name, fileSize) => {
     }
     loaded.value = evt.loaded
     total.value = effectiveTotal
-    const delta = evt.loaded - prevLoaded
-    prevLoaded = evt.loaded
-    if (delta > 0) speedTracker.addSample(delta)
+    speedTracker.update(evt.loaded)
     speed.value = speedTracker.getSpeed()
     const remaining = effectiveTotal - evt.loaded
     eta.value = speedTracker.getETA(remaining)

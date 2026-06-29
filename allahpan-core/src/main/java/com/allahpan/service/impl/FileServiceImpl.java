@@ -93,6 +93,7 @@ public class FileServiceImpl implements FileService {
                 dup.setMd5(md5);
                 dup.setFileType(existing.getFileType());
                 dup.setThumbnailKey(existing.getThumbnailKey());
+                dup.setPreviewKey(existing.getPreviewKey());
                 dup.setIsFolder((byte) 0);
                 dup.setProcessStatus((byte) 3);
                 dup.setCreateTime(new Date());

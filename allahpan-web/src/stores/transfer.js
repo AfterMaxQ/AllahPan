@@ -187,16 +187,13 @@ export const useTransferStore = defineStore('transfer', () => {
   async function startDownload(task) {
     task.controller = new AbortController()
     const speedTracker = new SpeedTracker()
-    let previousLoaded = 0
     updateTask(task, { status: 'running', statusText: '下载中...', error: '' })
 
     try {
       const blob = await downloadFileBlob(task.fileId, (evt) => {
         const total = evt.total || task.total || 0
         const loaded = evt.loaded || 0
-        const delta = loaded - previousLoaded
-        previousLoaded = loaded
-        if (delta > 0) speedTracker.addSample(delta)
+        speedTracker.update(loaded)
         const speed = speedTracker.getSpeed()
         updateTask(task, {
           total,

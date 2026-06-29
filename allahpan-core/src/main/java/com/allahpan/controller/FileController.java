@@ -166,15 +166,29 @@ public class FileController {
         if (file == null || file.getThumbnailKey() == null) {
             return ResponseEntity.notFound().build();
         }
+        return streamThumbnail(file.getThumbnailKey(), fileId, "thumbnail");
+    }
+
+    @Operation(summary = "预览高清图（MinIO）")
+    @GetMapping("/{fileId}/preview")
+    public ResponseEntity<Resource> getPreview(@PathVariable Long fileId) {
+        File file = fileService.getFileById(fileId);
+        if (file == null || file.getPreviewKey() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return streamThumbnail(file.getPreviewKey(), fileId, "preview");
+    }
+
+    private ResponseEntity<Resource> streamThumbnail(String objectKey, Long fileId, String label) {
         try {
-            InputStream stream = minioUtil.getThumbnail(file.getThumbnailKey());
+            InputStream stream = minioUtil.getThumbnail(objectKey);
             InputStreamResource resource = new InputStreamResource(stream);
             return ResponseEntity.ok()
                     .contentType(MediaType.IMAGE_JPEG)
                     .body(resource);
         } catch (Exception e) {
-            LOG.warn("Failed to stream thumbnail: fileId={} thumbnailKey='{}' error={}",
-                    file.getId(), file.getThumbnailKey(), e.toString());
+            LOG.warn("Failed to stream {}: fileId={} key='{}' error={}",
+                    label, fileId, objectKey, e.toString());
             return ResponseEntity.notFound().build();
         }
     }
@@ -260,6 +274,10 @@ public class FileController {
         map.put("thumbnailKey", f.getThumbnailKey());
         if (f.getThumbnailKey() != null) {
             map.put("thumbnailUrl", "/api/file/" + f.getId() + "/thumbnail");
+        }
+        map.put("previewKey", f.getPreviewKey());
+        if (f.getPreviewKey() != null) {
+            map.put("previewUrl", "/api/file/" + f.getId() + "/preview");
         }
         map.put("isFolder", f.getIsFolder());
         map.put("processStatus", f.getProcessStatus());

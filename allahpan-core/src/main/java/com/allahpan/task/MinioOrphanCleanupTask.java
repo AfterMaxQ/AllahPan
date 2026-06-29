@@ -137,8 +137,27 @@ public class MinioOrphanCleanupTask {
                 if (f.getThumbnailKey() != null) {
                     keys.add(f.getThumbnailKey());
                 }
+                if (f.getPreviewKey() != null) {
+                    keys.add(f.getPreviewKey());
+                }
             }
             if (files.size() < PAGE_SIZE) break;
+            pageNum++;
+        }
+        // 补查仅有 previewKey 的记录
+        pageNum = 1;
+        while (true) {
+            FileExample previewExample = new FileExample();
+            previewExample.createCriteria().andPreviewKeyIsNotNull();
+            PageHelper.startPage(pageNum, PAGE_SIZE);
+            var previewFiles = fileMapper.selectByExample(previewExample);
+            if (previewFiles.isEmpty()) break;
+            for (var f : previewFiles) {
+                if (f.getPreviewKey() != null) {
+                    keys.add(f.getPreviewKey());
+                }
+            }
+            if (previewFiles.size() < PAGE_SIZE) break;
             pageNum++;
         }
         return keys;
