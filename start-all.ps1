@@ -49,6 +49,15 @@ foreach ($svc in $services) {
     }
 }
 
+# Cloudflare Tunnel 健康检查
+$tunnelLogs = docker logs allahpan-cloudflared --tail 30 2>&1 | Out-String
+$tunnelConnections = ([regex]::Matches($tunnelLogs, "Registered tunnel connection")).Count
+if ($tunnelConnections -ge 1) {
+    Write-Host "  ✓ Cloudflare Tunnel — $tunnelConnections 条边缘连接已注册" -ForegroundColor Green
+} else {
+    Write-Host "  ✗ Cloudflare Tunnel — 未检测到连接，查看: docker compose logs cloudflared" -ForegroundColor Yellow
+}
+
 Write-Host "`n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
 Write-Host "  访问地址" -ForegroundColor Cyan
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
@@ -56,3 +65,4 @@ Write-Host "  本地     : http://localhost:88"           -ForegroundColor White
 Write-Host "  公网     : https://allahpan.cn"            -ForegroundColor Green
 Write-Host "  MinIO    : http://localhost:9001 (minioadmin/minioadmin)" -ForegroundColor Gray
 Write-Host "  RabbitMQ : http://localhost:15672 (guest/guest)" -ForegroundColor Gray
+Write-Host "`n  隧道日志 : docker compose logs -f cloudflared" -ForegroundColor Gray

@@ -26,6 +26,9 @@ Thumbs.db
 .env
 *.local
 
+# === Cloudflare Tunnel ===
+cloudflared/credentials.json
+
 # === 日志 ===
 logs/
 

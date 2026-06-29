@@ -118,9 +118,23 @@ services:
       dockerfile: docker/frontend/Dockerfile
     container_name: allahpan-nginx
     ports:
-      - "88:80"
+      - "88:88"
+      - "20241:20241"
     depends_on:
       - core
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.6.1
+    container_name: allahpan-cloudflared
+    command: tunnel --config /etc/cloudflared/config.yml run
+    network_mode: "service:nginx"
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+    depends_on:
+      nginx:
+        condition: service_started
     restart: unless-stopped
 
 volumes:

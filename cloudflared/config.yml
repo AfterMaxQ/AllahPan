@@ -1,0 +1,15 @@
+tunnel: 34641e20-8826-4545-bf00-df32c69a7cfb
+credentials-file: /etc/cloudflared/credentials.json
+
+# 不指定 protocol，使用 auto（优先 QUIC）
+ingress:
+  - hostname: allahpan.cn
+    service: http://127.0.0.1:88
+    originRequest:
+      connectTimeout: 30s
+      keepAliveTimeout: 90s
+      keepAliveConnections: 100
+  - service: http_status:404
+
+loglevel: info
+metrics: 0.0.0.0:20241
