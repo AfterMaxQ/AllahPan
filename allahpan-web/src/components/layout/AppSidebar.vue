@@ -1,5 +1,5 @@
 <template>
-  <div class="sidebar-wrapper" :class="{ collapsed: isCollapsed }">
+  <div v-if="!isMobile" class="sidebar-wrapper" :class="{ collapsed: isCollapsed }">
     <!-- Logo -->
     <div class="logo-area">
       <el-icon size="28" color="var(--el-color-primary)"><HomeFilled /></el-icon>
@@ -64,7 +64,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useTransferStore } from '@/stores/transfer'
 import { getMyInfo } from '@/api/user'
+import { useResponsive } from '@/composables/useResponsive'
 import { HomeFilled, FolderOpened, Star, Delete, UploadFilled } from '@element-plus/icons-vue'
+
+const { isMobile } = useResponsive()
 
 defineProps({
   isCollapsed: { type: Boolean, default: false },
