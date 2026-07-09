@@ -13,7 +13,7 @@
     <el-skeleton :rows="6" animated :loading="loading">
       <template v-if="files.length > 0">
         <FileGridView
-          v-if="fileStore.viewMode === 'grid'"
+          v-if="isMobile || fileStore.viewMode === 'grid'"
           :files="files"
           :selected-ids="selectedFiles.map((f) => f.id)"
           @item-contextmenu="openContextMenu"
@@ -21,7 +21,7 @@
           @item-open="handleItemOpen"
         />
         <FileListView
-          v-else
+          v-else-if="!isMobile"
           :files="files"
           @selection-change="handleListSelection"
           @item-contextmenu="openContextMenu"
@@ -70,6 +70,33 @@
     <!-- 移动文件对话框 -->
     <MoveFileDialog ref="moveDialogRef" @confirm="handleMoveConfirm" />
 
+    <!-- 移动端 FAB -->
+    <template v-if="isMobile">
+      <transition name="fade-transform">
+        <div v-if="fabOpen" class="fab-overlay" @click="fabOpen = false" />
+      </transition>
+      <div class="fab-container">
+        <transition name="fade-transform">
+          <div v-if="fabOpen" class="fab-menu">
+            <div class="fab-item" @click="triggerUpload(); fabOpen = false">
+              <span class="fab-label">上传文件</span>
+              <div class="fab-btn mini"><el-icon><Upload /></el-icon></div>
+            </div>
+            <div class="fab-item" @click="triggerUploadFolder(); fabOpen = false">
+              <span class="fab-label">上传文件夹</span>
+              <div class="fab-btn mini"><el-icon><FolderOpened /></el-icon></div>
+            </div>
+            <div class="fab-item" @click="triggerCreateFolder(); fabOpen = false">
+              <span class="fab-label">新建文件夹</span>
+              <div class="fab-btn mini"><el-icon><FolderAdd /></el-icon></div>
+            </div>
+          </div>
+        </transition>
+        <div class="fab-btn main" @click="fabOpen = !fabOpen">
+          <el-icon size="24"><Plus /></el-icon>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -82,7 +109,8 @@ import { addFavorite } from '@/api/favorite'
 import { createShareLink } from '@/api/share'
 import { formatDate } from '@/utils/format'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Upload, FolderOpened, FolderAdd } from '@element-plus/icons-vue'
+import { Plus, Upload, FolderOpened, FolderAdd } from '@element-plus/icons-vue'
+import { useResponsive } from '@/composables/useResponsive'
 import { useFileWatcher } from '@/composables/useFileWatcher'
 
 import FileToolbar from '@/components/file/FileToolbar.vue'
@@ -97,8 +125,10 @@ import EmptyState from '@/components/common/EmptyState.vue'
 
 const fileStore = useFileStore()
 const transferStore = useTransferStore()
+const { isMobile } = useResponsive()
 
 const loading = ref(false)
+const fabOpen = ref(false)
 const files = ref([])
 const selectedFiles = ref([])
 
@@ -190,8 +220,8 @@ const handleItemOpen = (file) => {
 // 右键菜单
 const openContextMenu = (event, file) => {
   rightClickedFile.value = file
-  contextMenuX.value = event.clientX
-  contextMenuY.value = event.clientY
+  contextMenuX.value = event.clientX || 0
+  contextMenuY.value = event.clientY || 0
   contextMenuVisible.value = true
 }
 
@@ -288,5 +318,66 @@ const copyShareLink = () => {
 .expire-tip {
   font-size: 12px;
   color: var(--ap-text-sub);
+}
+
+/* FAB */
+.fab-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.2);
+  z-index: 2098;
+}
+.fab-container {
+  position: fixed;
+  bottom: 72px;
+  right: 16px;
+  z-index: 2099;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+.fab-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.fab-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fab-label {
+  font-size: 13px;
+  color: var(--ap-text-main);
+  background: var(--ap-bg-card);
+  padding: 6px 12px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.fab-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  color: #fff;
+}
+.fab-btn.main {
+  width: 56px;
+  height: 56px;
+  background: var(--el-color-primary);
+  transition: transform 0.2s;
+}
+.fab-btn.mini {
+  background: var(--el-color-primary-light-3);
+  width: 42px;
+  height: 42px;
 }
 </style>
