@@ -97,8 +97,9 @@ const handleSubmit = () => {
   background: radial-gradient(circle at 50% -20%, var(--el-color-primary-light-7), var(--ap-bg-page) 60%);
 }
 .setpwd-card {
-  width: 400px;
-  padding: 40px;
+  width: calc(100% - 48px);
+  max-width: 400px;
+  padding: 32px 24px;
   background: var(--ap-bg-card);
   border-radius: 20px;
   border: 1px solid var(--ap-border-color);
@@ -122,5 +123,20 @@ const handleSubmit = () => {
 .submit-btn {
   width: 100%;
   margin-top: 8px;
+}
+
+@media (max-width: 768px) {
+  .setpwd-container {
+    background: radial-gradient(circle at 50% 0%, var(--el-color-primary-light-7), var(--ap-bg-page) 50%);
+  }
+  .setpwd-card {
+    padding: 28px 20px;
+  }
+  .brand h2 {
+    font-size: 18px;
+  }
+  .setpwd-card :deep(.el-input__inner) {
+    font-size: 16px;
+  }
 }
 </style>
