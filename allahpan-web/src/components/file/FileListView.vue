@@ -1,5 +1,5 @@
 <template>
-  <div v-if="!isMobile" class="list-container">
+  <div class="list-container">
     <el-table
       :data="files"
       style="width: 100%"
@@ -41,12 +41,9 @@
 </template>
 
 <script setup>
-import { useResponsive } from '@/composables/useResponsive'
 import FileIcon from '@/components/common/FileIcon.vue'
 import ProcessBadge from '@/components/common/ProcessBadge.vue'
 import { formatBytes, formatDate } from '@/utils/format'
-
-const { isMobile } = useResponsive()
 
 defineProps({
   files: { type: Array, required: true },

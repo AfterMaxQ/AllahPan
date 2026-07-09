@@ -3,7 +3,7 @@
     class="file-card"
     :class="{ selected: isSelected, mobile: isMobile }"
     @contextmenu.prevent="$emit('contextmenu', $event)"
-    @click="$emit('toggle-select')"
+    @click="handleClick"
     @dblclick="$emit('open')"
     @touchstart.passive="onTouchStart"
     @touchend="onTouchEnd"
@@ -12,7 +12,7 @@
     <div class="select-checkbox" @click.stop="$emit('toggle-select')">
       <el-checkbox :model-value="isSelected" @click.stop="$emit('toggle-select')" />
     </div>
-    <div v-if="isMobile" class="more-btn" @click.stop="$emit('contextmenu', $event)">
+    <div v-if="isMobile" class="more-btn" @click.stop="handleMore">
       <el-icon size="16"><MoreFilled /></el-icon>
     </div>
 
@@ -42,7 +42,7 @@ import FileIcon from '@/components/common/FileIcon.vue'
 import ProcessBadge from '@/components/common/ProcessBadge.vue'
 import { formatBytes } from '@/utils/format'
 
-defineProps({
+const props = defineProps({
   file: { type: Object, required: true },
   isSelected: { type: Boolean, default: false },
 })
@@ -50,22 +50,44 @@ const emit = defineEmits(['contextmenu', 'toggle-select', 'open'])
 
 const { isMobile } = useResponsive()
 
+// 移动端：单击直接打开，桌面端：单击选中
+const handleClick = () => {
+  if (isMobile.value) {
+    emit('open')
+  } else {
+    emit('toggle-select')
+  }
+}
+
+// 移动端 "..." 按钮
+const handleMore = (e) => {
+  emit('contextmenu', e)
+}
+
+// 长按检测
 let longPressTimer = null
 let touchStartPos = { x: 0, y: 0 }
+let touchMoved = false
 
 const onTouchStart = (e) => {
+  touchMoved = false
+  isLongPressTriggered = false
   const touch = e.touches[0]
   touchStartPos = { x: touch.clientX, y: touch.clientY }
   longPressTimer = setTimeout(() => {
+    isLongPressTriggered = true
     emit('contextmenu', { clientX: touchStartPos.x, clientY: touchStartPos.y })
   }, 500)
 }
+
+let isLongPressTriggered = false
 
 const onTouchMove = (e) => {
   const touch = e.touches[0]
   const dx = Math.abs(touch.clientX - touchStartPos.x)
   const dy = Math.abs(touch.clientY - touchStartPos.y)
   if (dx > 10 || dy > 10) {
+    touchMoved = true
     clearTimeout(longPressTimer)
   }
 }

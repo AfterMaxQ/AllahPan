@@ -13,7 +13,7 @@
     <el-skeleton :rows="6" animated :loading="loading">
       <template v-if="files.length > 0">
         <FileGridView
-          v-if="isMobile || fileStore.viewMode === 'grid'"
+          v-if="fileStore.viewMode === 'grid'"
           :files="files"
           :selected-ids="selectedFiles.map((f) => f.id)"
           @item-contextmenu="openContextMenu"
@@ -21,7 +21,7 @@
           @item-open="handleItemOpen"
         />
         <FileListView
-          v-else-if="!isMobile"
+          v-else
           :files="files"
           @selection-change="handleListSelection"
           @item-contextmenu="openContextMenu"

@@ -35,7 +35,7 @@
         </el-button>
       </template>
     </div>
-    <div v-if="!isMobile" class="right">
+    <div class="right">
       <el-radio-group
         :model-value="fileStore.viewMode"
         size="small"
