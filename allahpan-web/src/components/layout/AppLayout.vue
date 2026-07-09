@@ -19,16 +19,20 @@
       </div>
     </div>
     <TransferPanel />
+    <AppTabbar v-if="isMobile" />
   </div>
 </template>
 
 <script setup>
 import { ref } from 'vue'
+import { useResponsive } from '@/composables/useResponsive'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
+import AppTabbar from './AppTabbar.vue'
 import BreadcrumbNav from '@/components/file/BreadcrumbNav.vue'
 import TransferPanel from '@/components/transfer/TransferPanel.vue'
 
+const { isMobile } = useResponsive()
 const sidebarCollapsed = ref(false)
 </script>
 
@@ -49,5 +53,25 @@ const sidebarCollapsed = ref(false)
   flex: 1;
   padding: 24px;
   overflow-y: auto;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .app-layout {
+    flex-direction: column;
+  }
+  .main-container {
+    padding-bottom: 56px;
+  }
+  .content-body {
+    padding: 12px;
+  }
+}
+
+/* 平板适配 */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .content-body {
+    padding: 16px;
+  }
 }
 </style>
