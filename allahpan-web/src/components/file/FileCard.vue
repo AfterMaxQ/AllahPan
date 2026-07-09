@@ -1,13 +1,19 @@
 <template>
   <div
     class="file-card"
-    :class="{ selected: isSelected }"
+    :class="{ selected: isSelected, mobile: isMobile }"
     @contextmenu.prevent="$emit('contextmenu', $event)"
     @click="$emit('toggle-select')"
     @dblclick="$emit('open')"
+    @touchstart.passive="onTouchStart"
+    @touchend="onTouchEnd"
+    @touchmove="onTouchMove"
   >
     <div class="select-checkbox" @click.stop="$emit('toggle-select')">
       <el-checkbox :model-value="isSelected" @click.stop="$emit('toggle-select')" />
+    </div>
+    <div v-if="isMobile" class="more-btn" @click.stop="$emit('contextmenu', $event)">
+      <el-icon size="16"><MoreFilled /></el-icon>
     </div>
 
     <div class="preview-area">
@@ -15,7 +21,7 @@
         :is-folder="file.isFolder === 1"
         :file-type="file.fileType"
         :thumb-url="file.thumbnailUrl"
-        :size="64"
+        :size="isMobile ? 48 : 64"
       />
     </div>
 
@@ -30,6 +36,8 @@
 </template>
 
 <script setup>
+import { MoreFilled } from '@element-plus/icons-vue'
+import { useResponsive } from '@/composables/useResponsive'
 import FileIcon from '@/components/common/FileIcon.vue'
 import ProcessBadge from '@/components/common/ProcessBadge.vue'
 import { formatBytes } from '@/utils/format'
@@ -38,7 +46,33 @@ defineProps({
   file: { type: Object, required: true },
   isSelected: { type: Boolean, default: false },
 })
-defineEmits(['contextmenu', 'toggle-select', 'open'])
+const emit = defineEmits(['contextmenu', 'toggle-select', 'open'])
+
+const { isMobile } = useResponsive()
+
+let longPressTimer = null
+let touchStartPos = { x: 0, y: 0 }
+
+const onTouchStart = (e) => {
+  const touch = e.touches[0]
+  touchStartPos = { x: touch.clientX, y: touch.clientY }
+  longPressTimer = setTimeout(() => {
+    emit('contextmenu', { clientX: touchStartPos.x, clientY: touchStartPos.y })
+  }, 500)
+}
+
+const onTouchMove = (e) => {
+  const touch = e.touches[0]
+  const dx = Math.abs(touch.clientX - touchStartPos.x)
+  const dy = Math.abs(touch.clientY - touchStartPos.y)
+  if (dx > 10 || dy > 10) {
+    clearTimeout(longPressTimer)
+  }
+}
+
+const onTouchEnd = () => {
+  clearTimeout(longPressTimer)
+}
 </script>
 
 <style scoped>
@@ -69,7 +103,6 @@ defineEmits(['contextmenu', 'toggle-select', 'open'])
   position: absolute;
   top: 2px;
   left: 2px;
-  /* 扩大点击热区，方便点中左上角圆点 */
   padding: 8px;
   display: flex;
   align-items: center;
@@ -118,5 +151,33 @@ defineEmits(['contextmenu', 'toggle-select', 'open'])
   gap: 8px;
   font-size: 11px;
   color: var(--ap-text-sub);
+}
+
+/* 移动端覆盖 */
+.file-card.mobile {
+  padding: 8px;
+  border-radius: 12px;
+}
+.file-card.mobile:hover {
+  transform: none;
+}
+.file-card.mobile .select-checkbox {
+  opacity: 1;
+}
+.file-card.mobile .preview-area {
+  height: 64px;
+}
+
+.more-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 6px;
+  border-radius: 6px;
+  z-index: 2;
+  color: var(--ap-text-sub);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 </style>
