@@ -6,7 +6,8 @@
     </div>
 
     <el-skeleton :rows="6" animated :loading="loading">
-      <div v-if="trashList.length > 0" class="trash-table">
+      <!-- 桌面端表格 -->
+      <div v-if="!isMobile && trashList.length > 0" class="trash-table">
         <el-table :data="trashList" style="width: 100%">
           <el-table-column label="名称">
             <template #default="{ row }">
@@ -31,6 +32,22 @@
           </el-table-column>
         </el-table>
       </div>
+      <!-- 移动端卡片列表 -->
+      <div v-if="isMobile && trashList.length > 0" class="trash-cards">
+        <div v-for="row in trashList" :key="row.id" class="trash-card">
+          <div class="trash-card-body">
+            <span class="file-name">{{ row.fileName }}</span>
+            <div class="trash-meta">
+              <span>{{ row.isFolder === 1 ? '-' : formatBytes(row.fileSize) }}</span>
+              <span>{{ formatDate(row.deleteTime) }}</span>
+            </div>
+          </div>
+          <div class="trash-card-actions">
+            <el-button type="primary" size="small" plain @click="handleRestore(row)">恢复</el-button>
+            <el-button type="danger" size="small" plain @click="handlePermanentDelete(row)">删除</el-button>
+          </div>
+        </div>
+      </div>
       <EmptyState
         v-else-if="!loading"
         title="垃圾站是空的"
@@ -42,10 +59,13 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useResponsive } from '@/composables/useResponsive'
 import { getTrashList, restoreFile, permanentDelete } from '@/api/file'
 import { formatBytes, formatDate } from '@/utils/format'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+
+const { isMobile } = useResponsive()
 
 const loading = ref(false)
 const trashList = ref([])
@@ -88,7 +108,7 @@ onMounted(fetchTrash)
 
 <style scoped>
 .trash-page {
-  max-width: 900px;
+  /* max-width removed for responsive */
 }
 .page-header {
   margin-bottom: 24px;
@@ -112,5 +132,37 @@ onMounted(fetchTrash)
 .file-name {
   font-weight: 500;
   color: var(--ap-text-main);
+}
+
+@media (max-width: 768px) {
+  .trash-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .trash-card {
+    background: var(--ap-bg-card);
+    border: 1px solid var(--ap-border-color);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .trash-card-body {
+    margin-bottom: 10px;
+  }
+  .trash-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--ap-text-sub);
+    margin-top: 4px;
+  }
+  .trash-card-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .page-header {
+    margin-bottom: 14px;
+  }
 }
 </style>

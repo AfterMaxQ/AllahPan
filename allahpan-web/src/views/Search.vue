@@ -77,9 +77,6 @@ const openDetail = async (fileId) => {
 </script>
 
 <style scoped>
-.search-page {
-  max-width: 800px;
-}
 .page-header {
   margin-bottom: 24px;
 }
@@ -97,5 +94,14 @@ const openDetail = async (fileId) => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .page-header {
+    margin-bottom: 14px;
+  }
+  .result-list {
+    gap: 8px;
+  }
 }
 </style>

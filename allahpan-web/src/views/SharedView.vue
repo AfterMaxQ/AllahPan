@@ -128,9 +128,16 @@ onMounted(loadShare)
   border: 1px solid var(--ap-border-color);
   border-radius: 20px;
   box-shadow: 0 12px 32px rgba(61, 50, 38, 0.05);
-  padding: 40px;
-  width: 420px;
+  padding: 32px 24px;
+  width: calc(100% - 48px);
+  max-width: 420px;
   text-align: center;
+}
+
+@media (max-width: 768px) {
+  .card {
+    padding: 24px 16px;
+  }
 }
 .logo {
   display: flex;

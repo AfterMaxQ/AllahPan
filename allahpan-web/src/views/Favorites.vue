@@ -46,12 +46,15 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { StarFilled } from '@element-plus/icons-vue'
+import { useResponsive } from '@/composables/useResponsive'
 import { getFavoriteList, removeFavorite } from '@/api/favorite'
 import FileIcon from '@/components/common/FileIcon.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import FilePreviewDialog from '@/components/file/FilePreviewDialog.vue'
 import { formatBytes } from '@/utils/format'
 import { ElMessage } from 'element-plus'
+
+const { isMobile } = useResponsive()
 
 const loading = ref(false)
 const list = ref([])
@@ -93,9 +96,6 @@ onMounted(loadFavorites)
 </script>
 
 <style scoped>
-.favorites-page {
-  max-width: 900px;
-}
 .page-header {
   margin-bottom: 24px;
 }
@@ -173,5 +173,18 @@ onMounted(loadFavorites)
   font-size: 11px;
   color: var(--ap-text-sub);
   margin-top: 4px;
+}
+
+@media (max-width: 768px) {
+  .fav-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+  }
+  .page-header {
+    margin-bottom: 14px;
+  }
+  .fav-card .remove-btn {
+    opacity: 1;
+  }
 }
 </style>
