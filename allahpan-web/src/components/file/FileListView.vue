@@ -12,6 +12,7 @@
           <div
             class="name-cell"
             :class="{ mobile: isMobile }"
+            @click="isMobile ? $emit('item-open', row) : undefined"
             @dblclick="$emit('item-open', row)"
           >
             <FileIcon

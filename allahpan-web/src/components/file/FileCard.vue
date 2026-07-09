@@ -155,7 +155,7 @@ const handleMore = (e) => {
 
 .more-btn {
   position: absolute;
-  top: 4px;
+  bottom: 4px;
   right: 4px;
   padding: 8px;
   border-radius: 8px;
