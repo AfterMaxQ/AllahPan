@@ -29,6 +29,11 @@
   --el-border-radius-base: 10px;
   --el-border-radius-large: 16px;
   --el-border-radius-small: 8px;
+
+  /* 响应式断点 */
+  --bp-mobile: 768px;
+  --bp-tablet: 1024px;
+
   --el-box-shadow: 0 4px 12px rgba(196, 148, 107, 0.08);
   --el-box-shadow-light: 0 2px 8px rgba(196, 148, 107, 0.05);
 }
@@ -144,4 +149,30 @@ body {
 /* ===== 进度条平滑过渡 ===== */
 .el-progress-bar__inner {
   transition: width 0.3s ease !important;
+}
+
+/* ===== 移动端触摸优化 ===== */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  touch-action: manipulation;
+}
+
+/* 最小触摸目标 */
+@media (max-width: 768px) {
+  button,
+  .clickable,
+  [role="button"],
+  a,
+  .el-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* ===== 安全区域 ===== */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
