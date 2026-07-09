@@ -28,4 +28,11 @@ defineEmits(['item-contextmenu', 'item-toggle-select', 'item-open'])
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 16px;
 }
+
+@media (max-width: 768px) {
+  .grid-container {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 8px;
+  }
+}
 </style>
