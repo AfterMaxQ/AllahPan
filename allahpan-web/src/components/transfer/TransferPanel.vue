@@ -1,6 +1,6 @@
 <template>
   <transition name="transfer-slide">
-    <aside v-if="transferStore.panelVisible" class="transfer-panel">
+    <aside v-if="transferStore.panelVisible" class="transfer-panel" :class="{ mobile: isMobile }">
       <div class="panel-header">
         <div>
           <h3>传输列表</h3>
@@ -51,10 +51,12 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { Close } from '@element-plus/icons-vue'
+import { useResponsive } from '@/composables/useResponsive'
 import { useTransferStore } from '@/stores/transfer'
 import { formatSpeed } from '@/utils/transfer'
 import TransferTaskItem from './TransferTaskItem.vue'
 
+const { isMobile } = useResponsive()
 const transferStore = useTransferStore()
 const activeTab = ref('upload')
 
@@ -85,6 +87,19 @@ const downloadRunningText = computed(() => {
   box-shadow: -12px 0 28px rgba(61, 50, 38, 0.08);
   display: flex;
   flex-direction: column;
+}
+.transfer-panel.mobile {
+  top: auto;
+  bottom: 0;
+  left: 0;
+  width: 100vw;
+  height: 70vh;
+  border-left: none;
+  border-top: 1px solid var(--ap-border-color);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -8px 28px rgba(61, 50, 38, 0.1);
+  padding: 12px 16px;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 .panel-header {
   display: flex;
@@ -119,6 +134,9 @@ const downloadRunningText = computed(() => {
   overflow-y: auto;
   padding-right: 4px;
 }
+.transfer-panel.mobile .task-list {
+  max-height: calc(70vh - 140px);
+}
 .transfer-slide-enter-active,
 .transfer-slide-leave-active {
   transition: transform 0.2s ease, opacity 0.2s ease;
@@ -127,5 +145,11 @@ const downloadRunningText = computed(() => {
 .transfer-slide-leave-to {
   transform: translateX(100%);
   opacity: 0;
+}
+@media (max-width: 768px) {
+  .transfer-slide-enter-from,
+  .transfer-slide-leave-to {
+    transform: translateY(100%);
+  }
 }
 </style>
