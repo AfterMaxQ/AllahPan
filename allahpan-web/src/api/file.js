@@ -40,18 +40,25 @@ export function uploadFile(file, parentId, onProgress, signal) {
 }
 
 // 文件列表
-export function getFileList(parentId = 0) {
-  return request.get('/file/list', { params: { parentId } })
+export function getFileList(parentId = 0, signal) {
+  return request.get('/file/list', { params: { parentId }, signal })
+}
+
+export function getFilePage(parentId = 0, pageNum = 1, pageSize = 100, signal) {
+  return request.get('/file/list', {
+    params: { parentId, paged: true, pageNum, pageSize },
+    signal,
+  })
 }
 
 // 目录树（面包屑）
-export function getFileTree(folderId) {
-  return request.get(`/file/tree/${folderId}`)
+export function getFileTree(folderId, signal) {
+  return request.get(`/file/tree/${folderId}`, { signal })
 }
 
 // 文件详情
-export function getFileDetail(fileId) {
-  return request.get(`/file/${fileId}`)
+export function getFileDetail(fileId, signal) {
+  return request.get(`/file/${fileId}`, { signal })
 }
 
 // 创建文件夹
@@ -111,11 +118,18 @@ export async function requestBlob(url, onProgress, signal) {
   return response.data
 }
 
-// 下载文件（以 blob 方式获取，调用方决定是否触发保存）
+// 显式下载交给浏览器原生下载器流式落盘，避免大文件完整驻留页面内存。
 export async function downloadFile(fileId, fileName, onProgress, signal) {
-  const blob = await requestBlob(`/file/${fileId}/download`, onProgress, signal)
-  saveBlob(blob, fileName)
-  return blob
+  if (signal?.aborted) throw new DOMException('下载已取消', 'AbortError')
+  const a = document.createElement('a')
+  a.href = authenticatedMediaUrl(`/api/file/${fileId}/download`)
+  a.download = fileName || 'download'
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  onProgress?.({ percent: 100, loaded: 0, total: 0, handedOff: true })
+  return { handedOff: true }
 }
 
 export async function downloadFileBlob(fileId, onProgress, signal) {
@@ -145,17 +159,25 @@ export async function createObjectUrlFromApi(url, signal) {
 
 // 预览流 URL
 export function getStreamUrl(fileId) {
-  return `/api/file/${fileId}/stream`
+  return authenticatedMediaUrl(`/api/file/${fileId}/stream`)
 }
 
 // 预览高清图 URL
 export function getPreviewUrl(fileId) {
-  return `/api/file/${fileId}/preview`
+  return authenticatedMediaUrl(`/api/file/${fileId}/preview`)
 }
 
 // 缩略图 URL
 export function getThumbnailUrl(fileId) {
-  return `/api/file/${fileId}/thumbnail`
+  return authenticatedMediaUrl(`/api/file/${fileId}/thumbnail`)
+}
+
+export function authenticatedMediaUrl(url) {
+  if (!url) return ''
+  const token = useUserStore().token
+  if (!token) return url
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}token=${encodeURIComponent(token)}`
 }
 
 // 软删除
@@ -169,8 +191,8 @@ export function batchDeleteFiles(fileIds) {
 }
 
 // 垃圾站列表
-export function getTrashList(pageNum = 1, pageSize = 50) {
-  return request.get('/file/trash', { params: { pageNum, pageSize } })
+export function getTrashList(pageNum = 1, pageSize = 50, signal) {
+  return request.get('/file/trash', { params: { pageNum, pageSize }, signal })
 }
 
 // 恢复文件

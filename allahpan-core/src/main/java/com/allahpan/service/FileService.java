@@ -22,6 +22,7 @@ public interface FileService {
     File renameFile(Long fileId, String newName);
     File moveFile(Long fileId, Long targetParentId);
     Map<String, Object> batchDelete(List<Long> fileIds);
+    Map<String, Object> batchPermanentDelete(List<Long> fileIds);
 
     /**
      * 递归计算文件夹下所有子孙文件的总大小（字节）

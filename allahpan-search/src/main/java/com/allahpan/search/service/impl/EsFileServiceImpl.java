@@ -10,6 +10,8 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.IndexOperations;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -28,26 +30,23 @@ public class EsFileServiceImpl implements EsFileService {
     private EsFileRepository repository;
     @Autowired
     private ElasticsearchClient elasticsearchClient;
+    @Autowired
+    private ElasticsearchOperations elasticsearchOperations;
 
     @PostConstruct
     public void ensureIndexExists() {
         try {
-            // 如果存在旧索引（可能带有不兼容的 IK 映射），先删除再重建
-            try {
-                elasticsearchClient.indices().delete(d -> d.index("allahpan_files"));
-                log.info("已删除旧的 ES 索引 allahpan_files");
-            } catch (Exception ignored) {
-                // 索引不存在，无需删除
-            }
-            elasticsearchClient.indices().create(c -> c.index("allahpan_files"));
-            log.info("ES 索引 allahpan_files 已创建");
-        } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : "";
-            if (msg.contains("resource_already_exists_exception")) {
-                log.debug("ES 索引 allahpan_files 已存在");
+            IndexOperations indexOps = elasticsearchOperations.indexOps(EsFile.class);
+            if (!indexOps.exists()) {
+                indexOps.createWithMapping();
+                log.info("ES 索引 {} 已按实体映射创建", EsFile.INDEX_NAME);
             } else {
-                log.warn("ES 索引创建失败: {}", msg);
+                // 只补充兼容字段，不删除现有文档，重启期间搜索持续可用。
+                indexOps.putMapping(indexOps.createMapping());
+                log.info("ES 索引 {} 已存在，保留数据并校验映射", EsFile.INDEX_NAME);
             }
+        } catch (Exception e) {
+            log.warn("ES 索引初始化失败（不会删除现有索引）: {}", e.getMessage());
         }
     }
 
@@ -63,7 +62,7 @@ public class EsFileServiceImpl implements EsFileService {
         f.setUploaderName((String) data.get("uploaderName"));
         f.setFileSize(toLong(data.get("fileSize")));
         f.setIsFolder((Boolean) data.getOrDefault("isFolder", false));
-        f.setCreateTime(parseDate((String) data.get("createTime")));
+        f.setCreateTime(parseDate(data.get("createTime")));
         repository.save(f);
     }
 
@@ -76,7 +75,7 @@ public class EsFileServiceImpl implements EsFileService {
     public long deleteAll() {
         try {
             var response = elasticsearchClient.deleteByQuery(d -> d
-                    .index("allahpan_files")
+                    .index(EsFile.INDEX_NAME)
                     .query(q -> q.matchAll(m -> m)));
             return response.deleted();
         } catch (Exception e) {
@@ -89,9 +88,14 @@ public class EsFileServiceImpl implements EsFileService {
     }
 
     @Override
+    public long count() {
+        return repository.count();
+    }
+
+    @Override
     public Map<String, Object> search(String keyword, String fileType, int pageNum, int pageSize) {
         var request = co.elastic.clients.elasticsearch.core.SearchRequest.of(s -> s
-                .index("allahpan_files")
+                .index(EsFile.INDEX_NAME)
                 .query(q -> q
                         .bool(b -> {
                             // must: 至少匹配一个字段（标题或内容）
@@ -119,7 +123,7 @@ public class EsFileServiceImpl implements EsFileService {
                         .fields("originText.char", hf -> hf.numberOfFragments(3).fragmentSize(100)
                                 .preTags("<mark>").postTags("</mark>")))
                 .aggregations("fileTypes", a -> a
-                        .terms(t -> t.field("fileType.keyword").size(10)))
+                        .terms(t -> t.field("fileType").size(10)))
                 .from((pageNum - 1) * pageSize)
                 .size(pageSize));
 
@@ -192,8 +196,11 @@ public class EsFileServiceImpl implements EsFileService {
         return 0L;
     }
 
-    private Date parseDate(String s) {
-        if (s == null) return new Date();
+    private Date parseDate(Object value) {
+        if (value == null) return new Date();
+        if (value instanceof Date date) return date;
+        if (value instanceof Number number) return new Date(number.longValue());
+        String s = value.toString();
         try {
             return Date.from(Instant.parse(s));
         } catch (Exception e) {

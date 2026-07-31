@@ -15,7 +15,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.Date;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 public class FavoriteServiceImpl implements FavoriteService {
@@ -58,18 +57,8 @@ public class FavoriteServiceImpl implements FavoriteService {
     @Override
     public List<File> listFavorites(int pageNum, int pageSize) {
         Long userId = getCurrentUserId();
-        FileFavoriteExample example = new FileFavoriteExample();
-        example.createCriteria().andUserIdEqualTo(userId);
-        example.setOrderByClause("create_time DESC");
         PageHelper.startPage(pageNum, pageSize);
-        var favs = favoriteMapper.selectByExample(example);
-        // 批量查文件详情
-        List<Long> fileIds = favs.stream().map(FileFavorite::getFileId).toList();
-        if (fileIds.isEmpty()) return List.of();
-        return fileIds.stream()
-                .map(fileMapper::selectByPrimaryKey)
-                .filter(f -> f != null)
-                .collect(Collectors.toList());
+        return fileMapper.selectFavoritesByUserId(userId);
     }
 
     private Long getCurrentUserId() {

@@ -50,7 +50,9 @@ public class FileProcessReceiver {
                     boolean hasList = file.getThumbnailKey() != null && !file.getThumbnailKey().isBlank();
                     boolean hasPreview = file.getPreviewKey() != null && !file.getPreviewKey().isBlank();
                     if (file.getProcessStatus() != null && file.getProcessStatus() >= 1 && hasList && hasPreview) {
-                        LOG.info("跳过已处理的缩略图阶段: fileId={}", file.getId());
+                        LOG.info("缩略图阶段已完成，补发下一阶段: fileId={}", file.getId());
+                        sender.sendProcess(new FileProcessMessage(file.getId(),
+                                needsTextExtraction(file) ? Stage.THUMBNAILED : Stage.TEXT_EXTRACTED));
                         return;
                     }
                     if (!hasList || !hasPreview) {
@@ -87,7 +89,8 @@ public class FileProcessReceiver {
                 case THUMBNAILED -> {
 	                    if (file.getProcessStatus() != null && file.getProcessStatus() >= 2
                                 && hasOriginText(file)) {
-	                        LOG.info("跳过已处理的文本提取阶段: fileId={}", file.getId());
+	                        LOG.info("文本提取阶段已完成，补发索引阶段: fileId={}", file.getId());
+                            sender.sendProcess(new FileProcessMessage(file.getId(), Stage.TEXT_EXTRACTED));
 	                        return;
 	                    }
                     String text = textExtractor.extract(file);

@@ -496,4 +496,72 @@
     FROM folder_tree
     WHERE is_folder = 0
   </select>
+
+  <!-- 一次递归计算列表中所有文件夹的大小，避免列表接口逐文件夹查询 -->
+  <select id="getFolderSizes" resultMap="BaseResultMap">
+    WITH RECURSIVE folder_tree AS (
+      SELECT id AS root_id, id, file_size, is_folder
+      FROM files
+      WHERE delete_time IS NULL
+        AND id IN
+        <foreach collection="folderIds" item="id" open="(" separator="," close=")">
+          #{id,jdbcType=BIGINT}
+        </foreach>
+      UNION ALL
+      SELECT ft.root_id, f.id, f.file_size, f.is_folder
+      FROM files f
+      INNER JOIN folder_tree ft ON f.parent_id = ft.id
+      WHERE f.delete_time IS NULL
+    )
+    SELECT root_id AS id, COALESCE(SUM(CASE WHEN is_folder = 0 THEN file_size ELSE 0 END), 0) AS file_size
+    FROM folder_tree
+    GROUP BY root_id
+  </select>
+
+  <!-- 批量永久删除前一次取回选中节点及其垃圾站子树 -->
+  <select id="selectTrashSubtree" resultMap="BaseResultMap">
+    WITH RECURSIVE trash_tree AS (
+      SELECT
+        <include refid="Base_Column_List" />
+      FROM files
+      WHERE delete_time IS NOT NULL
+        AND id IN
+        <foreach collection="rootIds" item="id" open="(" separator="," close=")">
+          #{id,jdbcType=BIGINT}
+        </foreach>
+      UNION
+      SELECT
+        f.id, f.uploader_id, f.parent_id, f.file_name, f.file_path, f.storage_key,
+        f.file_type, f.file_size, f.content_type, f.thumbnail_key, f.preview_key,
+        f.is_folder, f.process_status, f.md5, f.create_time, f.update_time, f.delete_time
+      FROM files f
+      INNER JOIN trash_tree tt ON f.parent_id = tt.id
+      WHERE f.delete_time IS NOT NULL
+    )
+    SELECT DISTINCT
+      id, uploader_id, parent_id, file_name, file_path, storage_key,
+      file_type, file_size, content_type, thumbnail_key, preview_key,
+      is_folder, process_status, md5, create_time, update_time, delete_time
+    FROM trash_tree
+  </select>
+
+  <delete id="deleteByIds">
+    DELETE FROM files
+    WHERE id IN
+    <foreach collection="ids" item="id" open="(" separator="," close=")">
+      #{id,jdbcType=BIGINT}
+    </foreach>
+  </delete>
+
+  <select id="selectFavoritesByUserId" resultMap="BaseResultMap">
+    SELECT
+      f.id, f.uploader_id, f.parent_id, f.file_name, f.file_path, f.storage_key,
+      f.file_type, f.file_size, f.content_type, f.thumbnail_key, f.preview_key,
+      f.is_folder, f.process_status, f.md5, f.create_time, f.update_time, f.delete_time
+    FROM file_favorites ff
+    INNER JOIN files f ON f.id = ff.file_id
+    WHERE ff.user_id = #{userId,jdbcType=BIGINT}
+      AND f.delete_time IS NULL
+    ORDER BY ff.create_time DESC
+  </select>
 </mapper>

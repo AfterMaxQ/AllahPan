@@ -1,5 +1,4 @@
 import request from './index'
-import { requestBlob, saveBlob } from './file'
 
 export function createShareLink(fileId, expireHours = 24) {
   return request.post(`/share/${fileId}`, null, { params: { expireHours } })
@@ -14,7 +13,14 @@ export function deleteShareLink(code) {
 }
 
 export async function downloadSharedFile(code, fileName, onProgress, signal) {
-  const blob = await requestBlob(`/share/${code}/download`, onProgress, signal)
-  saveBlob(blob, fileName)
-  return blob
+  if (signal?.aborted) throw new DOMException('下载已取消', 'AbortError')
+  const a = document.createElement('a')
+  a.href = `/api/share/${encodeURIComponent(code)}/download`
+  a.download = fileName || 'download'
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  onProgress?.({ percent: 100, loaded: 0, total: 0, handedOff: true })
+  return { handedOff: true }
 }

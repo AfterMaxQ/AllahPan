@@ -78,6 +78,19 @@ public class MinioUtil {
         return getObject(bucketName, objectKey);
     }
 
+    /** Download a byte range from the files bucket. */
+    public InputStream getObject(String objectKey, long offset, long length) throws Exception {
+        log.debug("MinIO getObject range: key='{}' offset={} length={}", objectKey, offset, length);
+        return minioClient.getObject(
+                GetObjectArgs.builder()
+                        .bucket(bucketName)
+                        .object(objectKey)
+                        .offset(offset)
+                        .length(length)
+                        .build()
+        );
+    }
+
     /** Download object from thumbnail bucket */
     public InputStream getThumbnail(String objectKey) throws Exception {
         return getObject(thumbnailBucket, objectKey);

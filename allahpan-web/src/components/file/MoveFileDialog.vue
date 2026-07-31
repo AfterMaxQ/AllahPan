@@ -40,9 +40,8 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { getFileList, getFileTree } from '@/api/file'
-import { ElMessage } from 'element-plus'
 import { FolderOpened } from '@element-plus/icons-vue'
 
 const emit = defineEmits(['confirm'])
@@ -52,23 +51,32 @@ const loading = ref(false)
 const folders = ref([])
 const currentParentId = ref(0)
 const breadcrumbs = ref([])
+let navigationController = null
+let navigationRequestId = 0
 
 const navigateTo = async (parentId) => {
+  const requestId = ++navigationRequestId
+  navigationController?.abort()
+  navigationController = new AbortController()
   loading.value = true
   currentParentId.value = parentId
   try {
+    let nextBreadcrumbs = []
     if (parentId > 0) {
-      breadcrumbs.value = await getFileTree(parentId)
-    } else {
-      breadcrumbs.value = []
+      nextBreadcrumbs = await getFileTree(parentId, navigationController.signal)
     }
-    const all = await getFileList(parentId)
-    folders.value = (all || []).filter(f => f.isFolder === 1 || f.isFolder === true)
+    const all = await getFileList(parentId, navigationController.signal)
+    if (requestId === navigationRequestId) {
+      breadcrumbs.value = nextBreadcrumbs
+      folders.value = (all || []).filter(f => f.isFolder === 1 || f.isFolder === true)
+    }
   } catch (e) {
-    console.error('加载文件夹失败', e)
-    folders.value = []
+    if (e?.code !== 'ERR_CANCELED' && e?.name !== 'AbortError') {
+      console.error('加载文件夹失败', e)
+      if (requestId === navigationRequestId) folders.value = []
+    }
   } finally {
-    loading.value = false
+    if (requestId === navigationRequestId) loading.value = false
   }
 }
 
@@ -78,6 +86,8 @@ const confirmMove = (targetId) => {
 }
 
 const handleClose = () => {
+  navigationRequestId++
+  navigationController?.abort()
   folders.value = []
   breadcrumbs.value = []
   currentParentId.value = 0

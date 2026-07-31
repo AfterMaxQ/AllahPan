@@ -7,13 +7,16 @@ import { useUserStore } from '@/stores/user'
  */
 export function useFileWatcher(onChange) {
   let eventSource = null
+  let retryTimer = null
+  let stopped = false
 
   const connect = () => {
+    if (stopped) return
     const userStore = useUserStore()
     const token = userStore.token
     if (!token) {
       // 未登录，延迟重试
-      setTimeout(connect, 3000)
+      retryTimer = setTimeout(connect, 3000)
       return
     }
 
@@ -40,9 +43,8 @@ export function useFileWatcher(onChange) {
     })
 
     eventSource.onerror = () => {
-      // EventSource 会自动重连
-      eventSource?.close()
-      setTimeout(connect, 3000)
+      // 浏览器原生 EventSource 会按服务端 retry 指令自动重连。
+      // 不主动 close + 新建，避免一次断线产生多个并行连接和计时器。
     }
   }
 
@@ -51,6 +53,8 @@ export function useFileWatcher(onChange) {
   })
 
   onUnmounted(() => {
+    stopped = true
+    if (retryTimer) clearTimeout(retryTimer)
     eventSource?.close()
   })
 }

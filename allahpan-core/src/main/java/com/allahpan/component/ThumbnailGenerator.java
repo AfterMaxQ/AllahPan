@@ -11,12 +11,17 @@ import org.springframework.stereotype.Component;
 
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReadParam;
+import javax.imageio.ImageReader;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageInputStream;
 import javax.imageio.stream.ImageOutputStream;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.UUID;
 
@@ -34,6 +39,8 @@ public class ThumbnailGenerator {
     private float jpegQuality;
     @Value("${allahpan.thumbnail.pdf-dpi:150}")
     private int pdfThumbnailDpi;
+    @Value("${allahpan.thumbnail.max-image-pixels:100000000}")
+    private long maxImagePixels;
 
     public record ThumbnailResult(String listKey, String previewKey) {}
 
@@ -56,20 +63,59 @@ public class ThumbnailGenerator {
     private BufferedImage loadSourceImage(File file) throws Exception {
         if ("IMAGE".equals(file.getFileType())) {
             try (InputStream is = minioUtil.getObject(file.getStorageKey())) {
-                return ImageIO.read(is);
+                return readImageSafely(is);
             }
         }
         if ("DOCUMENT".equals(file.getFileType())
                 && file.getContentType() != null
                 && file.getContentType().contains("pdf")) {
-            try (InputStream is = minioUtil.getObject(file.getStorageKey());
-                 PDDocument document = Loader.loadPDF(new RandomAccessReadBuffer(is))) {
-                if (document.getNumberOfPages() == 0) return null;
-                PDFRenderer renderer = new PDFRenderer(document);
-                return renderer.renderImageWithDPI(0, pdfThumbnailDpi);
+            Path tempFile = Files.createTempFile("allahpan-thumb-", ".pdf");
+            try {
+                try (InputStream is = minioUtil.getObject(file.getStorageKey())) {
+                    Files.copy(is, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                try (PDDocument document = Loader.loadPDF(tempFile.toFile())) {
+                    if (document.getNumberOfPages() == 0) return null;
+                    PDFRenderer renderer = new PDFRenderer(document);
+                    return renderer.renderImageWithDPI(0, pdfThumbnailDpi);
+                }
+            } finally {
+                Files.deleteIfExists(tempFile);
             }
         }
         return null;
+    }
+
+    private BufferedImage readImageSafely(InputStream input) throws IOException {
+        try (ImageInputStream imageInput = ImageIO.createImageInputStream(input)) {
+            if (imageInput == null) return null;
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(imageInput);
+            if (!readers.hasNext()) return null;
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(imageInput, true, true);
+                int width = reader.getWidth(0);
+                int height = reader.getHeight(0);
+                long pixels = (long) width * height;
+                if (width <= 0 || height <= 0 || pixels > maxImagePixels) {
+                    throw new IOException("图片尺寸过大: " + width + "x" + height);
+                }
+
+                // 解码阶段直接降采样，避免先创建原尺寸 BufferedImage 再缩小。
+                int maxDecodeWidth = Math.max(previewWidth, listWidth);
+                int maxDecodeHeight = maxDecodeWidth * 4;
+                int sample = Math.max(1, Math.max(
+                        width / Math.max(maxDecodeWidth, 1),
+                        height / Math.max(maxDecodeHeight, 1)));
+                ImageReadParam param = reader.getDefaultReadParam();
+                if (sample > 1) {
+                    param.setSourceSubsampling(sample, sample, 0, 0);
+                }
+                return reader.read(0, param);
+            } finally {
+                reader.dispose();
+            }
+        }
     }
 
     private String resizeAndUpload(BufferedImage original, int maxWidth) throws Exception {

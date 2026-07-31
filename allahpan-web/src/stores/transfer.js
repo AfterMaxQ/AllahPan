@@ -2,9 +2,8 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { ElMessage } from 'element-plus'
 import { uploadTransferFile } from '@/composables/useChunkUpload'
-import { downloadFileBlob, saveBlob } from '@/api/file'
+import { downloadFile } from '@/api/file'
 import { isRetryableUploadError } from '@/api/chunkUpload'
-import { SpeedTracker } from '@/utils/transfer'
 import { useFileStore } from '@/stores/file'
 
 const MAX_UPLOADS = 3
@@ -186,30 +185,15 @@ export const useTransferStore = defineStore('transfer', () => {
 
   async function startDownload(task) {
     task.controller = new AbortController()
-    const speedTracker = new SpeedTracker()
-    updateTask(task, { status: 'running', statusText: '下载中...', error: '' })
+    updateTask(task, { status: 'running', statusText: '正在交给浏览器...', error: '' })
 
     try {
-      const blob = await downloadFileBlob(task.fileId, (evt) => {
-        const total = evt.total || task.total || 0
-        const loaded = evt.loaded || 0
-        speedTracker.update(loaded)
-        const speed = speedTracker.getSpeed()
-        updateTask(task, {
-          total,
-          loaded,
-          speed,
-          eta: speedTracker.getETA(Math.max(total - loaded, 0)),
-          progress: total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : task.progress,
-        })
-      }, task.controller.signal)
-      saveBlob(blob, task.name)
+      await downloadFile(task.fileId, task.name, null, task.controller.signal)
       updateTask(task, {
         status: 'success',
-        statusText: '下载完成',
+        statusText: '已开始下载',
         progress: 100,
-        loaded: task.total || blob.size,
-        total: task.total || blob.size,
+        loaded: task.total,
         speed: 0,
         eta: 0,
       })

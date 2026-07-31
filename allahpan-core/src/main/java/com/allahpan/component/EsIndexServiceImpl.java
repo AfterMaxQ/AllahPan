@@ -12,9 +12,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,28 +34,39 @@ public class EsIndexServiceImpl implements EsIndexService {
     @Autowired
     private FileMapper fileMapper;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
     @Value("${allahpan.search.service-url:http://localhost:8081/es-admin/files}")
     private String searchServiceUrl;
 
     /** ES 操作失败补偿队列：fileId → "index"|"delete"，定时重试 */
     private final Map<Long, String> pendingOps = new ConcurrentHashMap<>();
 
+    public EsIndexServiceImpl() {
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
+        factory.setReadTimeout(Duration.ofSeconds(10));
+        this.restTemplate = new RestTemplate(factory);
+    }
+
     /**
-     * 启动时轮询等待搜索服务就绪，然后重建 ES 索引。
-     * 单发 30s 延迟在搜索服务启动慢时会失败，改为轮询最多等 5 分钟。
+     * 启动时只在 ES 为空时重建。正常重启保留索引，避免每次清空后出现搜索空窗。
      */
     @PostConstruct
     public void scheduleStartupCleanup() {
         Thread t = new Thread(() -> {
             for (int attempt = 0; attempt < 60; attempt++) {
                 try {
-                    // 用 GET /es-admin/files/search?keyword=__health_check__ 探测搜索服务
-                    restTemplate.getForEntity(
-                            searchServiceUrl + "/search?keyword=__health__&pageNum=1&pageSize=1",
-                            String.class);
-                    long count = rebuildAll();
-                    LOG.info("ES 启动清理完成，索引 {} 个文件", count);
+                    Map<?, ?> response = restTemplate.getForObject(searchServiceUrl + "/count", Map.class);
+                    long count = response != null && response.get("count") instanceof Number n
+                            ? n.longValue() : 0L;
+                    if (count == 0 && countIndexableFiles() > 0) {
+                        long rebuilt = rebuildAll();
+                        LOG.info("ES 为空，已恢复索引 {} 个文件", rebuilt);
+                    } else {
+                        LOG.info("ES 已有 {} 个文档，启动时保留现有索引", count);
+                    }
                     return;
                 } catch (ResourceAccessException e) {
                     LOG.debug("等待搜索服务就绪 ({}/60)...", attempt + 1);
@@ -60,7 +75,7 @@ public class EsIndexServiceImpl implements EsIndexService {
                 }
                 try { Thread.sleep(5000); } catch (InterruptedException ignored) {}
             }
-            LOG.warn("ES 启动清理超时（搜索服务 5 分钟未就绪），跳过");
+            LOG.warn("ES 启动检查超时（搜索服务 5 分钟未就绪），增量补偿稍后继续");
         }, "es-cleanup");
         t.setDaemon(true);
         t.start();
@@ -93,7 +108,9 @@ public class EsIndexServiceImpl implements EsIndexService {
         body.put("uploaderId", file.getUploaderId() != null ? file.getUploaderId() : 0L);
         body.put("uploaderName", uploaderName);
         body.put("originText", file.getOriginText() != null ? file.getOriginText() : "");
-        body.put("createTime", file.getCreateTime() != null ? file.getCreateTime().toString() : "");
+        body.put("createTime", file.getCreateTime() != null
+                ? file.getCreateTime().toInstant().toString()
+                : Instant.now().toString());
         restTemplate.postForEntity(searchServiceUrl + "/index", body, String.class);
     }
 
@@ -132,6 +149,12 @@ public class EsIndexServiceImpl implements EsIndexService {
         }
         LOG.info("ES 索引重建完成: {} 个文件", count);
         return count;
+    }
+
+    private long countIndexableFiles() {
+        FileExample example = new FileExample();
+        example.createCriteria().andDeleteTimeIsNull().andIsFolderEqualTo((byte) 0);
+        return fileMapper.countByExample(example);
     }
 
     /**

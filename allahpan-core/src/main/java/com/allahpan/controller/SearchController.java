@@ -14,8 +14,11 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 
+import java.net.http.HttpClient;
 import java.net.URI;
+import java.time.Duration;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -31,6 +34,16 @@ public class SearchController {
 
     @Autowired
     private EsIndexService esIndexService;
+    private final RestTemplate restTemplate;
+
+    public SearchController() {
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
+        factory.setReadTimeout(Duration.ofSeconds(10));
+        this.restTemplate = new RestTemplate(factory);
+    }
 
     @GetMapping
     @Operation(summary = "搜索文件（ES 全文检索）")
@@ -39,7 +52,6 @@ public class SearchController {
             @RequestParam(required = false) String fileType,
             @RequestParam(defaultValue = "1") int pageNum,
             @RequestParam(defaultValue = "20") int pageSize) {
-        RestTemplate rt = new RestTemplate();
         // 手动构建 URI（URLEncoder + URI 构造器确保中文参数正确编码）
         String encodedKeyword = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
         String query = "keyword=" + encodedKeyword + "&pageNum=" + pageNum + "&pageSize=" + pageSize;
@@ -49,7 +61,7 @@ public class SearchController {
         URI uri = URI.create(searchServiceUrl + "/search?" + query);
         LOG.info("搜索请求: keyword={}", keyword);
         try {
-            Map<String, Object> result = rt.getForObject(uri, Map.class);
+            Map<String, Object> result = restTemplate.getForObject(uri, Map.class);
             return CommonResult.success(result);
         } catch (RestClientException e) {
             LOG.warn("搜索服务不可用: {}", e.getMessage());

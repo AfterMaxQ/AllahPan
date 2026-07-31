@@ -18,6 +18,7 @@
             <FileIcon
               :is-folder="row.isFolder === 1"
               :file-type="row.fileType"
+              :file-name="row.fileName"
               :thumb-url="row.thumbnailUrl"
               :size="32"
             />

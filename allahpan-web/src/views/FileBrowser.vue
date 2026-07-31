@@ -39,6 +39,16 @@
         </template>
       </EmptyState>
     </el-skeleton>
+    <el-pagination
+      v-if="totalFiles > pageSize"
+      class="file-pagination"
+      background
+      layout="prev, pager, next, total"
+      :current-page="pageNum"
+      :page-size="pageSize"
+      :total="totalFiles"
+      @current-change="handlePageChange"
+    />
 
     <!-- 右键菜单 -->
     <FileContextMenu
@@ -102,10 +112,10 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { useFileStore } from '@/stores/file'
 import { useTransferStore } from '@/stores/transfer'
-import { getFileList, deleteFile, batchDeleteFiles, renameFile, moveFile } from '@/api/file'
+import { getFilePage, deleteFile, batchDeleteFiles, renameFile, moveFile } from '@/api/file'
 import { addFavorite } from '@/api/favorite'
 import { createShareLink } from '@/api/share'
 import { formatDate } from '@/utils/format'
@@ -132,6 +142,9 @@ const loading = ref(false)
 const fabOpen = ref(false)
 const files = ref([])
 const selectedFiles = ref([])
+const pageNum = ref(1)
+const pageSize = 100
+const totalFiles = ref(0)
 
 // 右键菜单
 const contextMenuVisible = ref(false)
@@ -152,25 +165,59 @@ const shareExpireTime = ref('')
 
 // 移动
 const pendingMoveFile = ref(null)
+let loadController = null
+let loadRequestId = 0
+let realtimeReloadTimer = null
+let lastLoadedAt = 0
 
 const loadData = async () => {
+  const requestId = ++loadRequestId
+  loadController?.abort()
+  loadController = new AbortController()
+  const folderId = fileStore.currentFolderId
   loading.value = true
   selectedFiles.value = []
   try {
-    files.value = await getFileList(fileStore.currentFolderId)
+    const result = await getFilePage(folderId, pageNum.value, pageSize, loadController.signal)
+    if (requestId === loadRequestId && folderId === fileStore.currentFolderId) {
+      files.value = result.list || []
+      totalFiles.value = Number(result.total || 0)
+      lastLoadedAt = Date.now()
+    }
   } catch (e) {
-    console.error('加载文件列表失败', e)
+    if (e?.code !== 'ERR_CANCELED' && e?.name !== 'AbortError') {
+      console.error('加载文件列表失败', e)
+    }
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId) loading.value = false
   }
 }
 
-watch(() => fileStore.currentFolderId, loadData, { immediate: true })
-watch(() => fileStore.refreshTrigger, loadData)
-
-// 实时文件变更监听（SSE）
-useFileWatcher(() => {
+watch(() => fileStore.currentFolderId, () => {
+  pageNum.value = 1
   loadData()
+}, { immediate: true })
+watch(() => fileStore.refreshTrigger, () => loadData())
+
+const handlePageChange = (page) => {
+  pageNum.value = page
+  loadData()
+}
+
+// 只响应当前目录相关事件，并合并短时间内的多阶段状态推送。
+useFileWatcher((event) => {
+  const currentFolderId = Number(fileStore.currentFolderId || 0)
+  const eventParentId = Number(event?.parentId ?? -1)
+  if (event?.type !== 'sync' && eventParentId !== currentFolderId) return
+  if (Date.now() - lastLoadedAt < 400) return
+  if (realtimeReloadTimer) clearTimeout(realtimeReloadTimer)
+  realtimeReloadTimer = setTimeout(loadData, 150)
+})
+
+onBeforeUnmount(() => {
+  loadRequestId++
+  if (realtimeReloadTimer) clearTimeout(realtimeReloadTimer)
+  loadController?.abort()
 })
 
 // 上传 & 新建文件夹

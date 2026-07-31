@@ -26,6 +26,7 @@
             <FileIcon
               :is-folder="false"
               :file-type="sharedItem.fileType"
+              :file-name="sharedItem.fileName"
               :size="80"
             />
           </div>
@@ -57,7 +58,6 @@ import { useRoute } from 'vue-router'
 import { Share } from '@element-plus/icons-vue'
 import { downloadSharedFile, getSharedContent } from '@/api/share'
 import { formatBytes, formatDate } from '@/utils/format'
-import { SpeedTracker, formatSpeed } from '@/utils/transfer'
 import FileIcon from '@/components/common/FileIcon.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 
@@ -94,17 +94,10 @@ const handleDownload = async () => {
   downloading.value = true
   downloadProgress.value = 0
   downloadText.value = '正在准备下载...'
-  const speedTracker = new SpeedTracker()
   try {
-    await downloadSharedFile(route.params.code, sharedItem.value?.fileName, (evt) => {
-      const total = evt.total || sharedItem.value?.fileSize || 0
-      const loaded = evt.loaded || 0
-      speedTracker.update(loaded)
-      downloadProgress.value = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0
-      downloadText.value = `${formatSpeed(speedTracker.getSpeed())} · ${formatBytes(loaded)}/${formatBytes(total)}`
-    })
+    await downloadSharedFile(route.params.code, sharedItem.value?.fileName)
     downloadProgress.value = 100
-    downloadText.value = '下载完成'
+    downloadText.value = '已交给浏览器下载'
   } catch (e) {
     errorMessage.value = e?.message || '下载失败，请稍后重试'
   } finally {

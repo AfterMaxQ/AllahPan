@@ -11,6 +11,7 @@ import com.allahpan.service.FileService;
 import com.github.pagehelper.PageHelper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import org.slf4j.Logger;
@@ -22,15 +23,21 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 @Service
 public class FileServiceImpl implements FileService {
     private static final Logger log = LoggerFactory.getLogger(FileServiceImpl.class);
     private static final int MAX_FILE_NAME_LENGTH = 255;
     private static final int MAX_PATH_LENGTH = 500;
+    private static final int DELETE_BATCH_SIZE = 500;
 
     @Autowired
     private FileMapper fileMapper;
@@ -54,11 +61,9 @@ public class FileServiceImpl implements FileService {
         Asserts.isTrue(originalName.length() <= MAX_FILE_NAME_LENGTH,
                 "文件名过长（最大" + MAX_FILE_NAME_LENGTH + "字符）");
 
-        // 确定相对路径
-        String relativePath = resolveRelativePath(pid, originalName);
-        // 解决文件系统冲突
-        relativePath = resolveConflict(relativePath, pid);
-        String finalName = relativePath.substring(relativePath.lastIndexOf('/') + 1);
+        // 展示名与对象键分离：重命名/移动只改元数据，不再复制大对象。
+        String finalName = resolveAvailableName(pid, originalName);
+        String relativePath = createObjectKey(finalName);
 
         // 上传到 MinIO + 同时计算 MD5
         String contentType = file.getContentType();
@@ -94,6 +99,7 @@ public class FileServiceImpl implements FileService {
                 dup.setFileType(existing.getFileType());
                 dup.setThumbnailKey(existing.getThumbnailKey());
                 dup.setPreviewKey(existing.getPreviewKey());
+                dup.setOriginText(existing.getOriginText());
                 dup.setIsFolder((byte) 0);
                 dup.setProcessStatus((byte) 3);
                 dup.setCreateTime(new Date());
@@ -105,6 +111,7 @@ public class FileServiceImpl implements FileService {
                     try { minioUtil.removeObject(relativePath); } catch (Exception ex) { log.warn("清理失败", ex); }
                     Asserts.fail("文件保存失败");
                 }
+                esIndexService.index(dup);
                 return dup;
             }
         }
@@ -166,15 +173,20 @@ public class FileServiceImpl implements FileService {
         FileExample example = new FileExample();
         example.createCriteria().andParentIdEqualTo(parentId)
                 .andDeleteTimeIsNull();
-        example.setOrderByClause("is_folder DESC, FIELD(file_type, 'IMAGE', 'DOCUMENT', 'OTHER'), file_name REGEXP '^[0-9]' DESC, CAST(file_name AS UNSIGNED), file_name ASC");
-        return fileMapper.selectByExample(example);
+        // 分页前先给数据库一个稳定的全局顺序，避免翻页时记录漂移或重复。
+        example.setOrderByClause("is_folder DESC, file_name ASC, id ASC");
+        List<File> files = fileMapper.selectByExample(example);
+        populateFolderSizes(files);
+        files.sort(this::compareFiles);
+        return files;
     }
 
     @Override
     public List<File> getDirectoryTree(Long folderId) {
         var list = new java.util.ArrayList<File>();
+        Set<Long> visited = new HashSet<>();
         Long current = folderId;
-        while (current != null && current > 0) {
+        while (current != null && current > 0 && visited.add(current)) {
             File f = fileMapper.selectByPrimaryKey(current);
             if (f == null) break;
             list.add(0, f);
@@ -238,16 +250,6 @@ public class FileServiceImpl implements FileService {
         return fileMapper.countByExample(example);
     }
 
-    /** 统计所有记录（含已删除）共享同一 storageKey 的数量 */
-    private long countAllRefs(String storageKey, Long excludeId) {
-        if (storageKey == null) return 0;
-        FileExample example = new FileExample();
-        example.createCriteria()
-                .andStorageKeyEqualTo(storageKey)
-                .andIdNotEqualTo(excludeId);
-        return fileMapper.countByExample(example);
-    }
-
     /** 将文件移至回收站（MinIO: 复制到 trash bucket，仅当无其他活跃引用时删除源对象） */
     private void moveToTrash(File file) throws Exception {
         if (file.getStorageKey() == null) return;
@@ -262,25 +264,26 @@ public class FileServiceImpl implements FileService {
     }
 
     /** 从回收站恢复文件（MinIO: trash bucket → files bucket 后删除 trash 副本） */
-    private void restoreFromTrash(File file) {
+    private void restoreFromTrash(File file) throws Exception {
         if (file.getStorageKey() == null) return;
         // 非文件夹 → 从 trash bucket 恢复到 files bucket
         if (file.getIsFolder() == null || file.getIsFolder() != 1) {
-            try {
-                // 如果已有其他活跃记录引用同一 storageKey，对象已在 files bucket 中，无需恢复
-                if (countActiveRefs(file.getStorageKey(), file.getId()) == 0) {
-                    minioUtil.restoreFromTrash(file.getStorageKey());
-                    minioUtil.removeFromTrash(file.getStorageKey());
-                }
-            } catch (Exception e) {
-                log.warn("从 MinIO 回收站恢复失败: {}", file.getStorageKey(), e);
+            // 如果已有其他活跃记录引用同一 storageKey，对象已在 files bucket 中，无需恢复
+            if (countActiveRefs(file.getStorageKey(), file.getId()) == 0) {
+                minioUtil.restoreFromTrash(file.getStorageKey());
+                minioUtil.removeFromTrash(file.getStorageKey());
             }
         }
     }
 
     @Override
     public File getFileById(Long fileId) {
-        return fileMapper.selectByPrimaryKey(fileId);
+        File file = fileMapper.selectByPrimaryKey(fileId);
+        if (file != null && file.getIsFolder() != null && file.getIsFolder() == 1
+                && file.getDeleteTime() == null) {
+            file.setFileSize(getFolderSize(file.getId()));
+        }
+        return file;
     }
 
     @Override
@@ -355,49 +358,12 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
+    @Transactional
     public void permanentDelete(Long fileId) {
-        File file = fileMapper.selectByPrimaryKey(fileId);
-        Asserts.isTrue(file != null, "文件不存在");
-        Asserts.isTrue(file.getDeleteTime() != null, "只能永久删除垃圾站中的文件");
-
-        // MySQL 优先：先删除 DB 记录，再清理 MinIO 对象
-        // MinIO 清理失败仅记 warning，由定时孤儿扫描兜底
-        fileMapper.deleteByPrimaryKey(fileId);
-
-        // 递归删除子节点
-        if (file.getIsFolder() == 1) {
-            permanentDeleteChildren(fileId);
-        }
-
-        // 清理 MinIO 对象（DB 记录已删除，清理失败不影响用户）
-        if (file.getStorageKey() != null) {
-            if (file.getIsFolder() == null || file.getIsFolder() != 1) {
-                esIndexService.delete(fileId);
-            }
-            try {
-                if (countAllRefs(file.getStorageKey(), file.getId()) == 0) {
-                    minioUtil.removeFromTrash(file.getStorageKey());
-                }
-            } catch (Exception e) {
-                log.warn("从 MinIO 回收站删除失败: {}", file.getStorageKey(), e);
-            }
-        }
-        if (file.getThumbnailKey() != null) {
-            try {
-                minioUtil.removeThumbnail(file.getThumbnailKey());
-            } catch (Exception e) {
-                log.warn("删除 MinIO 缩略图失败: {}", file.getThumbnailKey(), e);
-            }
-        }
-    }
-
-    private void permanentDeleteChildren(Long folderId) {
-        FileExample example = new FileExample();
-        example.createCriteria().andParentIdEqualTo(folderId);
-        var children = fileMapper.selectByExample(example);
-        for (File child : children) {
-            permanentDelete(child.getId());
-        }
+        Map<String, Object> result = batchPermanentDelete(List.of(fileId));
+        @SuppressWarnings("unchecked")
+        List<Long> failedIds = (List<Long>) result.get("failedIds");
+        Asserts.isTrue(failedIds == null || failedIds.isEmpty(), "文件不存在或不在垃圾站中");
     }
 
     // ========== 路径工具 ==========
@@ -464,7 +430,7 @@ public class FileServiceImpl implements FileService {
     }
 
     /**
-     * 递归重建文件夹下所有子孙节点的 filePath 和 storageKey
+     * 递归重建文件夹下所有子孙节点的虚拟路径。对象键保持不变。
      */
     private void rebuildDescendantPaths(Long folderId) {
         FileExample example = new FileExample();
@@ -472,32 +438,7 @@ public class FileServiceImpl implements FileService {
         List<File> children = fileMapper.selectByExample(example);
         for (File child : children) {
             child.setFilePath(buildPath(child.getFileName(), child.getParentId()));
-
-            String oldKey = child.getStorageKey();
-            if (oldKey != null) {
-                String newKey = resolveRelativePath(child.getParentId(), child.getFileName());
-                if (!newKey.equals(oldKey)) {
-                    child.setStorageKey(newKey);
-                }
-            }
-
-            // MySQL 优先：先更新 DB
             fileMapper.updateByPrimaryKeySelective(child);
-
-            // MinIO 随后：复制到新 key + 删除旧 key（仅非文件夹），失败则回滚该子节点 DB
-            if (oldKey != null && !oldKey.equals(child.getStorageKey())) {
-                if (child.getIsFolder() == null || child.getIsFolder() != 1) {
-                    try {
-                        minioUtil.copyObject(oldKey, child.getStorageKey());
-                        minioUtil.removeObject(oldKey);
-                    } catch (Exception e) {
-                        log.error("MinIO 重命名子孙文件失败，回滚 DB: {} -> {}", oldKey, child.getStorageKey(), e);
-                        // 回滚 MySQL 对该子节点的修改
-                        child.setStorageKey(oldKey);
-                        fileMapper.updateByPrimaryKeySelective(child);
-                    }
-                }
-            }
 
             // 更新 ES 中子文件的路径（非文件夹）
             if (child.getIsFolder() == null || child.getIsFolder() != 1) {
@@ -524,36 +465,30 @@ public class FileServiceImpl implements FileService {
         return false;
     }
 
-    /**
-     * 解决文件名冲突：如果 MinIO 中已存在同名对象，追加序号
-     */
-    private String resolveConflict(String relativePath, Long parentId) {
-        if (!minioUtil.objectExists(relativePath)
-                && !activeNameExists(parentId, relativePath.substring(relativePath.lastIndexOf('/') + 1))) {
-            return relativePath;
-        }
-
-        int lastSlash = relativePath.lastIndexOf('/');
-        String dir = lastSlash >= 0 ? relativePath.substring(0, lastSlash + 1) : "";
-        String baseName = relativePath.substring(lastSlash + 1);
-        String nameBody = baseName;
+    private String resolveAvailableName(Long parentId, String requestedName) {
+        if (!activeNameExists(parentId, requestedName)) return requestedName;
+        String nameBody = requestedName;
         String ext = "";
-        int dotIdx = baseName.lastIndexOf('.');
+        int dotIdx = requestedName.lastIndexOf('.');
         if (dotIdx > 0) {
-            nameBody = baseName.substring(0, dotIdx);
-            ext = baseName.substring(dotIdx);
+            nameBody = requestedName.substring(0, dotIdx);
+            ext = requestedName.substring(dotIdx);
         }
-
         int counter = 1;
-        String newPath;
+        String candidate;
         do {
-            String newName = nameBody + " (" + counter + ")" + ext;
-            newPath = dir + newName;
-            counter++;
-        } while (minioUtil.objectExists(newPath)
-                || activeNameExists(parentId, newPath.substring(newPath.lastIndexOf('/') + 1)));
+            candidate = nameBody + " (" + counter++ + ")" + ext;
+        } while (activeNameExists(parentId, candidate));
+        return candidate;
+    }
 
-        return newPath;
+    private String createObjectKey(String fileName) {
+        String ext = "";
+        int dot = fileName.lastIndexOf('.');
+        if (dot > 0 && dot < fileName.length() - 1) {
+            ext = fileName.substring(dot);
+        }
+        return "objects/" + UUID.randomUUID() + ext;
     }
 
     private boolean activeNameExists(Long parentId, String fileName) {
@@ -622,39 +557,10 @@ public class FileServiceImpl implements FileService {
             assertNameUnique(parentId, newName);
         }
 
-        // 保存旧值用于 MinIO 失败时回滚
-        String oldKey = file.getStorageKey();
-        String oldName = file.getFileName();
-        String oldPath = file.getFilePath();
-
-        // MySQL 优先：先更新 DB storageKey + fileName + filePath
-        if (oldKey != null) {
-            String newKey = resolveRelativePath(parentId, newName);
-            if (!newKey.equals(oldKey)) {
-                file.setStorageKey(newKey);
-            }
-        }
+        // storageKey 是稳定对象 ID；重命名只修改元数据，避免复制整个大文件。
         file.setFileName(newName);
         file.setFilePath(buildPath(newName, file.getParentId()));
         fileMapper.updateByPrimaryKeySelective(file);
-
-        // MinIO 随后：复制到新 key + 删除旧 key（仅非文件夹）
-        if (oldKey != null && file.getStorageKey() != null && !file.getStorageKey().equals(oldKey)) {
-            if (file.getIsFolder() == null || file.getIsFolder() != 1) {
-                try {
-                    minioUtil.copyObject(oldKey, file.getStorageKey());
-                    minioUtil.removeObject(oldKey);
-                } catch (Exception e) {
-                    log.error("MinIO 重命名失败，回滚 DB: {} -> {}", oldKey, file.getStorageKey(), e);
-                    // 回滚 MySQL
-                    file.setStorageKey(oldKey);
-                    file.setFileName(oldName);
-                    file.setFilePath(oldPath);
-                    fileMapper.updateByPrimaryKeySelective(file);
-                    Asserts.fail("文件重命名失败");
-                }
-            }
-        }
 
         // 更新 ES 中的文件名/路径（非文件夹）
         if (file.getIsFolder() == null || file.getIsFolder() != 1) {
@@ -689,37 +595,10 @@ public class FileServiceImpl implements FileService {
         }
         assertNameUnique(newParentId, file.getFileName());
 
-        // 保存旧值用于 MinIO 失败时回滚
-        String oldKey = file.getStorageKey();
-        Long oldParentId = file.getParentId();
-        String oldPath = file.getFilePath();
-
-        // MySQL 优先：先更新 DB storageKey + parentId + filePath
-        if (file.getStorageKey() != null) {
-            String newKey = resolveRelativePath(newParentId, file.getFileName());
-            file.setStorageKey(newKey);
-        }
+        // 移动同样只修改虚拟目录元数据，storageKey 始终稳定。
         file.setParentId(newParentId);
         file.setFilePath(buildPath(file.getFileName(), newParentId));
         fileMapper.updateByPrimaryKeySelective(file);
-
-        // MinIO 随后：复制到新 key + 删除旧 key（仅非文件夹）
-        if (oldKey != null && file.getStorageKey() != null && !file.getStorageKey().equals(oldKey)) {
-            if (file.getIsFolder() == null || file.getIsFolder() != 1) {
-                try {
-                    minioUtil.copyObject(oldKey, file.getStorageKey());
-                    minioUtil.removeObject(oldKey);
-                } catch (Exception e) {
-                    log.error("MinIO 移动失败，回滚 DB: {} -> {}", oldKey, file.getStorageKey(), e);
-                    // 回滚 MySQL
-                    file.setStorageKey(oldKey);
-                    file.setParentId(oldParentId);
-                    file.setFilePath(oldPath);
-                    fileMapper.updateByPrimaryKeySelective(file);
-                    Asserts.fail("文件移动失败");
-                }
-            }
-        }
 
         // 更新 ES 中的文件路径（非文件夹）
         if (file.getIsFolder() == null || file.getIsFolder() != 1) {
@@ -753,25 +632,201 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
+    @Transactional
+    public Map<String, Object> batchPermanentDelete(List<Long> fileIds) {
+        LinkedHashSet<Long> requestedIds = new LinkedHashSet<>();
+        if (fileIds != null) {
+            for (Long fileId : fileIds) {
+                if (fileId != null) requestedIds.add(fileId);
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        if (requestedIds.isEmpty()) {
+            result.put("deletedCount", 0);
+            result.put("failedIds", List.of());
+            return result;
+        }
+
+        List<File> trashFiles = fileMapper.selectTrashSubtree(new ArrayList<>(requestedIds));
+        Set<Long> foundIds = new HashSet<>();
+        for (File file : trashFiles) {
+            foundIds.add(file.getId());
+        }
+        List<Long> failedIds = requestedIds.stream()
+                .filter(id -> !foundIds.contains(id))
+                .toList();
+
+        result.put("deletedCount", purgeTrashFiles(trashFiles));
+        result.put("failedIds", failedIds);
+        return result;
+    }
+
+    @Override
     public Long getFolderSize(Long folderId) {
         Long size = fileMapper.getFolderSize(folderId);
         return size != null ? size : 0L;
     }
 
     @Override
+    @Transactional
     public int emptyTrash() {
         FileExample example = new FileExample();
         example.createCriteria().andDeleteTimeIsNotNull();
         List<File> trashFiles = fileMapper.selectByExample(example);
-        int count = 0;
-        for (File f : trashFiles) {
-            try {
-                permanentDelete(f.getId());
-                count++;
-            } catch (Exception e) {
-                log.warn("清空垃圾站失败: fileId={}", f.getId(), e);
+        return purgeTrashFiles(trashFiles);
+    }
+
+    /**
+     * 先用批量 SQL 删除数据库记录，再按去重后的对象 key 清理外部索引与 MinIO。
+     * 外部清理失败由现有补偿/孤儿扫描兜底，不会造成数据库半删状态。
+     */
+    private int purgeTrashFiles(List<File> trashFiles) {
+        if (trashFiles == null || trashFiles.isEmpty()) return 0;
+
+        LinkedHashMap<Long, File> uniqueFiles = new LinkedHashMap<>();
+        for (File file : trashFiles) {
+            if (file != null && file.getId() != null) {
+                uniqueFiles.putIfAbsent(file.getId(), file);
             }
         }
-        return count;
+        if (uniqueFiles.isEmpty()) return 0;
+
+        List<Long> ids = new ArrayList<>(uniqueFiles.keySet());
+        int deleted = 0;
+        for (int start = 0; start < ids.size(); start += DELETE_BATCH_SIZE) {
+            int end = Math.min(start + DELETE_BATCH_SIZE, ids.size());
+            deleted += fileMapper.deleteByIds(ids.subList(start, end));
+        }
+
+        Set<String> storageKeys = new LinkedHashSet<>();
+        Set<String> imageKeys = new LinkedHashSet<>();
+        for (File file : uniqueFiles.values()) {
+            if (file.getIsFolder() == null || file.getIsFolder() != 1) {
+                esIndexService.delete(file.getId());
+                if (file.getStorageKey() != null) storageKeys.add(file.getStorageKey());
+            }
+            if (file.getThumbnailKey() != null) imageKeys.add(file.getThumbnailKey());
+            if (file.getPreviewKey() != null) imageKeys.add(file.getPreviewKey());
+        }
+
+        for (String storageKey : storageKeys) {
+            try {
+                if (!hasStorageReference(storageKey)) {
+                    minioUtil.removeFromTrash(storageKey);
+                }
+            } catch (Exception e) {
+                log.warn("从 MinIO 回收站删除失败: {}", storageKey, e);
+            }
+        }
+
+        for (String imageKey : imageKeys) {
+            try {
+                if (!hasThumbnailReference(imageKey) && !hasPreviewReference(imageKey)) {
+                    minioUtil.removeThumbnail(imageKey);
+                }
+            } catch (Exception e) {
+                log.warn("删除 MinIO 预览图失败: {}", imageKey, e);
+            }
+        }
+        return deleted;
+    }
+
+    private boolean hasStorageReference(String storageKey) {
+        FileExample example = new FileExample();
+        example.createCriteria().andStorageKeyEqualTo(storageKey);
+        return fileMapper.countByExample(example) > 0;
+    }
+
+    private boolean hasThumbnailReference(String thumbnailKey) {
+        FileExample example = new FileExample();
+        example.createCriteria().andThumbnailKeyEqualTo(thumbnailKey);
+        return fileMapper.countByExample(example) > 0;
+    }
+
+    private boolean hasPreviewReference(String previewKey) {
+        FileExample example = new FileExample();
+        example.createCriteria().andPreviewKeyEqualTo(previewKey);
+        return fileMapper.countByExample(example) > 0;
+    }
+
+    private void populateFolderSizes(List<File> files) {
+        List<Long> folderIds = files.stream()
+                .filter(file -> file.getIsFolder() != null && file.getIsFolder() == 1)
+                .map(File::getId)
+                .toList();
+        if (folderIds.isEmpty()) return;
+
+        Map<Long, Long> sizes = new HashMap<>();
+        for (File sizeRow : fileMapper.getFolderSizes(folderIds)) {
+            sizes.put(sizeRow.getId(), sizeRow.getFileSize() != null ? sizeRow.getFileSize() : 0L);
+        }
+        for (File file : files) {
+            if (file.getIsFolder() != null && file.getIsFolder() == 1) {
+                file.setFileSize(sizes.getOrDefault(file.getId(), 0L));
+            }
+        }
+    }
+
+    private int compareFiles(File left, File right) {
+        int leftFolder = left.getIsFolder() != null && left.getIsFolder() == 1 ? 0 : 1;
+        int rightFolder = right.getIsFolder() != null && right.getIsFolder() == 1 ? 0 : 1;
+        int compared = Integer.compare(leftFolder, rightFolder);
+        if (compared != 0) return compared;
+
+        compared = Integer.compare(fileTypeRank(left.getFileType()), fileTypeRank(right.getFileType()));
+        if (compared != 0) return compared;
+
+        compared = compareNaturalNames(left.getFileName(), right.getFileName());
+        if (compared != 0) return compared;
+        if (left.getId() == null) return right.getId() == null ? 0 : 1;
+        if (right.getId() == null) return -1;
+        return left.getId().compareTo(right.getId());
+    }
+
+    private int fileTypeRank(String fileType) {
+        if ("IMAGE".equals(fileType)) return 0;
+        if ("VIDEO".equals(fileType)) return 1;
+        if ("DOCUMENT".equals(fileType)) return 2;
+        if ("OTHER".equals(fileType)) return 3;
+        return 4;
+    }
+
+    /**
+     * 不做数据库正则和数值转换，在内存中稳定地按自然文件名排序。
+     */
+    private int compareNaturalNames(String left, String right) {
+        String a = left != null ? left : "";
+        String b = right != null ? right : "";
+        int ai = 0;
+        int bi = 0;
+        while (ai < a.length() && bi < b.length()) {
+            char ac = a.charAt(ai);
+            char bc = b.charAt(bi);
+            if (Character.isDigit(ac) && Character.isDigit(bc)) {
+                int aStart = ai;
+                int bStart = bi;
+                while (aStart < a.length() && a.charAt(aStart) == '0') aStart++;
+                while (bStart < b.length() && b.charAt(bStart) == '0') bStart++;
+                int aEnd = aStart;
+                int bEnd = bStart;
+                while (aEnd < a.length() && Character.isDigit(a.charAt(aEnd))) aEnd++;
+                while (bEnd < b.length() && Character.isDigit(b.charAt(bEnd))) bEnd++;
+                int aDigits = aEnd - aStart;
+                int bDigits = bEnd - bStart;
+                if (aDigits != bDigits) return Integer.compare(aDigits, bDigits);
+                int numberCompared = a.regionMatches(aStart, b, bStart, aDigits) ? 0
+                        : a.substring(aStart, aEnd).compareTo(b.substring(bStart, bEnd));
+                if (numberCompared != 0) return numberCompared;
+                while (ai < a.length() && Character.isDigit(a.charAt(ai))) ai++;
+                while (bi < b.length() && Character.isDigit(b.charAt(bi))) bi++;
+                continue;
+            }
+            int charCompared = Character.compare(Character.toLowerCase(ac), Character.toLowerCase(bc));
+            if (charCompared != 0) return charCompared;
+            ai++;
+            bi++;
+        }
+        return Integer.compare(a.length(), b.length());
     }
 }

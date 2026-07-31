@@ -45,8 +45,13 @@ public class JwtAuthenticationTokenFilter extends OncePerRequestFilter {
             HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String authHeader = request.getHeader(tokenHeader);
+        String token = null;
         if (authHeader != null && authHeader.startsWith(tokenHead)) {
-            String token = authHeader.substring(tokenHead.length());
+            token = authHeader.substring(tokenHead.length());
+        } else if (allowsQueryToken(request)) {
+            token = request.getParameter("token");
+        }
+        if (token != null && !token.isBlank()) {
             String email = jwtTokenUtil.getSubjectFromToken(token);
             if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
                 UserDetails userDetails = userDetailsService.loadUserByUsername(email);
@@ -61,6 +66,21 @@ public class JwtAuthenticationTokenFilter extends OncePerRequestFilter {
             }
         }
         chain.doFilter(request, response);
+    }
+
+    /**
+     * 浏览器原生的 img/video/iframe 无法附加 Authorization 请求头。
+     * 仅媒体 GET 接口沿用文件监听已有的查询参数 token 方式。
+     */
+    private boolean allowsQueryToken(HttpServletRequest request) {
+        if (!"GET".equalsIgnoreCase(request.getMethod())
+                && !"HEAD".equalsIgnoreCase(request.getMethod())) return false;
+        String uri = request.getRequestURI();
+        if (uri == null || !uri.startsWith("/api/file/")) return false;
+        return uri.endsWith("/stream")
+                || uri.endsWith("/thumbnail")
+                || uri.endsWith("/preview")
+                || uri.endsWith("/download");
     }
 
 }

@@ -7,6 +7,8 @@ import com.allahpan.domain.FileProcessMessage;
 import com.allahpan.mbg.model.File;
 import com.allahpan.security.util.JwtTokenUtil;
 import com.allahpan.service.FileService;
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
 import com.allahpan.component.MinioUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -14,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -77,9 +80,27 @@ public class FileController {
 
     @Operation(summary = "文件列表")
     @GetMapping("/list")
-    public CommonResult<?> listFiles(@RequestParam(defaultValue = "0") Long parentId) {
+    public CommonResult<?> listFiles(
+            @RequestParam(defaultValue = "0") Long parentId,
+            @RequestParam(defaultValue = "false") boolean paged,
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "100") int pageSize) {
+        if (paged) {
+            pageNum = Math.max(pageNum, 1);
+            pageSize = Math.max(1, Math.min(pageSize, 200));
+            PageHelper.startPage(pageNum, pageSize);
+        }
         var list = fileService.listFiles(parentId);
         var result = list.stream().map(this::toFileResponse).toList();
+        if (paged) {
+            PageInfo<File> page = new PageInfo<>(list);
+            return CommonResult.success(Map.of(
+                    "list", result,
+                    "total", page.getTotal(),
+                    "pageNum", page.getPageNum(),
+                    "pageSize", page.getPageSize(),
+                    "pages", page.getPages()));
+        }
         return CommonResult.success(result);
     }
 
@@ -108,48 +129,73 @@ public class FileController {
 
     @Operation(summary = "下载文件（MinIO 流式返回）")
     @GetMapping("/{fileId}/download")
-    public ResponseEntity<Resource> downloadFile(@PathVariable Long fileId) {
+    public ResponseEntity<Resource> downloadFile(
+            @PathVariable Long fileId,
+            @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader) {
         File file = fileService.getFileById(fileId);
         validateDownloadable(file);
         String encodedName = URLEncoder.encode(file.getFileName(), StandardCharsets.UTF_8)
                 .replace("+", "%20");
-        return streamResponse(file, "attachment; filename*=UTF-8''" + encodedName);
+        return streamResponse(file, "attachment; filename*=UTF-8''" + encodedName, rangeHeader);
     }
 
     @Operation(summary = "预览文件（inline）")
     @GetMapping("/{fileId}/stream")
-    public ResponseEntity<Resource> streamFile(@PathVariable Long fileId) {
+    public ResponseEntity<Resource> streamFile(
+            @PathVariable Long fileId,
+            @RequestHeader(value = HttpHeaders.RANGE, required = false) String rangeHeader) {
         File file = fileService.getFileById(fileId);
         validateDownloadable(file);
-        return streamResponse(file, "inline");
+        return streamResponse(file, "inline", rangeHeader);
     }
 
     private void validateDownloadable(File file) {
         com.allahpan.common.exception.Asserts.isTrue(file != null, "文件不存在");
         com.allahpan.common.exception.Asserts.isTrue(file.getDeleteTime() == null, "文件已删除");
-        com.allahpan.common.exception.Asserts.isTrue(file.getIsFolder() != 1, "文件夹不支持下载");
+        com.allahpan.common.exception.Asserts.isTrue(!Integer.valueOf(1).equals(file.getIsFolder()), "文件夹不支持下载");
         com.allahpan.common.exception.Asserts.isTrue(file.getStorageKey() != null, "文件无存储对象");
     }
 
-    private ResponseEntity<Resource> streamResponse(File file, String contentDisposition) {
+    private ResponseEntity<Resource> streamResponse(
+            File file, String contentDisposition, String rangeHeader) {
         String key = file.getStorageKey();
         LOG.info("stream request: fileId={} storageKey='{}' contentType='{}' disposition={}",
                 file.getId(), key, file.getContentType(), contentDisposition);
         try {
-            // 防御性检查：确认 MinIO 对象存在再读取
-            if (!minioUtil.objectExists(key)) {
-                LOG.error("MinIO object NOT FOUND for stream: fileId={} storageKey='{}' fileName='{}' filePath='{}'",
-                        file.getId(), key, file.getFileName(), file.getFilePath());
-                return ResponseEntity.notFound().build();
+            long totalSize = file.getFileSize() != null && file.getFileSize() >= 0
+                    ? file.getFileSize()
+                    : minioUtil.statObject(key).size();
+            ByteRange range;
+            try {
+                range = parseRange(rangeHeader, totalSize);
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                        .header(HttpHeaders.CONTENT_RANGE, "bytes */" + totalSize)
+                        .build();
             }
-            InputStream stream = minioUtil.getObject(key);
+
+            InputStream stream = range == null
+                    ? minioUtil.getObject(key)
+                    : minioUtil.getObject(key, range.start(), range.length());
             InputStreamResource resource = new InputStreamResource(stream);
-            var response = ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(
-                            file.getContentType() != null ? file.getContentType() : "application/octet-stream"))
-                    .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition);
-            if (file.getFileSize() != null && file.getFileSize() >= 0) {
-                response.contentLength(file.getFileSize());
+            MediaType contentType;
+            try {
+                contentType = MediaType.parseMediaType(
+                        file.getContentType() != null ? file.getContentType() : "application/octet-stream");
+            } catch (IllegalArgumentException ignored) {
+                contentType = MediaType.APPLICATION_OCTET_STREAM;
+            }
+
+            ResponseEntity.BodyBuilder response = range == null
+                    ? ResponseEntity.ok()
+                    : ResponseEntity.status(HttpStatus.PARTIAL_CONTENT);
+            response.contentType(contentType)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
+                    .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                    .contentLength(range == null ? totalSize : range.length());
+            if (range != null) {
+                response.header(HttpHeaders.CONTENT_RANGE,
+                        "bytes " + range.start() + "-" + range.end() + "/" + totalSize);
             }
             return response.body(resource);
         } catch (Exception e) {
@@ -159,32 +205,89 @@ public class FileController {
         }
     }
 
+    static ByteRange parseRange(String rangeHeader, long totalSize) {
+        if (rangeHeader == null || rangeHeader.isBlank()) return null;
+        if (totalSize <= 0 || !rangeHeader.startsWith("bytes=") || rangeHeader.contains(",")) {
+            throw new IllegalArgumentException("unsupported range");
+        }
+        String value = rangeHeader.substring("bytes=".length()).trim();
+        int dash = value.indexOf('-');
+        if (dash < 0) throw new IllegalArgumentException("invalid range");
+
+        String startValue = value.substring(0, dash).trim();
+        String endValue = value.substring(dash + 1).trim();
+        long start;
+        long end;
+        try {
+            if (startValue.isEmpty()) {
+                long suffixLength = Long.parseLong(endValue);
+                if (suffixLength <= 0) throw new IllegalArgumentException("invalid suffix range");
+                start = Math.max(0, totalSize - suffixLength);
+                end = totalSize - 1;
+            } else {
+                start = Long.parseLong(startValue);
+                if (start < 0 || start >= totalSize) {
+                    throw new IllegalArgumentException("range starts past end");
+                }
+                end = endValue.isEmpty()
+                        ? totalSize - 1
+                        : Math.min(Long.parseLong(endValue), totalSize - 1);
+                if (end < start) throw new IllegalArgumentException("range end before start");
+            }
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("invalid range number", e);
+        }
+        return new ByteRange(start, end);
+    }
+
+    record ByteRange(long start, long end) {
+        long length() {
+            return end - start + 1;
+        }
+    }
+
     @Operation(summary = "缩略图（MinIO）")
     @GetMapping("/{fileId}/thumbnail")
-    public ResponseEntity<Resource> getThumbnail(@PathVariable Long fileId) {
+    public ResponseEntity<Resource> getThumbnail(
+            @PathVariable Long fileId,
+            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
         File file = fileService.getFileById(fileId);
         if (file == null || file.getThumbnailKey() == null) {
             return ResponseEntity.notFound().build();
         }
-        return streamThumbnail(file.getThumbnailKey(), fileId, "thumbnail");
+        return streamThumbnail(file.getThumbnailKey(), fileId, "thumbnail", ifNoneMatch);
     }
 
     @Operation(summary = "预览高清图（MinIO）")
     @GetMapping("/{fileId}/preview")
-    public ResponseEntity<Resource> getPreview(@PathVariable Long fileId) {
+    public ResponseEntity<Resource> getPreview(
+            @PathVariable Long fileId,
+            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
         File file = fileService.getFileById(fileId);
         if (file == null || file.getPreviewKey() == null) {
             return ResponseEntity.notFound().build();
         }
-        return streamThumbnail(file.getPreviewKey(), fileId, "preview");
+        return streamThumbnail(file.getPreviewKey(), fileId, "preview", ifNoneMatch);
     }
 
-    private ResponseEntity<Resource> streamThumbnail(String objectKey, Long fileId, String label) {
+    private ResponseEntity<Resource> streamThumbnail(
+            String objectKey, Long fileId, String label, String ifNoneMatch) {
         try {
+            var stat = minioUtil.statObject(minioUtil.getThumbnailBucket(), objectKey);
+            String etag = "\"" + stat.etag() + "\"";
+            if (etag.equals(ifNoneMatch)) {
+                return ResponseEntity.status(HttpStatus.NOT_MODIFIED)
+                        .header(HttpHeaders.ETAG, etag)
+                        .header(HttpHeaders.CACHE_CONTROL, "private, max-age=86400")
+                        .build();
+            }
             InputStream stream = minioUtil.getThumbnail(objectKey);
             InputStreamResource resource = new InputStreamResource(stream);
             return ResponseEntity.ok()
                     .contentType(MediaType.IMAGE_JPEG)
+                    .contentLength(stat.size())
+                    .header(HttpHeaders.ETAG, etag)
+                    .header(HttpHeaders.CACHE_CONTROL, "private, max-age=86400")
                     .body(resource);
         } catch (Exception e) {
             LOG.warn("Failed to stream {}: fileId={} key='{}' error={}",
@@ -258,7 +361,9 @@ public class FileController {
     @DeleteMapping("/trash/empty")
     public CommonResult<?> emptyTrash() {
         int count = fileService.emptyTrash();
-        return CommonResult.success(Map.of("deletedCount", count), "已清空 " + count + " 个文件");
+        return CommonResult.success(
+                Map.of("deletedCount", count, "message", "已清空 " + count + " 个文件"),
+                "已清空 " + count + " 个文件");
     }
 
     @Operation(summary = "批量永久删除垃圾站文件")
@@ -268,16 +373,10 @@ public class FileController {
         if (ids == null || ids.isEmpty()) {
             return CommonResult.failed("请选择要删除的文件");
         }
-        int count = 0;
-        for (Long id : ids) {
-            try {
-                fileService.permanentDelete(id);
-                count++;
-            } catch (Exception e) {
-                // 记录日志，继续处理其他文件
-            }
-        }
-        return CommonResult.success(Map.of("deletedCount", count), "已删除 " + count + " 个文件");
+        Map<String, Object> result = fileService.batchPermanentDelete(ids);
+        int count = ((Number) result.getOrDefault("deletedCount", 0)).intValue();
+        result.put("message", "已删除 " + count + " 个文件");
+        return CommonResult.success(result, "已删除 " + count + " 个文件");
     }
 
     // ========== 响应转换 ==========
@@ -295,7 +394,7 @@ public class FileController {
         map.put("filePath", f.getFilePath());
         map.put("storageKey", f.getStorageKey());
         map.put("fileType", f.getFileType());
-        map.put("fileSize", f.getIsFolder() == 1 ? fileService.getFolderSize(f.getId()) : f.getFileSize());
+        map.put("fileSize", f.getFileSize() != null ? f.getFileSize() : 0L);
         map.put("contentType", f.getContentType());
         map.put("thumbnailKey", f.getThumbnailKey());
         if (f.getThumbnailKey() != null) {

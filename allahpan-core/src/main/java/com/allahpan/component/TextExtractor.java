@@ -26,8 +26,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 @Component
 public class TextExtractor {
@@ -86,9 +87,13 @@ public class TextExtractor {
     }
 
     private String extractPdfText(File file) {
+        Path tempFile = null;
         try {
-            byte[] pdfBytes = readFromMinio(file);
-            try (PDDocument document = Loader.loadPDF(pdfBytes)) {
+            tempFile = Files.createTempFile("allahpan-pdf-", ".pdf");
+            try (InputStream input = open(file)) {
+                Files.copy(input, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            try (PDDocument document = Loader.loadPDF(tempFile.toFile())) {
                 if (document.isEncrypted()) {
                     LOG.warn("PDF 已加密，跳过文本提取: fileId={}", file.getId());
                     return null;
@@ -104,13 +109,17 @@ public class TextExtractor {
             LOG.warn("PDF 文本提取失败（文件可能已损坏）: fileId={}, error={}",
                     file.getId(), e.getMessage());
             return null;
+        } finally {
+            if (tempFile != null) {
+                try { Files.deleteIfExists(tempFile); } catch (Exception ignored) {}
+            }
         }
     }
 
     private String extractDocxText(File file) {
         try {
-            byte[] docxBytes = readFromMinio(file);
-            try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(docxBytes));
+            try (InputStream input = open(file);
+                 XWPFDocument doc = new XWPFDocument(input);
                  XWPFWordExtractor extractor = new XWPFWordExtractor(doc)) {
                 String text = extractor.getText();
                 return truncate(text != null ? text.strip() : null);
@@ -126,8 +135,8 @@ public class TextExtractor {
 
     private String extractDocText(File file) {
         try {
-            byte[] docBytes = readFromMinio(file);
-            try (HWPFDocument doc = new HWPFDocument(new ByteArrayInputStream(docBytes));
+            try (InputStream input = open(file);
+                 HWPFDocument doc = new HWPFDocument(input);
                  WordExtractor extractor = new WordExtractor(doc)) {
                 String text = extractor.getText();
                 return truncate(text != null ? text.strip() : null);
@@ -143,8 +152,8 @@ public class TextExtractor {
 
     private String extractXlsxText(File file) {
         try {
-            byte[] xlsxBytes = readFromMinio(file);
-            try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(xlsxBytes));
+            try (InputStream input = open(file);
+                 XSSFWorkbook wb = new XSSFWorkbook(input);
                  XSSFExcelExtractor extractor = new XSSFExcelExtractor(wb)) {
                 extractor.setFormulasNotResults(false);
                 extractor.setIncludeSheetNames(true);
@@ -162,8 +171,8 @@ public class TextExtractor {
 
     private String extractXlsText(File file) {
         try {
-            byte[] xlsBytes = readFromMinio(file);
-            try (HSSFWorkbook wb = new HSSFWorkbook(new ByteArrayInputStream(xlsBytes));
+            try (InputStream input = open(file);
+                 HSSFWorkbook wb = new HSSFWorkbook(input);
                  ExcelExtractor extractor = new ExcelExtractor(wb)) {
                 extractor.setFormulasNotResults(false);
                 extractor.setIncludeSheetNames(true);
@@ -181,8 +190,8 @@ public class TextExtractor {
 
     private String extractPptxText(File file) {
         try {
-            byte[] pptxBytes = readFromMinio(file);
-            try (XMLSlideShow ppt = new XMLSlideShow(new ByteArrayInputStream(pptxBytes))) {
+            try (InputStream input = open(file);
+                 XMLSlideShow ppt = new XMLSlideShow(input)) {
                 StringBuilder sb = new StringBuilder();
                 for (XSLFSlide slide : ppt.getSlides()) {
                     for (XSLFShape shape : slide.getShapes()) {
@@ -208,8 +217,8 @@ public class TextExtractor {
 
     private String extractPptText(File file) {
         try {
-            byte[] pptBytes = readFromMinio(file);
-            try (HSLFSlideShow ppt = new HSLFSlideShow(new ByteArrayInputStream(pptBytes))) {
+            try (InputStream input = open(file);
+                 HSLFSlideShow ppt = new HSLFSlideShow(input)) {
                 StringBuilder sb = new StringBuilder();
                 for (HSLFSlide slide : ppt.getSlides()) {
                     for (java.util.List<HSLFTextParagraph> paraGroup : slide.getTextParagraphs()) {
@@ -233,7 +242,10 @@ public class TextExtractor {
 
     private String extractPlainText(File file) {
         try {
-            byte[] textBytes = readFromMinio(file);
+            byte[] textBytes;
+            try (InputStream input = open(file)) {
+                textBytes = input.readNBytes(maxTextLength + 1);
+            }
             int len = Math.min(textBytes.length, maxTextLength + 1);
             String text = new String(textBytes, 0, len, java.nio.charset.StandardCharsets.UTF_8);
             return truncate(text != null ? text.strip() : null);
@@ -245,10 +257,8 @@ public class TextExtractor {
         }
     }
 
-    private byte[] readFromMinio(File file) throws Exception {
-        try (InputStream is = minioUtil.getObject(file.getStorageKey())) {
-            return is.readAllBytes();
-        }
+    private InputStream open(File file) throws Exception {
+        return minioUtil.getObject(file.getStorageKey());
     }
 
     private String truncate(String text) {

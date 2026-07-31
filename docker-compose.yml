@@ -17,7 +17,8 @@ services:
     container_name: redis-allahpan
     ports:
       - "6379:6379"
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # 达到上限时明确拒绝新写入，不随机淘汰上传会话/幂等结果造成隐性数据丢失。
+    command: redis-server --maxmemory 256mb --maxmemory-policy noeviction
     volumes:
       - redis-data:/data
     restart: unless-stopped

@@ -31,6 +31,11 @@ public class EsFileController {
         return Map.of("success", true, "deleted", deleted);
     }
 
+    @GetMapping("/count")
+    public Map<String, Object> count() {
+        return Map.of("success", true, "count", esFileService.count());
+    }
+
     @GetMapping("/search")
     public Map<String, Object> search(
             @RequestParam String keyword,

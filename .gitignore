@@ -35,6 +35,9 @@ logs/
 # === Claude ===
 .claude/
 
+# === CodeGraph ===
+.codegraph/
+
 # === Docs ===
 docs/
 

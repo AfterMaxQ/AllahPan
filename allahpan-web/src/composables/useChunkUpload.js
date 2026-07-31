@@ -149,6 +149,30 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
     ensureNotCanceled(signal)
 
     const uploadId = initResult.uploadId
+    if (initResult.status === 'instant' || initResult.status === 'completed') {
+      emit({
+        statusText: initResult.status === 'instant' ? '秒传中...' : '上传完成',
+        progress: 99,
+        percent: 99,
+        loaded: file.size,
+        speed: 0,
+        eta: 0,
+      })
+      if (initResult.status === 'instant') {
+        await completeUpload(uploadId, signal)
+      }
+      emit({
+        progress: 100,
+        percent: 100,
+        loaded: file.size,
+        speed: 0,
+        eta: 0,
+        status: 'success',
+        statusText: '秒传完成',
+      })
+      return initResult
+    }
+
     const uploadedChunks = new Set(initResult.uploadedChunks || [])
 
     const chunkBytes = new Map()

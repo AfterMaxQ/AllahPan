@@ -2,6 +2,7 @@ package com.allahpan.component;
 
 import com.allahpan.mbg.model.File;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -18,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * 手动验证文字提取功能：PDF、PPTX、TXT
  * 不依赖 Spring Boot 容器，直接实例化 TextExtractor + mock MinioUtil
  */
+@Disabled("手工测试依赖开发者桌面上的本地样本文件，不应在自动测试中运行")
 public class TextExtractorManualTest {
 
     private static TextExtractor extractor;

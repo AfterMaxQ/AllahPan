@@ -2,6 +2,7 @@ package com.allahpan.component;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -27,7 +28,26 @@ public class SseBroadcaster {
         emitter.onCompletion(() -> emitters.remove(emitter));
         emitter.onTimeout(() -> emitters.remove(emitter));
         emitter.onError(e -> emitters.remove(emitter));
+        try {
+            // Commit the response immediately so proxies and EventSource know
+            // the long-lived connection has been established.
+            emitter.send(SseEmitter.event().comment("connected"));
+        } catch (IOException e) {
+            emitters.remove(emitter);
+            emitter.completeWithError(e);
+        }
         return emitter;
+    }
+
+    @Scheduled(fixedRate = 15_000)
+    public void heartbeat() {
+        for (SseEmitter emitter : emitters) {
+            try {
+                emitter.send(SseEmitter.event().comment("heartbeat"));
+            } catch (IOException e) {
+                emitters.remove(emitter);
+            }
+        }
     }
 
     public void broadcast(String eventName, Map<String, Object> data) {

@@ -17,6 +17,7 @@
       <FileIcon
         :is-folder="file.isFolder === 1"
         :file-type="file.fileType"
+        :file-name="file.fileName"
         :thumb-url="file.thumbnailUrl"
         :size="isMobile ? 48 : 64"
       />

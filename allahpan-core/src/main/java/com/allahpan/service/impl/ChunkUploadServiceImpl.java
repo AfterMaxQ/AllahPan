@@ -5,6 +5,7 @@ import com.allahpan.common.api.ResultCode;
 import com.allahpan.common.exception.Asserts;
 import com.allahpan.common.service.RedisService;
 import com.allahpan.component.FileProcessSender;
+import com.allahpan.component.EsIndexService;
 import com.allahpan.component.MinioUtil;
 import com.allahpan.component.SseBroadcaster;
 import com.allahpan.domain.FileProcessMessage;
@@ -37,12 +38,17 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     private static final Logger log = LoggerFactory.getLogger(ChunkUploadServiceImpl.class);
     private static final int MAX_FILE_NAME_LENGTH = 255;
+    private static final int MAX_TOTAL_CHUNKS = 10_000;
+    private static final int MAX_CHUNK_SIZE = 32 * 1024 * 1024;
 
     @Value("${allahpan.chunk.temp-dir:${java.io.tmpdir}/allahpan-chunks}")
     private String tempDir;
 
     @Value("${allahpan.chunk.expire-hours:24}")
     private int expireHours;
+
+    @Value("${allahpan.chunk.max-file-size:53687091200}")
+    private long maxFileSize;
 
     @Autowired
     private RedisService redisService;
@@ -53,6 +59,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     @Autowired
     private FileProcessSender fileProcessSender;
     @Autowired
+    private EsIndexService esIndexService;
+    @Autowired
     private SseBroadcaster sseBroadcaster;
 
     // ==================== Redis Key ====================
@@ -60,6 +68,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private String hashKey(String uploadId) { return "chunk:upload:" + uploadId; }
     private String setKey(String uploadId) { return "chunk:upload:" + uploadId + ":chunks"; }
     private String lockKey(String uploadId) { return "chunk:upload:" + uploadId + ":complete-lock"; }
+    private String resultKey(String uploadId) { return "chunk:upload:" + uploadId + ":result"; }
 
     // ==================== init ====================
 
@@ -71,6 +80,14 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         validateUploadRequest(fileName, fileSize, fileMd5, pid, chunkSize, totalChunks);
         String uploadId = computeUploadId(userId, fileMd5, fileSize, fileName, pid);
         String hk = hashKey(uploadId);
+
+        Map<String, Object> completed = getCompletedResult(uploadId, userId);
+        if (completed != null) {
+            completed.put("uploadId", uploadId);
+            completed.put("uploadedChunks", List.of());
+            completed.put("status", "completed");
+            return completed;
+        }
 
         if (Boolean.TRUE.equals(redisService.hasKey(hk))) {
             Map<Object, Object> meta = redisService.hGetAll(hk);
@@ -89,7 +106,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             return result;
         }
 
-        // 新会话 → 创建 Redis 记录 + 临时目录
+        // 新会话。先记录元数据，再检查是否可以真正秒传。
         redisService.hSet(hk, "fileName", fileName, expireHours * 3600L);
         redisService.hSet(hk, "fileSize", String.valueOf(fileSize));
         redisService.hSet(hk, "fileMd5", fileMd5);
@@ -102,9 +119,23 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         redisService.hSet(hk, "userId", String.valueOf(userId));
         redisService.expire(hk, expireHours * 3600L);
 
+        File existing = findActiveByMd5(fileMd5, fileSize);
+        if (existing != null) {
+            redisService.hSet(hk, "status", "instant");
+            redisService.hSet(hk, "sourceFileId", String.valueOf(existing.getId()));
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("uploadId", uploadId);
+            result.put("uploadedChunks", List.of());
+            result.put("status", "instant");
+            return result;
+        }
+
         Path chunkDir = Path.of(tempDir, uploadId);
         try {
             Files.createDirectories(chunkDir);
+            long usableSpace = Files.getFileStore(chunkDir).getUsableSpace();
+            Asserts.isTrue(usableSpace > fileSize + Math.min(fileSize / 10, 1024L * 1024 * 1024),
+                    "服务器临时空间不足，请稍后重试");
         } catch (IOException e) {
             log.error("创建临时目录失败: {}", chunkDir, e);
             Asserts.fail("上传初始化失败");
@@ -126,6 +157,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         Map<Object, Object> meta = redisService.hGetAll(hk);
         validateSessionOwner(meta, getCurrentUserId());
+        Asserts.isTrue(!"instant".equals(meta.get("status")), "该文件可秒传，无需上传分片");
         int totalChunks = Integer.parseInt((String) meta.get("totalChunks"));
         long fileSize = Long.parseLong((String) meta.get("fileSize"));
         int chunkSize = Integer.parseInt((String) meta.get("chunkSize"));
@@ -158,13 +190,23 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     @Override
     public Map<String, Object> complete(String uploadId) {
+        Long currentUserId = getCurrentUserId();
+        Map<String, Object> completed = getCompletedResult(uploadId, currentUserId);
+        if (completed != null) return completed;
+
         String hk = hashKey(uploadId);
         Asserts.isTrue(Boolean.TRUE.equals(redisService.hasKey(hk)), "上传会话不存在或已过期");
         Asserts.isTrue(Boolean.TRUE.equals(redisService.setIfAbsent(lockKey(uploadId), "1", 600)),
                 "上传正在合并，请勿重复提交");
 
+        completed = getCompletedResult(uploadId, currentUserId);
+        if (completed != null) {
+            redisService.del(lockKey(uploadId));
+            return completed;
+        }
+
         Map<Object, Object> meta = redisService.hGetAll(hk);
-        validateSessionOwner(meta, getCurrentUserId());
+        validateSessionOwner(meta, currentUserId);
         String fileName = (String) meta.get("fileName");
         long fileSize = Long.parseLong((String) meta.get("fileSize"));
         String fileMd5 = (String) meta.get("fileMd5");
@@ -172,6 +214,25 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Long parentId = Long.parseLong((String) meta.get("parentId"));
         int totalChunks = Integer.parseInt((String) meta.get("totalChunks"));
         Long userId = Long.parseLong((String) meta.get("userId"));
+        String status = String.valueOf(meta.get("status"));
+
+        if ("instant".equals(status)) {
+            try {
+                Long sourceFileId = Long.parseLong(String.valueOf(meta.get("sourceFileId")));
+                File existing = fileMapper.selectByPrimaryKey(sourceFileId);
+                Asserts.isTrue(existing != null && existing.getDeleteTime() == null,
+                        "秒传源文件已失效，请重新上传");
+                File dup = createDuplicateRecord(existing, userId, parentId, fileName);
+                fileMapper.insert(dup);
+                Map<String, Object> result = cacheCompletedResult(uploadId, dup);
+                cleanup(uploadId, Path.of(tempDir, uploadId));
+                esIndexService.index(dup);
+                broadcastCreated(dup);
+                return result;
+            } finally {
+                redisService.del(lockKey(uploadId));
+            }
+        }
 
         // 验证所有分片已上传
         long uploadedCount = redisService.sMembers(setKey(uploadId)).size();
@@ -179,21 +240,19 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 String.format("分片未完整上传 (%d/%d)", uploadedCount, totalChunks));
 
         Path chunkDir = Path.of(tempDir, uploadId);
-        Path mergedFile = chunkDir.resolve("merged");
         String storageKey = null;
+        File insertedRecord = null;
 
         try {
-            // 1. 合并分片
-            mergeChunks(chunkDir, totalChunks, mergedFile);
-
-            // 2. 上传到 MinIO + 计算 MD5
-            storageKey = resolveStorageKey(parentId, fileName);
-            String finalName = storageKey.substring(storageKey.lastIndexOf('/') + 1);
-            String actualMd5 = storeAndCalculateMd5(mergedFile, storageKey, contentType);
+            // 分片按序直接流入 MinIO，同时计算 MD5；不再生成一个等大的 merged 文件。
+            String finalName = resolveAvailableName(parentId, fileName);
+            storageKey = createObjectKey(finalName);
+            String actualMd5 = storeChunksAndCalculateMd5(
+                    chunkDir, totalChunks, storageKey, fileSize, contentType);
             Asserts.isTrue(fileMd5 == null || fileMd5.isBlank() || fileMd5.equalsIgnoreCase(actualMd5),
                     "文件校验失败，请重新上传");
 
-            // 3. 秒传检测
+            // 初始化后另一上传刚好先完成时，复用它的处理结果。
             if (!actualMd5.isEmpty()) {
                 FileExample md5Example = new FileExample();
                 md5Example.createCriteria().andMd5EqualTo(actualMd5).andIsFolderEqualTo((byte) 0)
@@ -201,29 +260,19 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 var dupList = fileMapper.selectByExample(md5Example);
                 if (!dupList.isEmpty()) {
                     File existing = dupList.get(0);
-                    File dup = new File();
-                    dup.setUploaderId(userId);
-                    dup.setParentId(parentId);
-                    dup.setFileName(finalName);
+                    File dup = createDuplicateRecord(existing, userId, parentId, finalName);
+                    // 本次对象已完整上传，保留独立 key。
                     dup.setStorageKey(storageKey);
-                    dup.setFileSize(existing.getFileSize());
-                    dup.setContentType(existing.getContentType());
-                    dup.setMd5(actualMd5);
-                    dup.setFileType(existing.getFileType());
-                    dup.setThumbnailKey(existing.getThumbnailKey());
-                    dup.setPreviewKey(existing.getPreviewKey());
-                    dup.setIsFolder((byte) 0);
-                    dup.setProcessStatus((byte) 3);
-                    dup.setCreateTime(new Date());
-                    dup.setFilePath(buildPath(finalName, parentId));
                     fileMapper.insert(dup);
+                    insertedRecord = dup;
+                    Map<String, Object> result = cacheCompletedResult(uploadId, dup);
                     cleanup(uploadId, chunkDir);
+                    esIndexService.index(dup);
                     broadcastCreated(dup);
-                    return toFileResponse(dup);
+                    return result;
                 }
             }
 
-            // 4. 创建 DB 记录 + 发送处理消息
             File record = new File();
             record.setUploaderId(userId);
             record.setParentId(parentId);
@@ -238,15 +287,24 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             record.setCreateTime(new Date());
             record.setFilePath(buildPath(finalName, parentId));
             fileMapper.insert(record);
+            insertedRecord = record;
 
-            fileProcessSender.sendProcess(new FileProcessMessage(record.getId(), FileProcessMessage.Stage.UPLOADED));
+            Map<String, Object> result = cacheCompletedResult(uploadId, record);
+            try {
+                fileProcessSender.sendProcess(
+                        new FileProcessMessage(record.getId(), FileProcessMessage.Stage.UPLOADED));
+            } catch (Exception messageError) {
+                // DB 与 MinIO 已一致，保留文件让 PendingFileProcessTask 补发，避免悬空记录。
+                log.warn("处理消息发送失败，文件已保存并将由补偿任务重发: fileId={}",
+                        record.getId(), messageError);
+            }
             cleanup(uploadId, chunkDir);
             broadcastCreated(record);
-            return toFileResponse(record);
+            return result;
 
         } catch (Exception e) {
             log.error("合并完成上传失败: uploadId={}", uploadId, e);
-            if (storageKey != null) {
+            if (insertedRecord == null && storageKey != null) {
                 try { minioUtil.removeObject(storageKey); } catch (Exception ex) { log.warn("回滚 MinIO 对象失败: {}", storageKey, ex); }
             }
             if (e instanceof RuntimeException runtimeException) {
@@ -264,6 +322,12 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     @Override
     public Map<String, Object> getStatus(String uploadId) {
         String hk = hashKey(uploadId);
+        Map<String, Object> completed = getCompletedResult(uploadId, getCurrentUserId());
+        if (completed != null) {
+            completed.put("uploadId", uploadId);
+            completed.put("status", "completed");
+            return completed;
+        }
         Asserts.isTrue(Boolean.TRUE.equals(redisService.hasKey(hk)), "上传会话不存在或已过期");
 
         Map<Object, Object> meta = redisService.hGetAll(hk);
@@ -345,8 +409,10 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Asserts.isTrue(fileName.length() <= MAX_FILE_NAME_LENGTH,
                 "文件名过长（最大" + MAX_FILE_NAME_LENGTH + "字符）");
         Asserts.isTrue(fileSize > 0, "文件大小无效");
+        Asserts.isTrue(fileSize <= maxFileSize, "文件超过服务器允许的最大大小");
         Asserts.isTrue(fileMd5 != null && !fileMd5.isBlank(), "文件 MD5 不能为空");
-        Asserts.isTrue(chunkSize > 0 && totalChunks > 0, "分片参数无效");
+        Asserts.isTrue(chunkSize > 0 && chunkSize <= MAX_CHUNK_SIZE, "分片大小无效");
+        Asserts.isTrue(totalChunks > 0 && totalChunks <= MAX_TOTAL_CHUNKS, "分片数量无效");
         long expectedChunks = (fileSize + chunkSize - 1) / chunkSize;
         Asserts.isTrue(expectedChunks == totalChunks, "分片数量与文件大小不匹配");
         validateParentFolder(parentId);
@@ -377,25 +443,143 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 "上传会话参数不一致，请重新上传");
     }
 
-    private void mergeChunks(Path chunkDir, int totalChunks, Path mergedFile) throws IOException {
-        try (OutputStream out = Files.newOutputStream(mergedFile)) {
-            for (int i = 0; i < totalChunks; i++) {
-                Path chunk = chunkDir.resolve(String.valueOf(i));
-                if (!Files.exists(chunk)) {
-                    throw new IOException("缺少分片: " + i);
-                }
-                Files.copy(chunk, out);
-            }
+    private String storeChunksAndCalculateMd5(Path chunkDir, int totalChunks, String objectKey,
+                                              long fileSize, String contentType) throws Exception {
+        for (int i = 0; i < totalChunks; i++) {
+            Asserts.isTrue(Files.isRegularFile(chunkDir.resolve(String.valueOf(i))),
+                    "缺少分片: " + i);
         }
-    }
-
-    private String storeAndCalculateMd5(Path file, String objectKey, String contentType) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("MD5");
-        try (InputStream in = Files.newInputStream(file);
+        try (InputStream in = new ChunkSequenceInputStream(chunkDir, totalChunks);
              DigestInputStream dis = new DigestInputStream(in, digest)) {
-            minioUtil.putObject(objectKey, dis, Files.size(file), contentType);
+            minioUtil.putObject(objectKey, dis, fileSize, contentType);
         }
         return java.util.HexFormat.of().formatHex(digest.digest());
+    }
+
+    private File findActiveByMd5(String md5, long fileSize) {
+        FileExample example = new FileExample();
+        example.createCriteria().andMd5EqualTo(md5).andFileSizeEqualTo(fileSize)
+                .andIsFolderEqualTo((byte) 0).andDeleteTimeIsNull();
+        List<File> files = fileMapper.selectByExample(example);
+        return files.isEmpty() ? null : files.get(0);
+    }
+
+    private File createDuplicateRecord(File existing, Long userId, Long parentId, String requestedName) {
+        String finalName = resolveAvailableName(parentId, requestedName);
+        File dup = new File();
+        dup.setUploaderId(userId);
+        dup.setParentId(parentId);
+        dup.setFileName(finalName);
+        dup.setStorageKey(existing.getStorageKey());
+        dup.setFileSize(existing.getFileSize());
+        dup.setContentType(existing.getContentType());
+        dup.setMd5(existing.getMd5());
+        dup.setFileType(existing.getFileType());
+        dup.setThumbnailKey(existing.getThumbnailKey());
+        dup.setPreviewKey(existing.getPreviewKey());
+        dup.setOriginText(existing.getOriginText());
+        dup.setIsFolder((byte) 0);
+        dup.setProcessStatus((byte) 3);
+        dup.setCreateTime(new Date());
+        dup.setFilePath(buildPath(finalName, parentId));
+        return dup;
+    }
+
+    private String resolveAvailableName(Long parentId, String requestedName) {
+        if (!activeNameExists(parentId, requestedName)) return requestedName;
+        String body = requestedName;
+        String ext = "";
+        int dot = requestedName.lastIndexOf('.');
+        if (dot > 0) {
+            body = requestedName.substring(0, dot);
+            ext = requestedName.substring(dot);
+        }
+        int counter = 1;
+        String candidate;
+        do {
+            candidate = body + " (" + counter++ + ")" + ext;
+        } while (activeNameExists(parentId, candidate));
+        return candidate;
+    }
+
+    private String createObjectKey(String fileName) {
+        String ext = "";
+        int dot = fileName.lastIndexOf('.');
+        if (dot > 0 && dot < fileName.length() - 1) {
+            ext = fileName.substring(dot);
+        }
+        return "objects/" + UUID.randomUUID() + ext;
+    }
+
+    private Map<String, Object> cacheCompletedResult(String uploadId, File file) {
+        Map<String, Object> cached = toFileResponse(file);
+        cached.put("_userId", file.getUploaderId());
+        redisService.set(resultKey(uploadId), cached, expireHours * 3600L);
+        cached.remove("_userId");
+        return cached;
+    }
+
+    private Map<String, Object> getCompletedResult(String uploadId, Long userId) {
+        Object value = redisService.get(resultKey(uploadId));
+        if (!(value instanceof Map<?, ?> raw)) return null;
+        Object owner = raw.get("_userId");
+        if (owner != null && !String.valueOf(userId).equals(String.valueOf(owner))) return null;
+        Map<String, Object> result = new LinkedHashMap<>();
+        raw.forEach((key, item) -> {
+            if (!"_userId".equals(String.valueOf(key))) {
+                result.put(String.valueOf(key), item);
+            }
+        });
+        return result;
+    }
+
+    /** 任意时刻只打开一个分片，避免分片数较多时耗尽文件描述符。 */
+    private static final class ChunkSequenceInputStream extends InputStream {
+        private final Path chunkDir;
+        private final int totalChunks;
+        private int nextIndex;
+        private InputStream current;
+
+        private ChunkSequenceInputStream(Path chunkDir, int totalChunks) {
+            this.chunkDir = chunkDir;
+            this.totalChunks = totalChunks;
+        }
+
+        private boolean ensureCurrent() throws IOException {
+            if (current == null && nextIndex < totalChunks) {
+                current = Files.newInputStream(chunkDir.resolve(String.valueOf(nextIndex++)));
+            }
+            return current != null;
+        }
+
+        @Override
+        public int read() throws IOException {
+            while (ensureCurrent()) {
+                int value = current.read();
+                if (value >= 0) return value;
+                current.close();
+                current = null;
+            }
+            return -1;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            while (ensureCurrent()) {
+                int read = current.read(buffer, offset, length);
+                if (read >= 0) return read;
+                current.close();
+                current = null;
+            }
+            return -1;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (current != null) current.close();
+            current = null;
+        }
     }
 
     /** 与 FileServiceImpl.resolveRelativePath 一致：从 parent 链回溯构建 MinIO key */

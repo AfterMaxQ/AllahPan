@@ -6,13 +6,16 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.elasticsearch.annotations.Document;
 import org.springframework.data.elasticsearch.annotations.Field;
 import org.springframework.data.elasticsearch.annotations.FieldType;
+import org.springframework.data.elasticsearch.annotations.InnerField;
+import org.springframework.data.elasticsearch.annotations.MultiField;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import org.springframework.data.elasticsearch.annotations.Setting;
 
-@Document(indexName = "allahpan_files")
+@Document(indexName = EsFile.INDEX_NAME)
 @Setting(shards = 1, replicas = 0)
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class EsFile {
+    public static final String INDEX_NAME = "allahpan_files_v2";
 
     @Id
     private Long fileId;
@@ -23,7 +26,11 @@ public class EsFile {
     @Field(type = FieldType.Keyword)
     private String fileType;
 
-    @Field(type = FieldType.Text, analyzer = "ik_max_word")
+    @MultiField(
+            mainField = @Field(type = FieldType.Text, analyzer = "ik_max_word",
+                    searchAnalyzer = "ik_smart"),
+            otherFields = @InnerField(suffix = "char", type = FieldType.Text,
+                    analyzer = "standard"))
     private String originText;
 
     @Field(type = FieldType.Text, analyzer = "ik_max_word")

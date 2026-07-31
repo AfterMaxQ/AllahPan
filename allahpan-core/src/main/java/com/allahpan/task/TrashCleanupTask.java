@@ -49,17 +49,10 @@ public class TrashCleanupTask {
             return;
         }
 
-        int success = 0;
-        int fail = 0;
-        for (File file : expiredFiles) {
-            try {
-                fileService.permanentDelete(file.getId());
-                success++;
-            } catch (Exception e) {
-                log.error("清理垃圾文件失败: fileId={}, fileName={}", file.getId(), file.getFileName(), e);
-                fail++;
-            }
-        }
+        var result = fileService.batchPermanentDelete(
+                expiredFiles.stream().map(File::getId).toList());
+        int success = ((Number) result.getOrDefault("deletedCount", 0)).intValue();
+        int fail = ((List<?>) result.getOrDefault("failedIds", List.of())).size();
 
         log.info("垃圾站清理完成: 总计={}, 成功={}, 失败={}", expiredFiles.size(), success, fail);
         log.info("========== 垃圾站定时清理结束 ==========");

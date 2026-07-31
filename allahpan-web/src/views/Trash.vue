@@ -21,54 +21,70 @@
     </div>
 
     <el-skeleton :rows="6" animated :loading="loading">
-      <!-- 桌面端表格 -->
-      <div v-if="!isMobile && trashList.length > 0" class="trash-table">
-        <el-table
-          :data="trashList"
-          style="width: 100%"
-          @selection-change="handleSelectionChange"
-          ref="tableRef"
-        >
-          <el-table-column type="selection" width="45" />
-          <el-table-column label="名称">
-            <template #default="{ row }">
+      <template v-if="trashList.length > 0">
+        <!-- 桌面端表格 -->
+        <div v-if="!isMobile" class="trash-table">
+          <el-table
+            :data="trashList"
+            style="width: 100%"
+            @selection-change="handleSelectionChange"
+            ref="tableRef"
+          >
+            <el-table-column type="selection" width="45" />
+            <el-table-column label="名称">
+              <template #default="{ row }">
+                <div class="file-name-cell">
+                  <FileIcon
+                    :is-folder="row.isFolder === 1"
+                    :file-type="row.fileType"
+                    :file-name="row.fileName"
+                    :size="32"
+                  />
+                  <span class="file-name">{{ row.fileName }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="大小" width="110">
+              <template #default="{ row }">
+                {{ row.isFolder === 1 ? '-' : formatBytes(row.fileSize) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="删除时间" width="170">
+              <template #default="{ row }">
+                {{ formatDate(row.deleteTime) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="180" align="right">
+              <template #default="{ row }">
+                <el-button type="primary" size="small" plain @click="handleRestore(row)">恢复</el-button>
+                <el-button type="danger" size="small" plain @click="handlePermanentDelete(row)">彻底删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <!-- 移动端卡片列表 -->
+          <div v-else class="trash-cards">
+          <div v-for="row in trashList" :key="row.id" class="trash-card">
+            <FileIcon
+              :is-folder="row.isFolder === 1"
+              :file-type="row.fileType"
+              :file-name="row.fileName"
+              :size="40"
+            />
+            <div class="trash-card-body">
               <span class="file-name">{{ row.fileName }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="大小" width="110">
-            <template #default="{ row }">
-              {{ row.isFolder === 1 ? '-' : formatBytes(row.fileSize) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="删除时间" width="170">
-            <template #default="{ row }">
-              {{ formatDate(row.deleteTime) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="180" align="right">
-            <template #default="{ row }">
+              <div class="trash-meta">
+                <span>{{ row.isFolder === 1 ? '-' : formatBytes(row.fileSize) }}</span>
+                <span>{{ formatDate(row.deleteTime) }}</span>
+              </div>
+            </div>
+            <div class="trash-card-actions">
               <el-button type="primary" size="small" plain @click="handleRestore(row)">恢复</el-button>
-              <el-button type="danger" size="small" plain @click="handlePermanentDelete(row)">彻底删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-      <!-- 移动端卡片列表 -->
-      <div v-if="isMobile && trashList.length > 0" class="trash-cards">
-        <div v-for="row in trashList" :key="row.id" class="trash-card">
-          <div class="trash-card-body">
-            <span class="file-name">{{ row.fileName }}</span>
-            <div class="trash-meta">
-              <span>{{ row.isFolder === 1 ? '-' : formatBytes(row.fileSize) }}</span>
-              <span>{{ formatDate(row.deleteTime) }}</span>
+              <el-button type="danger" size="small" plain @click="handlePermanentDelete(row)">删除</el-button>
             </div>
           </div>
-          <div class="trash-card-actions">
-            <el-button type="primary" size="small" plain @click="handleRestore(row)">恢复</el-button>
-            <el-button type="danger" size="small" plain @click="handlePermanentDelete(row)">删除</el-button>
-          </div>
         </div>
-      </div>
+      </template>
       <EmptyState
         v-else-if="!loading"
         title="垃圾站是空的"
@@ -79,11 +95,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onBeforeUnmount, onMounted } from 'vue'
 import { useResponsive } from '@/composables/useResponsive'
 import { getTrashList, restoreFile, permanentDelete, emptyTrash, batchPermanentDelete } from '@/api/file'
 import { formatBytes, formatDate } from '@/utils/format'
 import EmptyState from '@/components/common/EmptyState.vue'
+import FileIcon from '@/components/common/FileIcon.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const { isMobile } = useResponsive()
@@ -92,16 +109,26 @@ const loading = ref(false)
 const trashList = ref([])
 const selectedRows = ref([])
 const tableRef = ref(null)
+let trashController = null
+let trashRequestId = 0
 
 const fetchTrash = async () => {
+  const requestId = ++trashRequestId
+  trashController?.abort()
+  trashController = new AbortController()
   loading.value = true
   try {
-    trashList.value = await getTrashList()
-    selectedRows.value = []
+    const result = await getTrashList(1, 50, trashController.signal)
+    if (requestId === trashRequestId) {
+      trashList.value = result
+      selectedRows.value = []
+    }
   } catch (e) {
-    console.error('加载垃圾站失败', e)
+    if (e?.code !== 'ERR_CANCELED' && e?.name !== 'AbortError') {
+      console.error('加载垃圾站失败', e)
+    }
   } finally {
-    loading.value = false
+    if (requestId === trashRequestId) loading.value = false
   }
 }
 
@@ -163,6 +190,10 @@ const handleEmptyTrash = () => {
 }
 
 onMounted(fetchTrash)
+onBeforeUnmount(() => {
+  trashRequestId++
+  trashController?.abort()
+})
 </script>
 
 <style scoped>
@@ -209,6 +240,12 @@ onMounted(fetchTrash)
   font-weight: 500;
   color: var(--ap-text-main);
 }
+.file-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
 
 @media (max-width: 768px) {
   .trash-cards {
@@ -221,8 +258,13 @@ onMounted(fetchTrash)
     border: 1px solid var(--ap-border-color);
     border-radius: 12px;
     padding: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
   .trash-card-body {
+    min-width: 0;
+    flex: 1;
     margin-bottom: 10px;
   }
   .trash-meta {
@@ -236,6 +278,7 @@ onMounted(fetchTrash)
     display: flex;
     gap: 8px;
     justify-content: flex-end;
+    flex-wrap: wrap;
   }
   .page-header {
     margin-bottom: 14px;

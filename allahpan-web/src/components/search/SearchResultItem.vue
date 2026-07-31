@@ -5,6 +5,7 @@
         <FileIcon
           :is-folder="false"
           :file-type="item.fileType"
+          :file-name="item.fileName"
           :size="32"
         />
         <span class="name-highlight" v-html="item.fileNameHighlight || item.fileName" />

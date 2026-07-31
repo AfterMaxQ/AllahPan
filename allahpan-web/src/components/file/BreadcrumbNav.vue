@@ -14,23 +14,32 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { useFileStore } from '@/stores/file'
 import { getFileTree } from '@/api/file'
 
 const fileStore = useFileStore()
 const breadcrumbs = ref([{ id: 0, fileName: '根目录' }])
+let treeController = null
+let treeRequestId = 0
 
 const fetchPathTree = async (folderId) => {
+  const requestId = ++treeRequestId
+  treeController?.abort()
   if (folderId === 0) {
     breadcrumbs.value = [{ id: 0, fileName: '根目录' }]
     return
   }
+  treeController = new AbortController()
   try {
-    const tree = await getFileTree(folderId)
-    breadcrumbs.value = [{ id: 0, fileName: '根目录' }, ...tree]
+    const tree = await getFileTree(folderId, treeController.signal)
+    if (requestId === treeRequestId && folderId === fileStore.currentFolderId) {
+      breadcrumbs.value = [{ id: 0, fileName: '根目录' }, ...tree]
+    }
   } catch (e) {
-    console.error('获取面包屑失败', e)
+    if (e?.code !== 'ERR_CANCELED' && e?.name !== 'AbortError') {
+      console.error('获取面包屑失败', e)
+    }
   }
 }
 
@@ -39,6 +48,11 @@ watch(() => fileStore.currentFolderId, fetchPathTree, { immediate: true })
 const navigateTo = (folderId) => {
   fileStore.navigateTo(folderId)
 }
+
+onBeforeUnmount(() => {
+  treeRequestId++
+  treeController?.abort()
+})
 </script>
 
 <style scoped>
