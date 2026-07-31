@@ -71,6 +71,8 @@ mail:
 
 
 allahpan:
+  register:
+    enabled: false        # 暂停注册；开放注册改回 true
   chunk:
     temp-dir: ${java.io.tmpdir}/allahpan-chunks
     expire-hours: 24

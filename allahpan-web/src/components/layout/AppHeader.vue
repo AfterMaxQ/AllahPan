@@ -76,22 +76,22 @@ const onSearchBlur = () => {
 
 <style scoped>
 .app-header {
-  height: 60px;
+  min-height: 48px;
   background-color: var(--ap-bg-card);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 6px 16px;
   border-bottom: 1px solid var(--ap-border-color);
   flex-shrink: 0;
 }
 .app-header.mobile {
-  height: 48px;
-  padding: 0 12px;
+  min-height: 48px;
+  padding: 6px 12px;
 }
 .left {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   min-width: 0;
   flex: 1;

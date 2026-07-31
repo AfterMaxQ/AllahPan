@@ -23,4 +23,14 @@ public interface FileService {
     File moveFile(Long fileId, Long targetParentId);
     Map<String, Object> batchDelete(List<Long> fileIds);
 
+    /**
+     * 递归计算文件夹下所有子孙文件的总大小（字节）
+     */
+    Long getFolderSize(Long folderId);
+
+    /**
+     * 一键清空垃圾站，返回删除的文件数量
+     */
+    int emptyTrash();
+
 }

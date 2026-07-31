@@ -254,6 +254,32 @@ public class FileController {
         return CommonResult.success(null);
     }
 
+    @Operation(summary = "一键清空垃圾站")
+    @DeleteMapping("/trash/empty")
+    public CommonResult<?> emptyTrash() {
+        int count = fileService.emptyTrash();
+        return CommonResult.success(Map.of("deletedCount", count), "已清空 " + count + " 个文件");
+    }
+
+    @Operation(summary = "批量永久删除垃圾站文件")
+    @DeleteMapping("/trash/batch")
+    public CommonResult<?> batchPermanentDelete(@RequestBody Map<String, List<Long>> req) {
+        List<Long> ids = req.get("ids");
+        if (ids == null || ids.isEmpty()) {
+            return CommonResult.failed("请选择要删除的文件");
+        }
+        int count = 0;
+        for (Long id : ids) {
+            try {
+                fileService.permanentDelete(id);
+                count++;
+            } catch (Exception e) {
+                // 记录日志，继续处理其他文件
+            }
+        }
+        return CommonResult.success(Map.of("deletedCount", count), "已删除 " + count + " 个文件");
+    }
+
     // ========== 响应转换 ==========
 
     /**
@@ -269,7 +295,7 @@ public class FileController {
         map.put("filePath", f.getFilePath());
         map.put("storageKey", f.getStorageKey());
         map.put("fileType", f.getFileType());
-        map.put("fileSize", f.getFileSize());
+        map.put("fileSize", f.getIsFolder() == 1 ? fileService.getFolderSize(f.getId()) : f.getFileSize());
         map.put("contentType", f.getContentType());
         map.put("thumbnailKey", f.getThumbnailKey());
         if (f.getThumbnailKey() != null) {

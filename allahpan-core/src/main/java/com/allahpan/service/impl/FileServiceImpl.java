@@ -166,7 +166,7 @@ public class FileServiceImpl implements FileService {
         FileExample example = new FileExample();
         example.createCriteria().andParentIdEqualTo(parentId)
                 .andDeleteTimeIsNull();
-        example.setOrderByClause("is_folder DESC, create_time DESC");
+        example.setOrderByClause("is_folder DESC, FIELD(file_type, 'IMAGE', 'DOCUMENT', 'OTHER'), file_name REGEXP '^[0-9]' DESC, CAST(file_name AS UNSIGNED), file_name ASC");
         return fileMapper.selectByExample(example);
     }
 
@@ -750,5 +750,28 @@ public class FileServiceImpl implements FileService {
         result.put("deletedCount", deleted);
         result.put("failedIds", failedIds);
         return result;
+    }
+
+    @Override
+    public Long getFolderSize(Long folderId) {
+        Long size = fileMapper.getFolderSize(folderId);
+        return size != null ? size : 0L;
+    }
+
+    @Override
+    public int emptyTrash() {
+        FileExample example = new FileExample();
+        example.createCriteria().andDeleteTimeIsNotNull();
+        List<File> trashFiles = fileMapper.selectByExample(example);
+        int count = 0;
+        for (File f : trashFiles) {
+            try {
+                permanentDelete(f.getId());
+                count++;
+            } catch (Exception e) {
+                log.warn("清空垃圾站失败: fileId={}", f.getId(), e);
+            }
+        }
+        return count;
     }
 }

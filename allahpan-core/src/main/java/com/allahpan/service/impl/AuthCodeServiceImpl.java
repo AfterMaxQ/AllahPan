@@ -2,6 +2,7 @@ package com.allahpan.service.impl;
 
 import com.allahpan.common.api.ResultCode;
 import com.allahpan.common.exception.Asserts;
+import com.allahpan.common.service.BloomFilterService;
 import com.allahpan.common.service.RedisService;
 import com.allahpan.component.MailService;
 import com.allahpan.security.annotation.CacheException;
@@ -18,6 +19,11 @@ public class AuthCodeServiceImpl implements AuthCodeService {
     private RedisService redisService;
     @Autowired
     private MailService mailService;
+    @Autowired
+    private BloomFilterService bloomFilterService;
+
+    @Value("${allahpan.register.enabled:true}")
+    private boolean registerEnabled;
 
     @Value("${redis.database}")
     private String REDIS_DATABASE;
@@ -42,6 +48,11 @@ public class AuthCodeServiceImpl implements AuthCodeService {
 
     @Override
     public void sendCode(String email) {
+        // 注册暂停时，布隆过滤器判定一定未注册的邮箱直接拒绝，不发邮件
+        // （1% 误判放行的邮箱仍会被 loginByCode 最终拦截）
+        if (!registerEnabled && !bloomFilterService.mightContain(email)) {
+            Asserts.fail("注册功能已暂停，仅限已注册用户登录");
+        }
         // ① 检查发送频率
         if (redisService.hasKey(sendLimitKey(email))) {
             Asserts.fail(ResultCode.CODE_SEND_LIMIT);

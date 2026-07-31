@@ -1,9 +1,7 @@
 <template>
-  <el-breadcrumb class="breadcrumb" separator-icon="ArrowRight">
-    <el-breadcrumb-item
-      v-for="(node, index) in breadcrumbs"
-      :key="node.id"
-    >
+  <nav class="breadcrumb">
+    <template v-for="(node, index) in breadcrumbs" :key="node.id">
+      <span v-if="index > 0" class="sep">/</span>
       <a
         href="javascript:void(0)"
         :class="{ active: index === breadcrumbs.length - 1 }"
@@ -11,8 +9,8 @@
       >
         {{ index === 0 ? '根目录' : node.fileName }}
       </a>
-    </el-breadcrumb-item>
-  </el-breadcrumb>
+    </template>
+  </nav>
 </template>
 
 <script setup>
@@ -39,13 +37,19 @@ const fetchPathTree = async (folderId) => {
 watch(() => fileStore.currentFolderId, fetchPathTree, { immediate: true })
 
 const navigateTo = (folderId) => {
-  fileStore.setCurrentFolder(folderId)
+  fileStore.navigateTo(folderId)
 }
 </script>
 
 <style scoped>
 .breadcrumb {
   font-size: 14px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+.breadcrumb .sep {
+  color: #e74c3c;
+  user-select: none;
 }
 .breadcrumb a {
   color: var(--ap-text-sub);

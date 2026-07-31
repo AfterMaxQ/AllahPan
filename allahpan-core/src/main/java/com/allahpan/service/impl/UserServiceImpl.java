@@ -3,6 +3,7 @@ package com.allahpan.service.impl;
 import java.util.Date;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,9 @@ public class UserServiceImpl implements UserService {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Value("${allahpan.register.enabled:true}")
+    private boolean registerEnabled;
+
     @Override
     public User loginByCode(String email) {
         UserExample example = new UserExample();
@@ -35,6 +39,7 @@ public class UserServiceImpl implements UserService {
         User user;
         if (list.isEmpty()) {
             // 自动注册
+            Asserts.isTrue(registerEnabled, "注册功能已暂停，仅限已注册用户登录");
             user = new User();
             user.setEmail(email);
             user.setNickname(email.substring(0, email.indexOf('@')));

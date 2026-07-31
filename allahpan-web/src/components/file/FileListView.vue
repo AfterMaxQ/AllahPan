@@ -25,7 +25,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="大小" :width="isMobile ? undefined : 110" align="center">
+      <el-table-column v-if="!isMobile" label="大小" width="110" align="center">
         <template #default="{ row }">
           {{ row.isFolder === 1 ? '-' : formatBytes(row.fileSize) }}
         </template>

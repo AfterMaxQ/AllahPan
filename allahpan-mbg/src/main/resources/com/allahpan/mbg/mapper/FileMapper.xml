@@ -479,4 +479,21 @@
       delete_time = #{deleteTime,jdbcType=TIMESTAMP}
     where id = #{id,jdbcType=BIGINT}
   </update>
+
+  <!-- 递归计算文件夹大小（包含所有子孙文件） -->
+  <select id="getFolderSize" resultType="java.lang.Long">
+    WITH RECURSIVE folder_tree AS (
+      SELECT id, parent_id, file_size, is_folder
+      FROM files
+      WHERE id = #{folderId,jdbcType=BIGINT} AND delete_time IS NULL
+      UNION ALL
+      SELECT f.id, f.parent_id, f.file_size, f.is_folder
+      FROM files f
+      INNER JOIN folder_tree ft ON f.parent_id = ft.id
+      WHERE f.delete_time IS NULL
+    )
+    SELECT COALESCE(SUM(file_size), 0)
+    FROM folder_tree
+    WHERE is_folder = 0
+  </select>
 </mapper>

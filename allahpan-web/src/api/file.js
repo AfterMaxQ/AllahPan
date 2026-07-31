@@ -182,3 +182,13 @@ export function restoreFile(fileId) {
 export function permanentDelete(fileId) {
   return request.delete(`/file/trash/${fileId}`)
 }
+
+// 一键清空垃圾站
+export function emptyTrash() {
+  return request.delete('/file/trash/empty')
+}
+
+// 批量永久删除垃圾站文件
+export function batchPermanentDelete(ids) {
+  return request.delete('/file/trash/batch', { data: { ids } })
+}

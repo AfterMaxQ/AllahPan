@@ -1,14 +1,35 @@
 <template>
   <div class="trash-page">
     <div class="page-header">
-      <h2>垃圾站</h2>
+      <div class="header-top">
+        <h2>垃圾站</h2>
+        <el-button
+          v-if="trashList.length > 0"
+          type="danger"
+          @click="handleEmptyTrash"
+        >
+          一键清空
+        </el-button>
+      </div>
       <p>删除的文件会保留在这里，可以随时恢复</p>
+    </div>
+
+    <!-- 批量操作栏 -->
+    <div v-if="selectedRows.length > 0" class="batch-bar">
+      <span>已选择 {{ selectedRows.length }} 项</span>
+      <el-button type="danger" @click="handleBatchDelete">彻底删除选中</el-button>
     </div>
 
     <el-skeleton :rows="6" animated :loading="loading">
       <!-- 桌面端表格 -->
       <div v-if="!isMobile && trashList.length > 0" class="trash-table">
-        <el-table :data="trashList" style="width: 100%">
+        <el-table
+          :data="trashList"
+          style="width: 100%"
+          @selection-change="handleSelectionChange"
+          ref="tableRef"
+        >
+          <el-table-column type="selection" width="45" />
           <el-table-column label="名称">
             <template #default="{ row }">
               <span class="file-name">{{ row.fileName }}</span>
@@ -60,7 +81,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useResponsive } from '@/composables/useResponsive'
-import { getTrashList, restoreFile, permanentDelete } from '@/api/file'
+import { getTrashList, restoreFile, permanentDelete, emptyTrash, batchPermanentDelete } from '@/api/file'
 import { formatBytes, formatDate } from '@/utils/format'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -69,16 +90,23 @@ const { isMobile } = useResponsive()
 
 const loading = ref(false)
 const trashList = ref([])
+const selectedRows = ref([])
+const tableRef = ref(null)
 
 const fetchTrash = async () => {
   loading.value = true
   try {
     trashList.value = await getTrashList()
+    selectedRows.value = []
   } catch (e) {
     console.error('加载垃圾站失败', e)
   } finally {
     loading.value = false
   }
+}
+
+const handleSelectionChange = (rows) => {
+  selectedRows.value = rows
 }
 
 const handleRestore = async (file) => {
@@ -103,6 +131,37 @@ const handlePermanentDelete = (file) => {
   }).catch(() => {})
 }
 
+const handleBatchDelete = () => {
+  const names = selectedRows.value.map(r => r.fileName).slice(0, 5).join('、')
+  const suffix = selectedRows.value.length > 5 ? ` 等 ${selectedRows.value.length} 项` : ''
+  ElMessageBox.confirm(
+    `「${names}${suffix}」将被永久删除，无法恢复。确定继续吗？`,
+    '不可逆操作',
+    { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'error' }
+  ).then(async () => {
+    try {
+      const ids = selectedRows.value.map(r => r.id)
+      const res = await batchPermanentDelete(ids)
+      ElMessage.success(res?.message || `已删除 ${res?.deletedCount || ids.length} 个文件`)
+      fetchTrash()
+    } catch (e) { /* 拦截器统一处理 */ }
+  }).catch(() => {})
+}
+
+const handleEmptyTrash = () => {
+  ElMessageBox.confirm(
+    '垃圾站中所有文件将被永久删除，无法恢复。确定清空吗？',
+    '不可逆操作',
+    { confirmButtonText: '确定清空', cancelButtonText: '取消', type: 'error' }
+  ).then(async () => {
+    try {
+      const res = await emptyTrash()
+      ElMessage.success(res?.message || '垃圾站已清空')
+      fetchTrash()
+    } catch (e) { /* 拦截器统一处理 */ }
+  }).catch(() => {})
+}
+
 onMounted(fetchTrash)
 </script>
 
@@ -113,8 +172,13 @@ onMounted(fetchTrash)
 .page-header {
   margin-bottom: 24px;
 }
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 .page-header h2 {
-  margin: 0 0 4px 0;
+  margin: 0;
   color: var(--ap-text-main);
   font-size: 20px;
 }
@@ -122,6 +186,18 @@ onMounted(fetchTrash)
   color: var(--ap-text-sub);
   margin: 0;
   font-size: 14px;
+}
+.batch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  background: var(--ap-bg-card);
+  border: 1px solid var(--ap-border-color);
+  border-radius: 10px;
+  font-size: 14px;
+  color: var(--ap-text-main);
 }
 .trash-table {
   background-color: var(--ap-bg-card);

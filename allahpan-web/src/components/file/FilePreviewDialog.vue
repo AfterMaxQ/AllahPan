@@ -22,6 +22,11 @@
         <video :src="mediaUrl" controls autoplay class="preview-video" />
       </div>
 
+      <!-- PDF 预览 -->
+      <div v-else-if="isPdf" class="preview-center" style="background: transparent; padding: 0;">
+        <iframe :src="mediaUrl" class="preview-pdf" />
+      </div>
+
       <!-- 文档预览：已提取文字时直接展示文本内容 -->
       <div v-else-if="file?.fileType === 'DOCUMENT' && ocrText" class="preview-doc" style="flex-direction: column; align-items: stretch; width: 100%; padding: 0;">
         <div class="doc-text-preview">
@@ -61,7 +66,7 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Document, Cpu, ArrowRight } from '@element-plus/icons-vue'
 import { getFileDetail, createPreviewObjectUrl, createThumbnailObjectUrl, createFileObjectUrl } from '@/api/file'
 import { useTransferStore } from '@/stores/transfer'
@@ -74,6 +79,10 @@ const mediaUrl = ref('')
 const ocrText = ref('')
 const ocrExpanded = ref(false)
 const transferStore = useTransferStore()
+
+const isPdf = computed(() => {
+  return file.value?.fileName?.toLowerCase().endsWith('.pdf')
+})
 let previewController = null
 
 const revokeMediaUrl = () => {
@@ -120,6 +129,8 @@ const open = async (targetFile) => {
     if (detail.fileType === 'IMAGE') {
       mediaUrl.value = await loadImagePreview(targetFile.id, previewController.signal)
     } else if (detail.fileType === 'VIDEO') {
+      mediaUrl.value = await createFileObjectUrl(targetFile.id, previewController.signal)
+    } else if (detail.fileName?.toLowerCase().endsWith('.pdf')) {
       mediaUrl.value = await createFileObjectUrl(targetFile.id, previewController.signal)
     }
   } catch (e) {
@@ -178,6 +189,12 @@ defineExpose({ open })
   width: 100%;
   max-height: 55vh;
   outline: none;
+}
+.preview-pdf {
+  width: 100%;
+  height: 70vh;
+  border: none;
+  border-radius: 8px;
 }
 .preview-doc {
   display: flex;

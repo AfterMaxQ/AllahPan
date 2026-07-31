@@ -22,7 +22,6 @@
         </el-button>
       </template>
       <template v-else>
-        <span class="mobile-title">文件</span>
         <el-button
           v-if="selectedCount > 0"
           type="danger"
@@ -35,25 +34,11 @@
         </el-button>
       </template>
     </div>
-    <div class="right">
-      <el-radio-group
-        :model-value="fileStore.viewMode"
-        size="small"
-        @change="fileStore.toggleViewMode"
-      >
-        <el-radio-button value="grid">
-          <el-icon><Grid /></el-icon>
-        </el-radio-button>
-        <el-radio-button value="list">
-          <el-icon><List /></el-icon>
-        </el-radio-button>
-      </el-radio-group>
-    </div>
   </div>
 </template>
 
 <script setup>
-import { Upload, FolderAdd, FolderOpened, Delete, Grid, List } from '@element-plus/icons-vue'
+import { Upload, FolderAdd, FolderOpened, Delete } from '@element-plus/icons-vue'
 import { useFileStore } from '@/stores/file'
 import { useResponsive } from '@/composables/useResponsive'
 
@@ -85,10 +70,5 @@ const { isMobile } = useResponsive()
   display: flex;
   gap: 10px;
   align-items: center;
-}
-.mobile-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--ap-text-main);
 }
 </style>

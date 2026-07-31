@@ -35,4 +35,9 @@ public interface FileMapper {
     int updateByPrimaryKeyWithBLOBs(File row);
 
     int updateByPrimaryKey(File row);
+
+    /**
+     * 递归计算文件夹下所有文件的总大小（字节）
+     */
+    Long getFolderSize(Long folderId);
 }

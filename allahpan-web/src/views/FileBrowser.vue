@@ -1,7 +1,8 @@
 <template>
   <div class="file-browser">
-    <!-- 工具栏 -->
+    <!-- 工具栏（移动端隐藏，用FAB代替） -->
     <FileToolbar
+      v-if="!isMobile"
       :selected-count="selectedFiles.length"
       @upload="triggerUpload"
       @upload-folder="triggerUploadFolder"
@@ -211,7 +212,7 @@ const handleListSelection = (selection) => {
 // 打开文件/文件夹
 const handleItemOpen = (file) => {
   if (file.isFolder === 1) {
-    fileStore.setCurrentFolder(file.id)
+    fileStore.navigateTo(file.id)
   } else {
     previewDialogRef.value?.open(file)
   }
