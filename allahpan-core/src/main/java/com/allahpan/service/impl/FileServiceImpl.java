@@ -2,6 +2,7 @@ package com.allahpan.service.impl;
 
 import com.allahpan.common.api.ResultCode;
 import com.allahpan.common.exception.Asserts;
+import com.allahpan.common.log.StructuredLog;
 import com.allahpan.component.EsIndexService;
 import com.allahpan.component.MinioUtil;
 import com.allahpan.mbg.mapper.FileMapper;
@@ -73,7 +74,7 @@ public class FileServiceImpl implements FileService {
             md5 = storeAndCalculateMd5(file.getInputStream(), relativePath,
                     file.getSize(), contentType);
         } catch (Exception e) {
-            log.error("上传到 MinIO 失败: {}", relativePath, e);
+            log.error(StructuredLog.event("file.upload.failed", "errorType", e.getClass().getSimpleName()), e);
             Asserts.fail("文件保存失败，请重试");
             return null; // unreachable
         }
@@ -107,8 +108,11 @@ public class FileServiceImpl implements FileService {
                 try {
                     fileMapper.insert(dup);
                 } catch (Exception e) {
-                    log.error("秒传记录插入失败，清理 MinIO: {}", relativePath, e);
-                    try { minioUtil.removeObject(relativePath); } catch (Exception ex) { log.warn("清理失败", ex); }
+                    log.error(StructuredLog.event("file.upload.failed", "mode", "instant",
+                            "errorType", e.getClass().getSimpleName()), e);
+                    try { minioUtil.removeObject(relativePath); } catch (Exception ex) {
+                        log.warn(StructuredLog.event("storage.rollback.failed", "errorType", ex.getClass().getSimpleName()), ex);
+                    }
                     Asserts.fail("文件保存失败");
                 }
                 esIndexService.index(dup);
@@ -133,8 +137,10 @@ public class FileServiceImpl implements FileService {
         try {
             fileMapper.insert(record);
         } catch (Exception e) {
-            log.error("文件记录插入失败，清理 MinIO: {}", relativePath, e);
-            try { minioUtil.removeObject(relativePath); } catch (Exception ex) { log.warn("清理失败", ex); }
+            log.error(StructuredLog.event("file.upload.failed", "errorType", e.getClass().getSimpleName()), e);
+            try { minioUtil.removeObject(relativePath); } catch (Exception ex) {
+                log.warn(StructuredLog.event("storage.rollback.failed", "errorType", ex.getClass().getSimpleName()), ex);
+            }
             Asserts.fail("文件保存失败");
         }
         return record;
@@ -206,7 +212,8 @@ public class FileServiceImpl implements FileService {
         try {
             moveToTrash(file);
         } catch (Exception e) {
-            log.warn("无法将文件移至回收站: {} (id={})", file.getStorageKey(), file.getId(), e);
+            log.warn(StructuredLog.event("file.delete.degraded", "fileId", file.getId(),
+                    "dependency", "minio", "errorType", e.getClass().getSimpleName()), e);
         }
         // 从 ES 移除，避免搜索到已删除文件
         if (file.getIsFolder() == null || file.getIsFolder() != 1) {
@@ -228,7 +235,8 @@ public class FileServiceImpl implements FileService {
             try {
                 moveToTrash(child);
             } catch (Exception e) {
-                log.warn("无法将子文件移至回收站，MinIO 对象保留在 files bucket: {} (id={})", child.getStorageKey(), child.getId(), e);
+                log.warn(StructuredLog.event("file.delete.degraded", "fileId", child.getId(),
+                        "dependency", "minio", "errorType", e.getClass().getSimpleName()), e);
             }
             if (child.getIsFolder() == null || child.getIsFolder() != 1) {
                 esIndexService.delete(child.getId());
@@ -315,7 +323,8 @@ public class FileServiceImpl implements FileService {
         try {
             restoreFromTrash(file);
         } catch (Exception e) {
-            log.error("从 MinIO 回收站恢复失败，回滚 DB: {} (id={})", file.getStorageKey(), fileId, e);
+            log.error(StructuredLog.event("file.restore.failed", "fileId", fileId,
+                    "dependency", "minio", "errorType", e.getClass().getSimpleName()), e);
             file.setDeleteTime(oldDeleteTime);
             fileMapper.updateByPrimaryKey(file);
             Asserts.fail("文件恢复失败，请重试");
@@ -343,7 +352,8 @@ public class FileServiceImpl implements FileService {
             try {
                 restoreFromTrash(child);
             } catch (Exception e) {
-                log.error("子文件从 MinIO 回收站恢复失败，回滚 DB: {} (id={})", child.getStorageKey(), child.getId(), e);
+                log.error(StructuredLog.event("file.restore.failed", "fileId", child.getId(),
+                        "dependency", "minio", "errorType", e.getClass().getSimpleName()), e);
                 child.setDeleteTime(oldDeleteTime);
                 fileMapper.updateByPrimaryKey(child);
                 continue;
@@ -730,7 +740,8 @@ public class FileServiceImpl implements FileService {
                     minioUtil.removeFromTrash(storageKey);
                 }
             } catch (Exception e) {
-                log.warn("从 MinIO 回收站删除失败: {}", storageKey, e);
+                log.warn(StructuredLog.event("file.delete.failed", "dependency", "minio",
+                        "errorType", e.getClass().getSimpleName()), e);
             }
         }
 
@@ -740,7 +751,8 @@ public class FileServiceImpl implements FileService {
                     minioUtil.removeThumbnail(imageKey);
                 }
             } catch (Exception e) {
-                log.warn("删除 MinIO 预览图失败: {}", imageKey, e);
+                log.warn(StructuredLog.event("file.preview.delete_failed", "dependency", "minio",
+                        "errorType", e.getClass().getSimpleName()), e);
             }
         }
         return deleted;

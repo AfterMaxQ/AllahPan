@@ -15,12 +15,26 @@ public class FileProcessMessage implements Serializable {
     private Stage currentStage;
     private byte retryCount;
     private String lastError;
+    private String requestId;
+    private String operationId;
 
     public FileProcessMessage() {}
     public FileProcessMessage(Long fileId, Stage currentStage) {
         this.fileId = fileId;
         this.currentStage = currentStage;
         this.retryCount = 0;
+    }
+
+    public FileProcessMessage(Long fileId, Stage currentStage, String requestId, String operationId) {
+        this(fileId, currentStage);
+        this.requestId = requestId;
+        this.operationId = operationId;
+    }
+
+    public FileProcessMessage next(Stage stage) {
+        FileProcessMessage next = new FileProcessMessage(fileId, stage, requestId, operationId);
+        next.retryCount = 0;
+        return next;
     }
 
     public Long getFileId() { return fileId; }
@@ -31,4 +45,8 @@ public class FileProcessMessage implements Serializable {
     public void setRetryCount(byte retryCount) { this.retryCount = retryCount; }
     public String getLastError() { return lastError; }
     public void setLastError(String lastError) { this.lastError = lastError; }
+    public String getRequestId() { return requestId; }
+    public void setRequestId(String requestId) { this.requestId = requestId; }
+    public String getOperationId() { return operationId; }
+    public void setOperationId(String operationId) { this.operationId = operationId; }
 }

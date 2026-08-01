@@ -5,6 +5,7 @@ import com.allahpan.mbg.mapper.UserMapper;
 import com.allahpan.mbg.model.File;
 import com.allahpan.mbg.model.FileExample;
 import com.allahpan.mbg.model.User;
+import com.allahpan.common.log.LogContext;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +49,11 @@ public class EsIndexServiceImpl implements EsIndexService {
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
         factory.setReadTimeout(Duration.ofSeconds(10));
         this.restTemplate = new RestTemplate(factory);
+        this.restTemplate.getInterceptors().add((request, body, execution) -> {
+            if (LogContext.requestId() != null) request.getHeaders().set("X-Request-ID", LogContext.requestId());
+            if (LogContext.operationId() != null) request.getHeaders().set("X-Operation-ID", LogContext.operationId());
+            return execution.execute(request, body);
+        });
     }
 
     /**

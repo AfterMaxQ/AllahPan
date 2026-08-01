@@ -2,6 +2,8 @@ package com.allahpan.controller;
 
 import com.allahpan.common.api.CommonResult;
 import com.allahpan.common.exception.Asserts;
+import com.allahpan.common.log.LogContext;
+import com.allahpan.common.log.StructuredLog;
 import com.allahpan.component.EsIndexService;
 import com.allahpan.bo.AdminUserDetails;
 import io.swagger.v3.oas.annotations.Operation;
@@ -15,6 +17,10 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 
 import java.net.http.HttpClient;
 import java.net.URI;
@@ -59,12 +65,23 @@ public class SearchController {
             query += "&fileType=" + URLEncoder.encode(fileType, StandardCharsets.UTF_8);
         }
         URI uri = URI.create(searchServiceUrl + "/search?" + query);
-        LOG.info("搜索请求: keyword={}", keyword);
+        long started = System.nanoTime();
         try {
-            Map<String, Object> result = restTemplate.getForObject(uri, Map.class);
+            HttpHeaders headers = new HttpHeaders();
+            if (LogContext.requestId() != null) headers.set("X-Request-ID", LogContext.requestId());
+            if (LogContext.operationId() != null) headers.set("X-Operation-ID", LogContext.operationId());
+            ResponseEntity<Map> response = restTemplate.exchange(uri, HttpMethod.GET,
+                    new HttpEntity<>(headers), Map.class);
+            Map<String, Object> result = response.getBody();
+            Object total = result == null ? null : result.get("totalCount");
+            LOG.info(StructuredLog.event("search.completed", "keywordLength", keyword.length(),
+                    "fileType", fileType, "pageNum", pageNum, "pageSize", pageSize,
+                    "resultCount", total, "durationMs", elapsedMs(started)));
             return CommonResult.success(result);
         } catch (RestClientException e) {
-            LOG.warn("搜索服务不可用: {}", e.getMessage());
+            LOG.warn(StructuredLog.event("search.failed", "keywordLength", keyword.length(),
+                    "fileType", fileType, "errorType", e.getClass().getSimpleName(),
+                    "durationMs", elapsedMs(started)));
             return CommonResult.failed("搜索服务暂不可用，请稍后重试");
         }
     }
@@ -74,7 +91,7 @@ public class SearchController {
     public CommonResult<Map<String, Object>> rebuildIndex() {
         assertInitialAdmin();
         long count = esIndexService.rebuildAll();
-        LOG.info("搜索索引已重建: {} 个文件", count);
+        LOG.info(StructuredLog.event("search.index.rebuilt", "indexedCount", count));
         return CommonResult.success(Map.of("indexedCount", count));
     }
 
@@ -85,5 +102,9 @@ public class SearchController {
             return;
         }
         Asserts.fail("未授权");
+    }
+
+    private long elapsedMs(long started) {
+        return (System.nanoTime() - started) / 1_000_000;
     }
 }

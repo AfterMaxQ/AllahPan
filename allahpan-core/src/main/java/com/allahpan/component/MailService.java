@@ -1,5 +1,7 @@
 package com.allahpan.component;
 
+import com.allahpan.common.log.LogContext;
+import com.allahpan.common.log.StructuredLog;
 import jakarta.mail.*;
 import jakarta.mail.internet.*;
 import org.slf4j.Logger;
@@ -74,9 +76,10 @@ public class MailService {
 
             msg.setContent(html, "text/html; charset=utf-8");
             Transport.send(msg);
-            LOG.info("验证码邮件已发送: {} -> {}", from, toEmail);
+            LOG.info(StructuredLog.event("auth.code.sent", "recipient", LogContext.maskEmail(toEmail)));
         } catch (MessagingException e) {
-            LOG.error("邮件发送失败: {} -> {}", from, toEmail, e);
+            LOG.error(StructuredLog.event("auth.code.send_failed", "recipient", LogContext.maskEmail(toEmail),
+                    "errorType", e.getClass().getSimpleName()), e);
             throw new RuntimeException("邮件发送失败，请稍后重试", e);
         }
     }

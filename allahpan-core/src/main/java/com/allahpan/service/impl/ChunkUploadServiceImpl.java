@@ -3,6 +3,8 @@ package com.allahpan.service.impl;
 import com.allahpan.bo.AdminUserDetails;
 import com.allahpan.common.api.ResultCode;
 import com.allahpan.common.exception.Asserts;
+import com.allahpan.common.log.StructuredLog;
+import com.allahpan.common.log.LogContext;
 import com.allahpan.common.service.RedisService;
 import com.allahpan.component.FileProcessSender;
 import com.allahpan.component.EsIndexService;
@@ -137,7 +139,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             Asserts.isTrue(usableSpace > fileSize + Math.min(fileSize / 10, 1024L * 1024 * 1024),
                     "服务器临时空间不足，请稍后重试");
         } catch (IOException e) {
-            log.error("创建临时目录失败: {}", chunkDir, e);
+            log.error(StructuredLog.event("file.upload.chunk.init_failed",
+                    "errorType", e.getClass().getSimpleName()), e);
             Asserts.fail("上传初始化失败");
         }
 
@@ -175,7 +178,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             Files.createDirectories(chunkDir);
             chunk.transferTo(chunkFile);
         } catch (IOException e) {
-            log.error("写入分片失败: {}", chunkFile, e);
+            log.error(StructuredLog.event("file.upload.chunk.write_failed",
+                    "errorType", e.getClass().getSimpleName()), e);
             Asserts.fail("分片保存失败");
         }
 
@@ -292,20 +296,25 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             Map<String, Object> result = cacheCompletedResult(uploadId, record);
             try {
                 fileProcessSender.sendProcess(
-                        new FileProcessMessage(record.getId(), FileProcessMessage.Stage.UPLOADED));
+                        new FileProcessMessage(record.getId(), FileProcessMessage.Stage.UPLOADED,
+                                LogContext.requestId(), LogContext.ensureOperationId("upload")));
             } catch (Exception messageError) {
                 // DB 与 MinIO 已一致，保留文件让 PendingFileProcessTask 补发，避免悬空记录。
-                log.warn("处理消息发送失败，文件已保存并将由补偿任务重发: fileId={}",
-                        record.getId(), messageError);
+                log.warn(StructuredLog.event("file.process.queue_failed", "fileId", record.getId(),
+                        "errorType", messageError.getClass().getSimpleName()), messageError);
             }
             cleanup(uploadId, chunkDir);
             broadcastCreated(record);
             return result;
 
         } catch (Exception e) {
-            log.error("合并完成上传失败: uploadId={}", uploadId, e);
+            log.error(StructuredLog.event("file.upload.failed", "mode", "chunked",
+                    "errorType", e.getClass().getSimpleName()), e);
             if (insertedRecord == null && storageKey != null) {
-                try { minioUtil.removeObject(storageKey); } catch (Exception ex) { log.warn("回滚 MinIO 对象失败: {}", storageKey, ex); }
+                try { minioUtil.removeObject(storageKey); } catch (Exception ex) {
+                    log.warn(StructuredLog.event("storage.rollback.failed",
+                            "errorType", ex.getClass().getSimpleName()), ex);
+                }
             }
             if (e instanceof RuntimeException runtimeException) {
                 throw runtimeException;
@@ -365,14 +374,16 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                     BasicFileAttributes attrs = Files.readAttributes(dir, BasicFileAttributes.class);
                     if (now - attrs.lastModifiedTime().toMillis() > expireMs) {
                         deleteDir(dir);
-                        log.info("清理过期分片目录: {}", dir.getFileName());
+                        log.debug(StructuredLog.event("file.upload.chunk.cleaned"));
                     }
                 } catch (IOException e) {
-                    log.warn("无法读取目录属性: {}", dir, e);
+                        log.warn(StructuredLog.event("file.upload.chunk.cleanup_skipped",
+                                "errorType", e.getClass().getSimpleName()), e);
                 }
             }
         } catch (IOException e) {
-            log.warn("分片目录扫描失败", e);
+            log.warn(StructuredLog.event("file.upload.chunk.scan_failed",
+                    "errorType", e.getClass().getSimpleName()), e);
         }
     }
 
@@ -392,7 +403,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 }
             }
         } catch (IOException e) {
-            log.warn("清理临时目录失败: {}", dir, e);
+            log.warn(StructuredLog.event("file.upload.chunk.cleanup_failed",
+                    "errorType", e.getClass().getSimpleName()), e);
         }
     }
 
@@ -686,7 +698,6 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         map.put("parentId", f.getParentId());
         map.put("fileName", f.getFileName());
         map.put("filePath", f.getFilePath());
-        map.put("storageKey", f.getStorageKey());
         map.put("fileType", f.getFileType());
         map.put("fileSize", f.getFileSize());
         map.put("contentType", f.getContentType());

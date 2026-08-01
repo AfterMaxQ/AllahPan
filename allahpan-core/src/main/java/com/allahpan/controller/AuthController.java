@@ -1,6 +1,7 @@
 package com.allahpan.controller;
 
 import com.allahpan.common.api.CommonResult;
+import com.allahpan.common.log.StructuredLog;
 import com.allahpan.security.util.JwtTokenUtil;
 import com.allahpan.service.AuthCodeService;
 import com.allahpan.service.UserService;
@@ -10,6 +11,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 
@@ -17,6 +20,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
+    private static final Logger LOG = LoggerFactory.getLogger(AuthController.class);
 
     @Autowired
     private AuthCodeService authCodeService;
@@ -49,6 +53,8 @@ public class AuthController {
 
     private CommonResult<Map<String, Object>> buildLoginResponse(Long userId, String email, boolean hasPassword) {
         String token = jwtTokenUtil.generateToken(userId, email, hasPassword);
+        LOG.info(StructuredLog.event("auth.login.success", "userId", userId,
+                "loginMethod", hasPassword ? "password" : "code"));
         return CommonResult.success(Map.of(
             "token", token,
             "tokenHead", "Bearer ",

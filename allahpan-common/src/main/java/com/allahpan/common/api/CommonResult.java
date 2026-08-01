@@ -24,12 +24,20 @@ public class CommonResult<T> {
         return new CommonResult<>(ResultCode.FAILED.getCode(), message, null);
     }
 
+    public static <T> CommonResult<T> failed(String message, T data) {
+        return new CommonResult<>(ResultCode.FAILED.getCode(), message, data);
+    }
+
     public static <T> CommonResult<T> failed(ResultCode code) {
         return new CommonResult<>(code.getCode(), code.getMessage(), null);
     }
 
     public static <T> CommonResult<T> validateFailed(String message) {
         return new CommonResult<>(ResultCode.VALIDATE_FAILED.getCode(), message, null);
+    }
+
+    public static <T> CommonResult<T> validateFailed(String message, T data) {
+        return new CommonResult<>(ResultCode.VALIDATE_FAILED.getCode(), message, data);
     }
 
     public static <T> CommonResult<T> unauthorized(T data) {

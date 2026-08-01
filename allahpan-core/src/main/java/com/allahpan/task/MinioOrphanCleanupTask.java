@@ -4,6 +4,8 @@ import com.allahpan.component.MinioUtil;
 import com.allahpan.mbg.mapper.FileMapper;
 import com.allahpan.mbg.model.FileExample;
 import com.github.pagehelper.PageHelper;
+import com.allahpan.common.log.LogContext;
+import com.allahpan.common.log.StructuredLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,22 +39,34 @@ public class MinioOrphanCleanupTask {
 
     @Scheduled(cron = "0 0 4 * * ?")  // 每天凌晨 4:00
     public void scanOrphans() {
-        log.info("========== MinIO 孤儿对象扫描开始 ==========");
+        long started = System.nanoTime();
+        LogContext.bindScheduled(LogContext.newJobId("minio-orphan-cleanup"));
+        log.info(StructuredLog.event("job.started", "jobName", "minio-orphan-cleanup"));
+        boolean failed = false;
         try {
             scanOrphansInBucket(minioUtil.getBucketName(), "files");
             scanOrphansInBucket(minioUtil.getThumbnailBucket(), "thumbnails");
             scanOrphansInBucket(minioUtil.getTrashBucket(), "trash");
         } catch (Exception e) {
-            log.error("MinIO 孤儿扫描异常", e);
+            failed = true;
+            log.error(StructuredLog.event("job.failed", "jobName", "minio-orphan-cleanup",
+                    "errorType", e.getClass().getSimpleName()), e);
+        } finally {
+            if (!failed) {
+                log.info(StructuredLog.event("job.completed", "jobName", "minio-orphan-cleanup",
+                        "durationMs", elapsedMs(started)));
+            }
+            LogContext.clearAll();
         }
-        log.info("========== MinIO 孤儿对象扫描结束 ==========");
     }
 
     private void scanOrphansInBucket(String bucket, String bucketLabel) {
-        log.info("扫描 {} bucket...", bucketLabel);
+        log.info(StructuredLog.event("job.bucket.started", "jobName", "minio-orphan-cleanup",
+                "bucket", bucketLabel));
         try {
             List<String> minioKeys = minioUtil.listObjectNames(bucket);
-            log.info("{} bucket 共 {} 个对象", bucketLabel, minioKeys.size());
+            log.info(StructuredLog.event("job.bucket.scanned", "bucket", bucketLabel,
+                    "objectCount", minioKeys.size()));
             if (minioKeys.isEmpty()) return;
 
             // 收集 DB 中所有引用的 storageKey 和 thumbnailKey
@@ -66,11 +80,12 @@ public class MinioOrphanCleanupTask {
                         : dbStorageKeys.contains(key);
                 if (!inDb) {
                     if (isTooNewToDelete(bucket, key)) {
-                        log.info("跳过新近 MinIO 对象，等待下次扫描确认: bucket={}, key={}", bucketLabel, key);
+                        log.debug(StructuredLog.event("job.object.skipped", "bucket", bucketLabel,
+                                "reason", "grace_period"));
                         continue;
                     }
                     orphanCount++;
-                    log.warn("发现孤儿 MinIO 对象: bucket={}, key={}", bucketLabel, key);
+                    log.warn(StructuredLog.event("storage.orphan.detected", "bucket", bucketLabel));
                     // 安全清理：只删除确认无引用的对象
                     try {
                         if ("thumbnails".equals(bucketLabel)) {
@@ -80,15 +95,18 @@ public class MinioOrphanCleanupTask {
                         } else {
                             minioUtil.removeObject(key);
                         }
-                        log.info("已清理孤儿对象: bucket={}, key={}", bucketLabel, key);
+                        log.info(StructuredLog.event("storage.orphan.deleted", "bucket", bucketLabel));
                     } catch (Exception e) {
-                        log.error("清理孤儿对象失败: bucket={}, key={}", bucketLabel, key, e);
+                        log.error(StructuredLog.event("storage.orphan.delete_failed", "bucket", bucketLabel,
+                                "errorType", e.getClass().getSimpleName()), e);
                     }
                 }
             }
-            log.info("{} bucket 扫描完成: 孤儿={}", bucketLabel, orphanCount);
+            log.info(StructuredLog.event("job.bucket.completed", "bucket", bucketLabel,
+                    "orphanCount", orphanCount));
         } catch (Exception e) {
-            log.error("扫描 {} bucket 失败", bucketLabel, e);
+            log.error(StructuredLog.event("job.bucket.failed", "bucket", bucketLabel,
+                    "errorType", e.getClass().getSimpleName()), e);
         }
     }
 
@@ -97,7 +115,8 @@ public class MinioOrphanCleanupTask {
             Instant lastModified = minioUtil.objectLastModified(bucket, key);
             return lastModified != null && lastModified.plus(ORPHAN_GRACE_PERIOD).isAfter(Instant.now());
         } catch (Exception e) {
-            log.warn("读取 MinIO 对象时间失败，跳过本次清理: bucket={}, key={}", bucket, key, e);
+            log.warn(StructuredLog.event("storage.object_metadata.failed", "bucket", bucket,
+                    "errorType", e.getClass().getSimpleName()), e);
             return true;
         }
     }
@@ -161,5 +180,9 @@ public class MinioOrphanCleanupTask {
             pageNum++;
         }
         return keys;
+    }
+
+    private long elapsedMs(long started) {
+        return (System.nanoTime() - started) / 1_000_000;
     }
 }

@@ -8,3 +8,12 @@ spring:
   data:
     redis:
       host: redis
+
+allahpan:
+  logging:
+    service-name: allahpan-search
+    slow-request-ms: ${ALLAHPAN_SLOW_REQUEST_MS:1000}
+
+logging:
+  file:
+    path: ${LOG_PATH:/app/logs}

@@ -69,6 +69,9 @@ mail:
   from: AllahPan <${MAIL_USERNAME:1455726631@qq.com}>
 
 allahpan:
+  logging:
+    service-name: allahpan-core
+    slow-request-ms: ${ALLAHPAN_SLOW_REQUEST_MS:1000}
   register:
     enabled: false        # 暂停注册；开放注册改回 true
   chunk:
@@ -102,6 +105,10 @@ logging:
   level:
     root: WARN
     com.allahpan: INFO
+    org.springframework.web: WARN
+    org.springframework.security: WARN
+    org.springframework.amqp: WARN
+    org.elasticsearch: WARN
   file:
     path: ${LOG_PATH:./logs}
     name: ${LOG_PATH:./logs}/allahpan-core.log

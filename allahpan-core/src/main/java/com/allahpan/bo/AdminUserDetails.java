@@ -1,6 +1,7 @@
 package com.allahpan.bo;
 
 import com.allahpan.mbg.model.User;
+import com.allahpan.common.log.UserIdentity;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
@@ -11,7 +12,7 @@ import java.util.List;
  * Spring Security UserDetails 实现类
  * 将 User 实体适配为 Spring Security 的安全主体
  */
-public class AdminUserDetails implements UserDetails {
+public class AdminUserDetails implements UserDetails, UserIdentity {
     /** 关联的用户实体 */
     private final User user;
     /** 权限列表（当前无 RBAC，返回空列表） */

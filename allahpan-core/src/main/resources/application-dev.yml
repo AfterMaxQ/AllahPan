@@ -71,6 +71,9 @@ mail:
 
 
 allahpan:
+  logging:
+    service-name: allahpan-core
+    slow-request-ms: ${ALLAHPAN_SLOW_REQUEST_MS:1000}
   register:
     enabled: false        # 暂停注册；开放注册改回 true
   chunk:

@@ -82,6 +82,7 @@ services:
       ALLAHPAN_SEARCH_SERVICE_URL: http://search:8081/es-admin/files
       # Ollama 运行在宿主机，容器通过 host.docker.internal 访问
       OLLAMA_BASE_URL: http://host.docker.internal:11434
+      ALLAHPAN_SLOW_REQUEST_MS: 1000
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -93,6 +94,8 @@ services:
         condition: service_started
       minio:
         condition: service_started
+    volumes:
+      - ./logs/core:/app/logs
     restart: unless-stopped
 
   search:
@@ -106,11 +109,14 @@ services:
       SERVER_ADDRESS: 0.0.0.0
       SPRING_ELASTICSEARCH_URIS: http://elasticsearch:9200
       SPRING_DATA_REDIS_HOST: redis
+      ALLAHPAN_SLOW_REQUEST_MS: 1000
     depends_on:
       elasticsearch:
         condition: service_started
       redis:
         condition: service_started
+    volumes:
+      - ./logs/search:/app/logs
     restart: unless-stopped
 
   nginx:

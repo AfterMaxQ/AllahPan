@@ -1,6 +1,7 @@
 package com.allahpan;
 
 import com.allahpan.config.RabbitMqConfig;
+import com.allahpan.common.log.StructuredLog;
 import org.mybatis.spring.annotation.MapperScan;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,7 +33,7 @@ public class AllahPanApplication {
     @Bean
     ApplicationRunner declareRabbitResources(RabbitTemplate rabbitTemplate) {
         return args -> {
-            System.out.println("[AllahPan] 声明 RabbitMQ 资源...");
+            log.info(StructuredLog.event("rabbitmq.resources.declare_started"));
             try {
                 rabbitTemplate.execute(channel -> {
                     channel.exchangeDeclare(RabbitMqConfig.PROCESS_EXCHANGE, "direct", true);
@@ -51,10 +52,10 @@ public class AllahPanApplication {
                             RabbitMqConfig.RETRY_ROUTING_KEY_TTL);
                     return null;
                 });
-                System.out.println("[AllahPan] RabbitMQ 资源声明完成");
+                log.info(StructuredLog.event("rabbitmq.resources.declared"));
             } catch (Exception e) {
-                System.out.println("[AllahPan] RabbitMQ 声明失败: " + e.getMessage());
-                e.printStackTrace();
+                log.error(StructuredLog.event("rabbitmq.resources.declare_failed",
+                        "errorType", e.getClass().getSimpleName()), e);
             }
         };
     }

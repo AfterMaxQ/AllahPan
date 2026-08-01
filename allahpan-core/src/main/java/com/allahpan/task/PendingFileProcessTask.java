@@ -4,6 +4,8 @@ import com.allahpan.component.FileProcessSender;
 import com.allahpan.component.OllamaService;
 import com.allahpan.component.SseBroadcaster;
 import com.allahpan.component.ThumbnailGenerator;
+import com.allahpan.common.log.LogContext;
+import com.allahpan.common.log.StructuredLog;
 import com.allahpan.domain.FileProcessMessage;
 import com.allahpan.domain.FileProcessMessage.Stage;
 import com.allahpan.mbg.mapper.FileMapper;
@@ -44,9 +46,21 @@ public class PendingFileProcessTask {
 
     @Scheduled(fixedDelay = 120_000, initialDelay = 60_000)
     public void recoverPendingFiles() {
-        recoverStuckAtUploaded();
-        recoverMissingPreviews();
-        recoverPendingOcr();
+        long started = System.nanoTime();
+        LogContext.bindScheduled(LogContext.newJobId("pending-file-recovery"));
+        LOG.info(StructuredLog.event("job.started", "jobName", "pending-file-recovery"));
+        try {
+            recoverStuckAtUploaded();
+            recoverMissingPreviews();
+            recoverPendingOcr();
+            LOG.info(StructuredLog.event("job.completed", "jobName", "pending-file-recovery",
+                    "durationMs", elapsedMs(started)));
+        } catch (Exception e) {
+            LOG.error(StructuredLog.event("job.failed", "jobName", "pending-file-recovery",
+                    "errorType", e.getClass().getSimpleName()), e);
+        } finally {
+            LogContext.clearAll();
+        }
     }
 
     /** processStatus=0 且创建已超过 2 分钟 → 重新触发缩略图流水线 */
@@ -63,11 +77,13 @@ public class PendingFileProcessTask {
         int count = 0;
         for (File file : stuck) {
             if (file.getCreateTime() != null && file.getCreateTime().getTime() > cutoff) continue;
-            LOG.info("恢复卡住的上传后处理: fileId={} name='{}'", file.getId(), file.getFileName());
+            LOG.info(StructuredLog.event("file.process.recovery_queued", "fileId", file.getId(),
+                    "stage", Stage.UPLOADED, "reason", "stuck_uploaded"));
             sender.sendProcess(new FileProcessMessage(file.getId(), Stage.UPLOADED));
             count++;
         }
-        if (count > 0) LOG.info("已恢复 {} 个卡住的上传后处理任务", count);
+        if (count > 0) LOG.info(StructuredLog.event("file.process.recovery_completed",
+                "stage", Stage.UPLOADED, "count", count));
     }
 
     /** 历史文件缺少 previewKey → 补生成高清预览图（每轮最多 10 个） */
@@ -90,13 +106,14 @@ public class PendingFileProcessTask {
                 file.setPreviewKey(previewKey);
                 fileMapper.updateByPrimaryKeySelective(file);
                 notifyPreviewReady(file);
-                LOG.info("补生成预览图: fileId={} name='{}'", file.getId(), file.getFileName());
+                LOG.info(StructuredLog.event("file.preview.recovered", "fileId", file.getId()));
                 count++;
             } catch (Exception e) {
-                LOG.warn("补生成预览图失败: fileId={} {}", file.getId(), e.getMessage());
+                LOG.warn(StructuredLog.event("file.preview.recovery_failed", "fileId", file.getId(),
+                        "errorType", e.getClass().getSimpleName()), e);
             }
         }
-        if (count > 0) LOG.info("已补生成 {} 个高清预览图", count);
+        if (count > 0) LOG.info(StructuredLog.event("file.preview.recovery_completed", "count", count));
     }
 
     private boolean needsPreview(File file) {
@@ -152,8 +169,8 @@ public class PendingFileProcessTask {
                 continue;
             }
 
-            LOG.info("恢复待 OCR 图片: fileId={} status={} name='{}'",
-                    file.getId(), status, file.getFileName());
+            LOG.info(StructuredLog.event("file.process.recovery_queued", "fileId", file.getId(),
+                    "stage", Stage.THUMBNAILED, "status", status, "reason", "pending_ocr"));
             FileProcessMessage msg = new FileProcessMessage(file.getId(), Stage.THUMBNAILED);
             sender.sendProcess(msg);
             count++;
@@ -168,15 +185,21 @@ public class PendingFileProcessTask {
                 .andProcessStatusEqualTo((byte) 3);
         for (File file : fileMapper.selectByExampleWithBLOBs(readyExample)) {
             if (hasOriginText(file)) continue;
-            LOG.info("补跑历史图片 OCR: fileId={} name='{}'", file.getId(), file.getFileName());
+            LOG.info(StructuredLog.event("file.process.recovery_queued", "fileId", file.getId(),
+                    "stage", Stage.THUMBNAILED, "reason", "historical_ocr"));
             sender.sendProcess(new FileProcessMessage(file.getId(), Stage.THUMBNAILED));
             count++;
         }
 
-        if (count > 0) LOG.info("已恢复/补跑 {} 个 OCR 任务", count);
+        if (count > 0) LOG.info(StructuredLog.event("file.process.recovery_completed",
+                "stage", Stage.THUMBNAILED, "count", count));
     }
 
     private boolean hasOriginText(File file) {
         return file.getOriginText() != null && !file.getOriginText().isBlank();
+    }
+
+    private long elapsedMs(long started) {
+        return (System.nanoTime() - started) / 1_000_000;
     }
 }

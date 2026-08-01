@@ -1,5 +1,6 @@
 package com.allahpan.component;
 
+import com.allahpan.common.log.StructuredLog;
 import com.allahpan.mbg.model.File;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -66,10 +67,10 @@ public class OllamaService {
         }
         try {
             byte[] imageBytes = loadOcrImageBytes(file);
-            LOG.info("OCR: fileId={} payload={} bytes (source={})",
-                    file.getId(), imageBytes.length,
-                    file.getPreviewKey() != null ? "preview" :
-                            (file.getThumbnailKey() != null ? "thumbnail" : "resized-original"));
+            LOG.info(StructuredLog.event("file.ocr.started", "fileId", file.getId(),
+                    "payloadBytes", imageBytes.length,
+                    "source", file.getPreviewKey() != null ? "preview" :
+                            (file.getThumbnailKey() != null ? "thumbnail" : "resized-original")));
 
             String base64Image = Base64.getEncoder().encodeToString(imageBytes);
             String prompt = buildPrompt();
@@ -79,8 +80,8 @@ public class OllamaService {
                 + "\"messages\":[{\"role\":\"user\",\"content\":\"%s\",\"images\":[\"%s\"]}]}",
                 model, numPredict, escapeJson(prompt), base64Image);
 
-            LOG.info("OCR request: model={} num_predict={} body_size={} chars",
-                    model, numPredict, body.length());
+            LOG.debug(StructuredLog.event("file.ocr.requested", "model", model,
+                    "numPredict", numPredict, "bodyChars", body.length()));
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -94,19 +95,18 @@ public class OllamaService {
                 String content = (String) message.get("content");
                 String doneReason = (String) response.getBody().get("done_reason");
                 Integer evalCount = (Integer) response.getBody().get("eval_count");
-                LOG.info("OCR done_reason={} eval_count={} content={} chars",
-                        doneReason, evalCount,
-                        content != null ? content.length() : 0);
+                LOG.info(StructuredLog.event("file.ocr.completed", "fileId", file.getId(),
+                        "doneReason", doneReason, "evalCount", evalCount,
+                        "contentChars", content != null ? content.length() : 0));
                 return (content != null && !content.isEmpty()) ? content : null;
             }
             return null;
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
-            LOG.error("Ollama OCR failed: fileId={} storageKey='{}' errorType={} errorMessage={}",
-                    file.getId(), file.getStorageKey(),
-                    e.getClass().getSimpleName(), e.getMessage(), e);
-            throw new RuntimeException("Ollama OCR failed for storageKey=" + file.getStorageKey(), e);
+            LOG.error(StructuredLog.event("file.ocr.failed", "fileId", file.getId(),
+                    "errorType", e.getClass().getSimpleName()), e);
+            throw new RuntimeException("Ollama OCR failed", e);
         }
     }
 
@@ -134,7 +134,7 @@ public class OllamaService {
         try (InputStream is = minioUtil.getObject(file.getStorageKey())) {
             BufferedImage original = ImageIO.read(is);
             if (original == null) {
-                throw new RuntimeException("无法解码图片: " + file.getStorageKey());
+                throw new RuntimeException("无法解码图片");
             }
             return toJpegBytes(resizeForOcr(original));
         }

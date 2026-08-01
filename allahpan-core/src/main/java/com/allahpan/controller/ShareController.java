@@ -1,6 +1,7 @@
 package com.allahpan.controller;
 
 import com.allahpan.common.api.CommonResult;
+import com.allahpan.common.log.StructuredLog;
 import com.allahpan.component.MinioUtil;
 import com.allahpan.mbg.model.File;
 import com.allahpan.service.ShareService;
@@ -13,6 +14,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
 import java.net.URLEncoder;
@@ -23,6 +26,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/share")
 public class ShareController {
+    private static final Logger LOG = LoggerFactory.getLogger(ShareController.class);
 
     @Autowired
     private ShareService shareService;
@@ -34,13 +38,17 @@ public class ShareController {
     public CommonResult<Map<String, Object>> createShare(
             @PathVariable Long fileId,
             @RequestParam(defaultValue = "24") int expireHours) {
-        return CommonResult.success(shareService.createShare(fileId, expireHours));
+        Map<String, Object> result = shareService.createShare(fileId, expireHours);
+        LOG.info(StructuredLog.event("share.created", "fileId", fileId, "expireHours", expireHours));
+        return CommonResult.success(result);
     }
 
     @Operation(summary = "获取分享内容（公开）")
     @GetMapping("/{code}")
     public CommonResult<Map<String, Object>> getShare(@PathVariable String code) {
-        return CommonResult.success(shareService.getShare(code));
+        Map<String, Object> result = shareService.getShare(code);
+        LOG.info(StructuredLog.event("share.accessed", "fileId", result.get("fileId")));
+        return CommonResult.success(result);
     }
 
     @Operation(summary = "下载分享文件（公开，需有效分享码）")
@@ -63,6 +71,7 @@ public class ShareController {
     @DeleteMapping("/{code}")
     public CommonResult<Void> deleteShare(@PathVariable String code) {
         shareService.deleteShare(code);
+        LOG.info(StructuredLog.event("share.deleted"));
         return CommonResult.success(null);
     }
 

@@ -3,6 +3,11 @@ server:
   port: ${SEARCH_SERVER_PORT:8081}
   address: ${SEARCH_SERVER_ADDRESS:127.0.0.1}
 
+allahpan:
+  logging:
+    service-name: allahpan-search
+    slow-request-ms: ${ALLAHPAN_SLOW_REQUEST_MS:1000}
+
 spring:
   elasticsearch:
     uris: ${ES_URIS:http://localhost:9200}
@@ -11,6 +16,8 @@ logging:
   level:
     root: WARN
     com.allahpan.search: INFO
+    org.springframework.web: WARN
+    org.elasticsearch: WARN
   file:
     path: ${LOG_PATH:./logs}
     name: ${LOG_PATH:./logs}/allahpan-search.log

@@ -1,6 +1,9 @@
 package com.allahpan.controller;
 
 import com.allahpan.common.api.CommonResult;
+import com.allahpan.common.log.StructuredLog;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.allahpan.service.ChunkUploadService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -14,6 +17,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/file/chunk")
 public class ChunkController {
+    private static final Logger LOG = LoggerFactory.getLogger(ChunkController.class);
 
     @Autowired
     private ChunkUploadService chunkUploadService;
@@ -43,7 +47,9 @@ public class ChunkController {
         try {
             chunkUploadService.uploadChunk(uploadId, chunkIndex, chunk);
         } catch (Exception e) {
-            return CommonResult.failed("分片上传失败: " + e.getMessage());
+            LOG.warn(StructuredLog.event("file.upload.chunk.failed", "chunkIndex", chunkIndex,
+                    "errorType", e.getClass().getSimpleName()), e);
+            return CommonResult.failed("分片上传失败，请重试");
         }
         Map<String, String> result = new java.util.LinkedHashMap<>();
         result.put("uploadId", uploadId);

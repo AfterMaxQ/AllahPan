@@ -1,5 +1,6 @@
 package com.allahpan.component;
 
+import com.allahpan.common.log.StructuredLog;
 import io.minio.*;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -43,8 +44,7 @@ public class MinioUtil {
                 throw new RuntimeException("MinIO bucket initialization failed: " + bucket, e);
             }
         }
-        log.info("MinIO storage ready: files={}, thumbnails={}, trash={}",
-                bucketName, thumbnailBucket, trashBucket);
+        log.info(StructuredLog.event("storage.minio.ready"));
     }
 
     /** Upload object to files bucket */
@@ -80,7 +80,8 @@ public class MinioUtil {
 
     /** Download a byte range from the files bucket. */
     public InputStream getObject(String objectKey, long offset, long length) throws Exception {
-        log.debug("MinIO getObject range: key='{}' offset={} length={}", objectKey, offset, length);
+        log.debug(StructuredLog.event("storage.object.read", "bucket", "files",
+                "offset", offset, "length", length));
         return minioClient.getObject(
                 GetObjectArgs.builder()
                         .bucket(bucketName)
@@ -97,7 +98,7 @@ public class MinioUtil {
     }
 
     private InputStream getObject(String bucket, String objectKey) throws Exception {
-        log.debug("MinIO getObject: bucket={} key='{}'", bucket, objectKey);
+        log.debug(StructuredLog.event("storage.object.read", "bucket", bucket));
         try {
             return minioClient.getObject(
                     GetObjectArgs.builder()
@@ -106,8 +107,8 @@ public class MinioUtil {
                             .build()
             );
         } catch (Exception e) {
-            log.error("MinIO getObject FAILED: bucket={} key='{}' error={}",
-                    bucket, objectKey, e.toString());
+            log.error(StructuredLog.event("storage.object.read_failed", "bucket", bucket,
+                    "errorType", e.getClass().getSimpleName()), e);
             throw e;
         }
     }

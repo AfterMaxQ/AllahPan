@@ -6,6 +6,7 @@ import co.elastic.clients.elasticsearch.core.SearchResponse;
 import com.allahpan.search.domain.EsFile;
 import com.allahpan.search.repository.EsFileRepository;
 import com.allahpan.search.service.EsFileService;
+import com.allahpan.common.log.StructuredLog;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -134,7 +135,9 @@ public class EsFileServiceImpl implements EsFileService {
             String msg = e.getMessage() != null ? e.getMessage() : "";
             Throwable cause = e.getCause();
             String causeMsg = cause != null ? cause.getMessage() : "";
-            log.error("ES 搜索失败: keyword={}, error={}, cause={}", keyword, msg, causeMsg);
+            log.error(StructuredLog.event("search.dependency_failed", "dependency", "elasticsearch",
+                    "errorType", e.getClass().getSimpleName(), "causeType",
+                    cause == null ? null : cause.getClass().getSimpleName()));
             if (msg.contains("index_not_found_exception")) {
                 return emptyResult();
             }

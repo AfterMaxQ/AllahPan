@@ -10,6 +10,8 @@ import com.allahpan.service.FileService;
 import com.github.pagehelper.PageHelper;
 import com.github.pagehelper.PageInfo;
 import com.allahpan.component.MinioUtil;
+import com.allahpan.common.log.LogContext;
+import com.allahpan.common.log.StructuredLog;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,10 +58,14 @@ public class FileController {
     public CommonResult<Map<String, Object>> upload(
             @RequestParam("file") MultipartFile file,
             @RequestParam(defaultValue = "0") Long parentId) {
+        String operationId = LogContext.ensureOperationId("upload");
         File saved = fileService.upload(file, parentId);
         if (!"FOLDER".equals(saved.getFileType()) && (saved.getProcessStatus() == null || saved.getProcessStatus() != 3)) {
-            fileProcessSender.sendProcess(new FileProcessMessage(saved.getId(), FileProcessMessage.Stage.UPLOADED));
+            fileProcessSender.sendProcess(new FileProcessMessage(saved.getId(), FileProcessMessage.Stage.UPLOADED,
+                    LogContext.requestId(), operationId));
         }
+        LOG.info(StructuredLog.event("file.upload.completed", "fileId", saved.getId(),
+                "fileType", saved.getFileType(), "fileSize", file.getSize(), "parentId", parentId));
         // Notify SSE clients about the new file
         Map<String, Object> sseData = new LinkedHashMap<>();
         sseData.put("fileId", saved.getId());
@@ -159,8 +165,8 @@ public class FileController {
     private ResponseEntity<Resource> streamResponse(
             File file, String contentDisposition, String rangeHeader) {
         String key = file.getStorageKey();
-        LOG.info("stream request: fileId={} storageKey='{}' contentType='{}' disposition={}",
-                file.getId(), key, file.getContentType(), contentDisposition);
+        LOG.info(StructuredLog.event("file.download.started", "fileId", file.getId(),
+                "contentType", file.getContentType(), "range", rangeHeader != null));
         try {
             long totalSize = file.getFileSize() != null && file.getFileSize() >= 0
                     ? file.getFileSize()
@@ -199,8 +205,8 @@ public class FileController {
             }
             return response.body(resource);
         } catch (Exception e) {
-            LOG.error("Failed to stream file: fileId={} storageKey='{}' error={}",
-                    file.getId(), key, e.toString(), e);
+            LOG.error(StructuredLog.event("file.download.failed", "fileId", file.getId(),
+                    "errorType", e.getClass().getSimpleName()), e);
             return ResponseEntity.internalServerError().build();
         }
     }
@@ -290,8 +296,8 @@ public class FileController {
                     .header(HttpHeaders.CACHE_CONTROL, "private, max-age=86400")
                     .body(resource);
         } catch (Exception e) {
-            LOG.warn("Failed to stream {}: fileId={} key='{}' error={}",
-                    label, fileId, objectKey, e.toString());
+            LOG.warn(StructuredLog.event("file.preview.failed", "fileId", fileId,
+                    "kind", label, "errorType", e.getClass().getSimpleName()), e);
             return ResponseEntity.notFound().build();
         }
     }
@@ -392,7 +398,6 @@ public class FileController {
         map.put("parentId", f.getParentId());
         map.put("fileName", f.getFileName());
         map.put("filePath", f.getFilePath());
-        map.put("storageKey", f.getStorageKey());
         map.put("fileType", f.getFileType());
         map.put("fileSize", f.getFileSize() != null ? f.getFileSize() : 0L);
         map.put("contentType", f.getContentType());

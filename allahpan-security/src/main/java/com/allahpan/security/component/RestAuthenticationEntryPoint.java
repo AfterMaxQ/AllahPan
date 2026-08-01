@@ -6,7 +6,12 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 
 import com.allahpan.common.api.CommonResult;
+import com.allahpan.common.exception.ErrorResponse;
+import com.allahpan.common.log.RequestLogFilter;
+import com.allahpan.common.log.StructuredLog;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -15,6 +20,7 @@ import jakarta.servlet.http.HttpServletResponse;
  * 未登录或 token 失效时的统一响应处理器
  */
 public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
+    private static final Logger LOG = LoggerFactory.getLogger(RestAuthenticationEntryPoint.class);
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response,
             AuthenticationException e) throws IOException {
@@ -31,8 +37,13 @@ public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
         // 4. 获取响应输出流，返回统一格式的JSON提示
         // new ObjectMapper().writeValueAsString：把Java对象转成JSON字符串
         // CommonResult.unauthorized：项目的通用返回类，返回「未登录」的结果
-        response.getWriter().println(
-            new ObjectMapper().writeValueAsString(CommonResult.unauthorized("暂未登录或 token 已过期"))
-        );
+        String errorId = ErrorResponse.newErrorId();
+        request.setAttribute(RequestLogFilter.BUSINESS_STATUS, 401);
+        request.setAttribute(RequestLogFilter.ERROR_ID, errorId);
+        request.setAttribute(RequestLogFilter.ERROR_CODE, "UNAUTHORIZED");
+        LOG.info(StructuredLog.event("auth.request.unauthorized", "errorId", errorId,
+                "path", RequestLogFilter.safeRequestPath(request.getRequestURI())));
+        response.getWriter().println(new ObjectMapper().writeValueAsString(
+                CommonResult.unauthorized(ErrorResponse.data(errorId))));
     }
 }

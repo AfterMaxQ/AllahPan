@@ -2,6 +2,7 @@ package com.allahpan.service.impl;
 
 import com.allahpan.common.api.ResultCode;
 import com.allahpan.common.exception.Asserts;
+import com.allahpan.common.log.StructuredLog;
 import com.allahpan.common.service.RedisService;
 import com.allahpan.mbg.mapper.FileMapper;
 import com.allahpan.mbg.model.File;
@@ -45,7 +46,7 @@ public class ShareServiceImpl implements ShareService {
                 code = candidate;
                 break;
             }
-            log.warn("分享码碰撞: candidate={}, attempt={}", candidate, i + 1);
+            log.warn(StructuredLog.event("share.code_collision", "attempt", i + 1));
         }
         Asserts.isTrue(code != null, "生成分享码失败，请重试");
 
@@ -96,8 +97,8 @@ public class ShareServiceImpl implements ShareService {
         if (expireObj instanceof Number) {
             expireTime = ((Number) expireObj).longValue();
         } else {
-            log.warn("分享数据 expireTime 类型异常: code={}, type={}", code,
-                    expireObj != null ? expireObj.getClass().getName() : "null");
+            log.warn(StructuredLog.event("share.invalid_data", "field", "expireTime",
+                    "valueType", expireObj != null ? expireObj.getClass().getSimpleName() : "null"));
             expireTime = 0;
         }
         if (System.currentTimeMillis() > expireTime) {

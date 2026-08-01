@@ -13,6 +13,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import com.allahpan.security.util.JwtTokenUtil;
+import com.allahpan.common.log.LogContext;
+import com.allahpan.common.log.StructuredLog;
+import com.allahpan.common.log.UserIdentity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -25,6 +30,7 @@ import jakarta.servlet.http.HttpServletResponse;
  */
 @Component
 public class JwtAuthenticationTokenFilter extends OncePerRequestFilter {
+    private static final Logger LOG = LoggerFactory.getLogger(JwtAuthenticationTokenFilter.class);
 
     @Autowired
     private UserDetailsService userDetailsService;
@@ -37,7 +43,7 @@ public class JwtAuthenticationTokenFilter extends OncePerRequestFilter {
 
     @jakarta.annotation.PostConstruct
     public void init() {
-        System.out.println("JwtAuthenticationTokenFilter initialized: tokenHeader=" + tokenHeader + ", tokenHead=" + tokenHead);
+        LOG.info(StructuredLog.event("security.jwt_filter.initialized", "tokenHeader", tokenHeader));
     }
 
     @Override
@@ -62,6 +68,9 @@ public class JwtAuthenticationTokenFilter extends OncePerRequestFilter {
                     authentication.setDetails(
                             new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authentication);
+                    if (userDetails instanceof UserIdentity details) {
+                        org.slf4j.MDC.put(LogContext.USER_ID, String.valueOf(details.getUserId()));
+                    }
                 }
             }
         }

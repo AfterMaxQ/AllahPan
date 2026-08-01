@@ -19,5 +19,12 @@ ollama:
   base-url: ${OLLAMA_BASE_URL:http://host.docker.internal:11434}
 
 allahpan:
+  logging:
+    service-name: allahpan-core
+    slow-request-ms: ${ALLAHPAN_SLOW_REQUEST_MS:1000}
   chunk:
     temp-dir: /tmp/allahpan-chunks
+
+logging:
+  file:
+    path: ${LOG_PATH:/app/logs}

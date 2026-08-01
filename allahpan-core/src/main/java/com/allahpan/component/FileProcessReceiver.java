@@ -2,6 +2,8 @@ package com.allahpan.component;
 
 import com.allahpan.domain.FileProcessMessage;
 import com.allahpan.domain.FileProcessMessage.Stage;
+import com.allahpan.common.log.LogContext;
+import com.allahpan.common.log.StructuredLog;
 import com.allahpan.mbg.mapper.FileMapper;
 import com.allahpan.mbg.model.File;
 import com.allahpan.service.FileService;
@@ -37,21 +39,33 @@ public class FileProcessReceiver {
 
     @RabbitHandler
     public void handle(FileProcessMessage message) {
+        LogContext.bindAsync(message.getRequestId(), message.getOperationId());
+        try {
+            handleMessage(message);
+        } finally {
+            LogContext.clearAll();
+        }
+    }
+
+    private void handleMessage(FileProcessMessage message) {
         File file = fileMapper.selectByPrimaryKey(message.getFileId());
         if (file == null || file.getDeleteTime() != null) {
-            LOG.warn("文件不存在或已删除: {}", message.getFileId());
+            LOG.warn(StructuredLog.event("file.process.skipped", "fileId", message.getFileId(),
+                    "reason", "missing_or_deleted"));
             return;
         }
-        LOG.info("Processing file: fileId={} fileName='{}' storageKey='{}' stage={}",
-                file.getId(), file.getFileName(), file.getStorageKey(), message.getCurrentStage());
+        long started = System.nanoTime();
+        LOG.info(StructuredLog.event("file.process.started", "fileId", file.getId(),
+                "stage", message.getCurrentStage(), "retryCount", message.getRetryCount()));
         try {
             switch (message.getCurrentStage()) {
                 case UPLOADED -> {
                     boolean hasList = file.getThumbnailKey() != null && !file.getThumbnailKey().isBlank();
                     boolean hasPreview = file.getPreviewKey() != null && !file.getPreviewKey().isBlank();
                     if (file.getProcessStatus() != null && file.getProcessStatus() >= 1 && hasList && hasPreview) {
-                        LOG.info("缩略图阶段已完成，补发下一阶段: fileId={}", file.getId());
-                        sender.sendProcess(new FileProcessMessage(file.getId(),
+                        LOG.info(StructuredLog.event("file.process.skipped", "fileId", file.getId(),
+                                "stage", Stage.UPLOADED, "reason", "already_completed"));
+                        sender.sendProcess(message.next(
                                 needsTextExtraction(file) ? Stage.THUMBNAILED : Stage.TEXT_EXTRACTED));
                         return;
                     }
@@ -81,16 +95,17 @@ public class FileProcessReceiver {
                     updateProcessingFields(file);
                     notifyStatusChange(file);
                     if (needsTextExtraction(file)) {
-                        sender.sendProcess(new FileProcessMessage(file.getId(), Stage.THUMBNAILED));
+                        sender.sendProcess(message.next(Stage.THUMBNAILED));
                     } else {
-                        sender.sendProcess(new FileProcessMessage(file.getId(), Stage.TEXT_EXTRACTED));
+                        sender.sendProcess(message.next(Stage.TEXT_EXTRACTED));
                     }
                 }
                 case THUMBNAILED -> {
 	                    if (file.getProcessStatus() != null && file.getProcessStatus() >= 2
                                 && hasOriginText(file)) {
-	                        LOG.info("文本提取阶段已完成，补发索引阶段: fileId={}", file.getId());
-                            sender.sendProcess(new FileProcessMessage(file.getId(), Stage.TEXT_EXTRACTED));
+                            LOG.info(StructuredLog.event("file.process.skipped", "fileId", file.getId(),
+                                    "stage", Stage.THUMBNAILED, "reason", "already_completed"));
+                            sender.sendProcess(message.next(Stage.TEXT_EXTRACTED));
 	                        return;
 	                    }
                     String text = textExtractor.extract(file);
@@ -100,25 +115,29 @@ public class FileProcessReceiver {
                     file.setProcessStatus((byte) 2);
                     updateProcessingFields(file);
                     notifyStatusChange(file);
-	                    sender.sendProcess(new FileProcessMessage(file.getId(), Stage.TEXT_EXTRACTED));
+                    sender.sendProcess(message.next(Stage.TEXT_EXTRACTED));
                 }
                 case TEXT_EXTRACTED -> {
 	                    if (file.getProcessStatus() != null && file.getProcessStatus() >= 3) {
-	                        LOG.info("跳过已完成的索引阶段: fileId={}", file.getId());
+                        LOG.info(StructuredLog.event("file.process.skipped", "fileId", file.getId(),
+                                "stage", Stage.TEXT_EXTRACTED, "reason", "already_completed"));
 	                        return;
 	                    }
                     esIndexService.index(file);
                     file.setProcessStatus((byte) 3);
                     updateProcessingFields(file);
                     notifyStatusChange(file);
-                    LOG.info("文件处理完成: {}", file.getFileName());
+                    LOG.info(StructuredLog.event("file.process.completed", "fileId", file.getId(),
+                            "stage", Stage.INDEXED, "durationMs", elapsedMs(started)));
                 }
-                default -> LOG.warn("未知处理阶段: {}", message.getCurrentStage());
+                default -> LOG.warn(StructuredLog.event("file.process.skipped", "fileId", file.getId(),
+                        "stage", message.getCurrentStage(), "reason", "unknown_stage"));
             }
         } catch (Exception e) {
             Retryability decision = classify(e);
-            LOG.error("文件处理失败: storageKey='{}', 阶段={}, 重试次数={}, 错误类型={}",
-                    file.getStorageKey(), message.getCurrentStage(), message.getRetryCount(), decision, e);
+            LOG.error(StructuredLog.event("file.process.failed", "fileId", file.getId(),
+                    "stage", message.getCurrentStage(), "retryCount", message.getRetryCount(),
+                    "retryability", decision, "errorType", e.getClass().getSimpleName()), e);
 
             // 智能重试：OCR 阶段允许更多次重试；Ollama 离线时保持 processStatus=1 等待服务恢复
             int maxRetry = message.getCurrentStage() == Stage.THUMBNAILED ? MAX_OCR_RETRY : MAX_RETRY;
@@ -128,8 +147,6 @@ public class FileProcessReceiver {
                         : backoffWithJitter(message.getRetryCount());
                 message.setRetryCount((byte) (message.getRetryCount() + 1));
                 message.setLastError(e.getMessage());
-                LOG.info("瞬时错误，{}ms 后重试（第 {}/{} 次）: {}",
-                        delay, message.getRetryCount(), maxRetry, file.getFileName());
                 sender.sendRetry(message, delay);
                 return;
             }
@@ -138,8 +155,9 @@ public class FileProcessReceiver {
             if (message.getCurrentStage() == Stage.THUMBNAILED
                     && decision == Retryability.TRANSIENT
                     && !ollamaService.isAvailable()) {
-                LOG.warn("Ollama 仍不可用，OCR 暂缓（保持等待状态）: {} — 启动 Ollama 后将自动重试",
-                        file.getFileName());
+                LOG.warn(StructuredLog.event("file.process.degraded", "fileId", file.getId(),
+                        "stage", message.getCurrentStage(), "dependency", "ollama",
+                        "reason", "unavailable_after_retries"));
                 file.setProcessStatus((byte) 1);
                 updateProcessingFields(file);
                 notifyStatusChange(file);
@@ -151,8 +169,8 @@ public class FileProcessReceiver {
                 file.setProcessStatus((byte) -1);
                 updateProcessingFields(file);
                 notifyStatusChange(file);
-                LOG.error("文件处理彻底失败（源文件不可用）: {} (阶段={})",
-                        file.getFileName(), message.getCurrentStage());
+                LOG.error(StructuredLog.event("file.process.failed", "fileId", file.getId(),
+                        "stage", message.getCurrentStage(), "errorCode", "SOURCE_UNAVAILABLE"));
                 return;
             }
 
@@ -171,26 +189,29 @@ public class FileProcessReceiver {
         String reason = decision == Retryability.PERMANENT ? "不可恢复的处理错误" : "外部服务多次重试仍不可用";
         switch (message.getCurrentStage()) {
             case UPLOADED -> {
-                LOG.warn("缩略图生成失败（{}），跳过并继续: {}", reason, file.getFileName());
+                LOG.warn(StructuredLog.event("file.process.degraded", "fileId", file.getId(),
+                        "stage", Stage.UPLOADED, "reason", reason));
                 file.setProcessStatus((byte) 1);
                 updateProcessingFields(file);
                 notifyStatusChange(file);
                 if (needsTextExtraction(file)) {
-                    sender.sendProcess(new FileProcessMessage(file.getId(), Stage.THUMBNAILED));
+                    sender.sendProcess(message.next(Stage.THUMBNAILED));
                 } else {
-                    sender.sendProcess(new FileProcessMessage(file.getId(), Stage.TEXT_EXTRACTED));
+                    sender.sendProcess(message.next(Stage.TEXT_EXTRACTED));
                 }
             }
             case THUMBNAILED -> {
-                LOG.warn("文本提取失败（{}），跳过并继续索引: {}", reason, file.getFileName());
+                LOG.warn(StructuredLog.event("file.process.degraded", "fileId", file.getId(),
+                        "stage", Stage.THUMBNAILED, "reason", reason));
                 file.setProcessStatus((byte) 2);
                 updateProcessingFields(file);
                 notifyStatusChange(file);
-                sender.sendProcess(new FileProcessMessage(file.getId(), Stage.TEXT_EXTRACTED));
+                sender.sendProcess(message.next(Stage.TEXT_EXTRACTED));
             }
             default -> {
                 // 索引阶段失败（搜索服务/ES 不可用）→ 文件可用，仅暂不可被搜索
-                LOG.warn("索引失败（{}），降级为可用（暂不可被搜索）: {}", reason, file.getFileName());
+                LOG.warn(StructuredLog.event("file.process.degraded", "fileId", file.getId(),
+                        "stage", Stage.TEXT_EXTRACTED, "reason", reason));
                 file.setProcessStatus((byte) 3);
                 updateProcessingFields(file);
                 notifyStatusChange(file);
@@ -231,6 +252,10 @@ public class FileProcessReceiver {
         } catch (Exception e) {
             LOG.debug("SSE 状态推送失败: {}", file.getId(), e);
         }
+    }
+
+    private long elapsedMs(long started) {
+        return (System.nanoTime() - started) / 1_000_000;
     }
 
     /** 错误可重试性分类 */
