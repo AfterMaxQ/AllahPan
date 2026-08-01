@@ -1,1 +1,0 @@
-{ "query": { "match_all": {} }, "size": 9, "_source": ["fileId", "fileName", "originText"] }
