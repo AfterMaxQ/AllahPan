@@ -78,7 +78,7 @@ public class FileProcessReceiver {
                         }
                     }
                     file.setProcessStatus((byte) 1);
-                    fileMapper.updateByPrimaryKeySelective(file);
+                    updateProcessingFields(file);
                     notifyStatusChange(file);
                     if (needsTextExtraction(file)) {
                         sender.sendProcess(new FileProcessMessage(file.getId(), Stage.THUMBNAILED));
@@ -98,7 +98,7 @@ public class FileProcessReceiver {
                         file.setOriginText(text);
                     }
                     file.setProcessStatus((byte) 2);
-                    fileMapper.updateByPrimaryKeySelective(file);
+                    updateProcessingFields(file);
                     notifyStatusChange(file);
 	                    sender.sendProcess(new FileProcessMessage(file.getId(), Stage.TEXT_EXTRACTED));
                 }
@@ -109,7 +109,7 @@ public class FileProcessReceiver {
 	                    }
                     esIndexService.index(file);
                     file.setProcessStatus((byte) 3);
-                    fileMapper.updateByPrimaryKeySelective(file);
+                    updateProcessingFields(file);
                     notifyStatusChange(file);
                     LOG.info("文件处理完成: {}", file.getFileName());
                 }
@@ -141,7 +141,7 @@ public class FileProcessReceiver {
                 LOG.warn("Ollama 仍不可用，OCR 暂缓（保持等待状态）: {} — 启动 Ollama 后将自动重试",
                         file.getFileName());
                 file.setProcessStatus((byte) 1);
-                fileMapper.updateByPrimaryKeySelective(file);
+                updateProcessingFields(file);
                 notifyStatusChange(file);
                 return;
             }
@@ -149,7 +149,7 @@ public class FileProcessReceiver {
             if (decision == Retryability.FATAL) {
                 // 源文件缺失/不可读 → 文件真正不可用
                 file.setProcessStatus((byte) -1);
-                fileMapper.updateByPrimaryKeySelective(file);
+                updateProcessingFields(file);
                 notifyStatusChange(file);
                 LOG.error("文件处理彻底失败（源文件不可用）: {} (阶段={})",
                         file.getFileName(), message.getCurrentStage());
@@ -173,7 +173,7 @@ public class FileProcessReceiver {
             case UPLOADED -> {
                 LOG.warn("缩略图生成失败（{}），跳过并继续: {}", reason, file.getFileName());
                 file.setProcessStatus((byte) 1);
-                fileMapper.updateByPrimaryKeySelective(file);
+                updateProcessingFields(file);
                 notifyStatusChange(file);
                 if (needsTextExtraction(file)) {
                     sender.sendProcess(new FileProcessMessage(file.getId(), Stage.THUMBNAILED));
@@ -184,7 +184,7 @@ public class FileProcessReceiver {
             case THUMBNAILED -> {
                 LOG.warn("文本提取失败（{}），跳过并继续索引: {}", reason, file.getFileName());
                 file.setProcessStatus((byte) 2);
-                fileMapper.updateByPrimaryKeySelective(file);
+                updateProcessingFields(file);
                 notifyStatusChange(file);
                 sender.sendProcess(new FileProcessMessage(file.getId(), Stage.TEXT_EXTRACTED));
             }
@@ -192,10 +192,25 @@ public class FileProcessReceiver {
                 // 索引阶段失败（搜索服务/ES 不可用）→ 文件可用，仅暂不可被搜索
                 LOG.warn("索引失败（{}），降级为可用（暂不可被搜索）: {}", reason, file.getFileName());
                 file.setProcessStatus((byte) 3);
-                fileMapper.updateByPrimaryKeySelective(file);
+                updateProcessingFields(file);
                 notifyStatusChange(file);
             }
         }
+    }
+
+    /**
+     * 文件处理可能持续数秒甚至数分钟。期间用户可以重命名或移动文件，因此不能用处理开始时
+     * 读取的整行 File 做 selective update（其中大量非空旧字段会覆盖用户的新操作）。
+     * 这里只提交处理流水线负责的字段，确保文件名、父目录、路径和存储键保持最新。
+     */
+    private void updateProcessingFields(File file) {
+        File patch = new File();
+        patch.setId(file.getId());
+        patch.setProcessStatus(file.getProcessStatus());
+        patch.setThumbnailKey(file.getThumbnailKey());
+        patch.setPreviewKey(file.getPreviewKey());
+        patch.setOriginText(file.getOriginText());
+        fileMapper.updateByPrimaryKeySelective(patch);
     }
 
     /**
@@ -203,13 +218,15 @@ public class FileProcessReceiver {
      */
     private void notifyStatusChange(File file) {
         try {
+            File latest = fileMapper.selectByPrimaryKey(file.getId());
+            if (latest == null || latest.getDeleteTime() != null) return;
             sseBroadcaster.broadcast("file-updated", java.util.Map.of(
-                    "fileId", file.getId(),
-                    "parentId", file.getParentId() != null ? file.getParentId() : 0L,
-                    "processStatus", file.getProcessStatus() != null ? (int) file.getProcessStatus() : 0,
-                    "thumbnailKey", file.getThumbnailKey() != null ? file.getThumbnailKey() : "",
-                    "previewKey", file.getPreviewKey() != null ? file.getPreviewKey() : "",
-                    "originText", file.getOriginText() != null ? file.getOriginText() : ""
+                    "fileId", latest.getId(),
+                    "parentId", latest.getParentId() != null ? latest.getParentId() : 0L,
+                    "processStatus", latest.getProcessStatus() != null ? (int) latest.getProcessStatus() : 0,
+                    "thumbnailKey", latest.getThumbnailKey() != null ? latest.getThumbnailKey() : "",
+                    "previewKey", latest.getPreviewKey() != null ? latest.getPreviewKey() : "",
+                    "originText", latest.getOriginText() != null ? latest.getOriginText() : ""
             ));
         } catch (Exception e) {
             LOG.debug("SSE 状态推送失败: {}", file.getId(), e);

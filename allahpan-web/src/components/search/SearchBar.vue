@@ -1,13 +1,12 @@
 <template>
-  <div class="search-bar">
+  <form class="search-bar" role="search" @submit.prevent="triggerSearch">
     <el-input
       v-model="keyword"
       placeholder="搜索文件或内容..."
       :prefix-icon="Search"
       clearable
-      @keyup.enter="triggerSearch"
     />
-  </div>
+  </form>
 </template>
 
 <script setup>

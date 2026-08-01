@@ -5,11 +5,11 @@ export function createShareLink(fileId, expireHours = 24) {
 }
 
 export function getSharedContent(code) {
-  return request.get(`/share/${code}`)
+  return request.get(`/share/${encodeURIComponent(code)}`, { suppressErrorMessage: true })
 }
 
 export function deleteShareLink(code) {
-  return request.delete(`/share/${code}`)
+  return request.delete(`/share/${encodeURIComponent(code)}`)
 }
 
 export async function downloadSharedFile(code, fileName, onProgress, signal) {

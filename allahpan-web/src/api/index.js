@@ -38,8 +38,13 @@ request.interceptors.response.use(
       return Promise.reject(new Error(res.message || '未授权'))
     }
 
-    ElMessage.error(res.message || '系统错误')
-    return Promise.reject(new Error(res.message || 'Error'))
+    if (!response.config.suppressErrorMessage) {
+      ElMessage.error(res.message || '系统错误')
+    }
+    const error = new Error(res.message || 'Error')
+    error.businessCode = res.code
+    error.data = res
+    return Promise.reject(error)
   },
   (error) => {
     if (error.response?.status === 401) {
@@ -47,7 +52,7 @@ request.interceptors.response.use(
       userStore.logout()
       router.push('/login')
       ElMessage.warning('登录已过期，请重新登录')
-    } else {
+    } else if (!error.config?.suppressErrorMessage) {
       ElMessage.error(error.message || '网络请求失败')
     }
     return Promise.reject(error)

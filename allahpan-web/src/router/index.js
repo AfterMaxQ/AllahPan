@@ -43,7 +43,7 @@ router.beforeEach((to, from, next) => {
     return next('/login')
   }
 
-  if (userStore.token && userStore.isFirstLogin && to.path !== '/set-password') {
+  if (!to.meta.public && userStore.token && userStore.isFirstLogin && to.path !== '/set-password') {
     return next('/set-password')
   }
 

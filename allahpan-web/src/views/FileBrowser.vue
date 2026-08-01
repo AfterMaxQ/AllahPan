@@ -1,13 +1,16 @@
 <template>
   <div class="file-browser">
-    <!-- 工具栏（移动端隐藏，用FAB代替） -->
     <FileToolbar
-      v-if="!isMobile"
       :selected-count="selectedFiles.length"
+      :total-count="totalFiles"
+      :view-mode="fileStore.viewMode"
       @upload="triggerUpload"
       @upload-folder="triggerUploadFolder"
       @create-folder="triggerCreateFolder"
       @batch-delete="triggerBatchDelete"
+      @share="triggerShare"
+      @clear-selection="selectedFiles = []"
+      @view-mode-change="fileStore.setViewMode"
     />
 
     <!-- 文件列表 -->
@@ -24,7 +27,9 @@
         <FileListView
           v-else
           :files="files"
+          :selected-ids="selectedFiles.map((f) => f.id)"
           @selection-change="handleListSelection"
+          @item-toggle-select="toggleItemSelection"
           @item-contextmenu="openContextMenu"
           @item-open="handleItemOpen"
         />
@@ -66,8 +71,14 @@
     <FilePreviewDialog ref="previewDialogRef" />
 
     <!-- 分享链接弹窗 -->
-    <el-dialog v-model="shareVisible" title="分享文件" width="460px" destroy-on-close>
+    <el-dialog
+      v-model="shareVisible"
+      title="分享文件"
+      width="min(460px, calc(100vw - 24px))"
+      destroy-on-close
+    >
       <div class="share-box">
+        <p class="share-file-name ap-file-name" dir="auto" :title="shareFileName">{{ shareFileName }}</p>
         <p>通过以下链接即可访问该文件：</p>
         <el-input :model-value="shareLink" readonly class="share-input">
           <template #append>
@@ -76,6 +87,14 @@
         </el-input>
         <p class="expire-tip">有效期至：{{ shareExpireTime }}</p>
       </div>
+      <template #footer>
+        <div class="share-actions">
+          <el-button @click="shareVisible = false">关闭</el-button>
+          <el-button type="danger" plain :loading="shareCanceling" @click="cancelCurrentShare">
+            取消此分享
+          </el-button>
+        </div>
+      </template>
     </el-dialog>
 
     <!-- 移动文件对话框 -->
@@ -117,7 +136,7 @@ import { useFileStore } from '@/stores/file'
 import { useTransferStore } from '@/stores/transfer'
 import { getFilePage, deleteFile, batchDeleteFiles, renameFile, moveFile } from '@/api/file'
 import { addFavorite } from '@/api/favorite'
-import { createShareLink } from '@/api/share'
+import { createShareLink, deleteShareLink } from '@/api/share'
 import { formatDate } from '@/utils/format'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Upload, FolderOpened, FolderAdd } from '@element-plus/icons-vue'
@@ -162,6 +181,9 @@ const moveDialogRef = ref(null)
 const shareVisible = ref(false)
 const shareLink = ref('')
 const shareExpireTime = ref('')
+const shareFileName = ref('')
+const shareCode = ref('')
+const shareCanceling = ref(false)
 
 // 移动
 const pendingMoveFile = ref(null)
@@ -242,8 +264,9 @@ const triggerBatchDelete = () => {
   }).catch(() => {})
 }
 
-// 选择
+// 桌面端选择
 const toggleItemSelection = (file) => {
+  if (isMobile.value) return
   const idx = selectedFiles.value.findIndex((f) => f.id === file.id)
   if (idx > -1) {
     selectedFiles.value.splice(idx, 1)
@@ -253,6 +276,7 @@ const toggleItemSelection = (file) => {
 }
 
 const handleListSelection = (selection) => {
+  if (isMobile.value) return
   selectedFiles.value = selection
 }
 
@@ -264,6 +288,11 @@ const handleItemOpen = (file) => {
     previewDialogRef.value?.open(file)
   }
 }
+
+// 移动端不提供批量选择，切换到窄屏时清理桌面端遗留的选中项。
+watch(isMobile, (mobile) => {
+  if (mobile) selectedFiles.value = []
+})
 
 // 右键菜单
 const openContextMenu = (event, file) => {
@@ -292,10 +321,7 @@ const handleMenuAction = async (action) => {
         ElMessage.success('已加入收藏')
         break
       case 'share': {
-        const res = await createShareLink(file.id, 24)
-        shareLink.value = `${window.location.origin}/share/${res.shareCode}`
-        shareExpireTime.value = formatDate(res.expireTime)
-        shareVisible.value = true
+        await openShareDialog(file)
         break
       }
       case 'rename': {
@@ -331,6 +357,20 @@ const handleMenuAction = async (action) => {
   }
 }
 
+const triggerShare = () => {
+  if (selectedFiles.value.length !== 1) return
+  openShareDialog(selectedFiles.value[0])
+}
+
+const openShareDialog = async (file) => {
+  const res = await createShareLink(file.id, 24)
+  shareFileName.value = file.fileName
+  shareCode.value = res.shareCode
+  shareLink.value = `${window.location.origin}/share/${res.shareCode}`
+  shareExpireTime.value = formatDate(res.expireTime)
+  shareVisible.value = true
+}
+
 const handleMoveConfirm = async (targetParentId) => {
   if (!pendingMoveFile.value) return
   try {
@@ -345,15 +385,59 @@ const handleMoveConfirm = async (targetParentId) => {
   }
 }
 
-const copyShareLink = () => {
-  navigator.clipboard.writeText(shareLink.value)
-  ElMessage.success('链接已复制到剪贴板')
+const copyShareLink = async () => {
+  try {
+    let copied = false
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(shareLink.value)
+        copied = true
+      } catch {
+        // 非 HTTPS、权限被拒绝等情况下继续尝试兼容复制。
+      }
+    }
+    if (!copied) {
+      const textarea = document.createElement('textarea')
+      textarea.value = shareLink.value
+      textarea.setAttribute('readonly', '')
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      try {
+        textarea.select()
+        copied = document.execCommand('copy')
+      } finally {
+        document.body.removeChild(textarea)
+      }
+      if (!copied) throw new Error('复制失败')
+    }
+    ElMessage.success('链接已复制到剪贴板')
+  } catch {
+    ElMessage.error('无法自动复制，请长按链接手动复制')
+  }
+}
+
+const cancelCurrentShare = async () => {
+  if (!shareCode.value || shareCanceling.value) return
+  shareCanceling.value = true
+  try {
+    await deleteShareLink(shareCode.value)
+    shareVisible.value = false
+    shareCode.value = ''
+    shareLink.value = ''
+    shareExpireTime.value = ''
+    shareFileName.value = ''
+    ElMessage.success('分享已取消，原链接立即失效')
+  } finally {
+    shareCanceling.value = false
+  }
 }
 </script>
 
 <style scoped>
 .empty-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 20px;
   justify-content: center;
 }
@@ -363,23 +447,45 @@ const copyShareLink = () => {
 .share-input {
   margin: 16px 0;
 }
+.share-file-name {
+  margin: 0 0 8px;
+  color: var(--ap-text-main);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: pre-wrap;
+}
 .expire-tip {
   font-size: 12px;
   color: var(--ap-text-sub);
+}
+.share-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 768px) {
+  .share-actions :deep(.el-button) {
+    min-height: 42px;
+  }
 }
 
 /* FAB */
 .fab-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.2);
-  z-index: 2098;
+  background: rgba(61, 50, 38, 0.22);
+  backdrop-filter: blur(2px);
+  z-index: 1200;
 }
 .fab-container {
   position: fixed;
-  bottom: 72px;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
   right: 16px;
-  z-index: 2099;
+  z-index: 1201;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -402,8 +508,9 @@ const copyShareLink = () => {
   color: var(--ap-text-main);
   background: var(--ap-bg-card);
   padding: 6px 12px;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--ap-border-color);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(61, 50, 38, 0.1);
 }
 .fab-btn {
   width: 48px;
@@ -414,7 +521,7 @@ const copyShareLink = () => {
   justify-content: center;
   border: none;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 6px 18px rgba(111, 75, 47, 0.24);
   color: #fff;
 }
 .fab-btn.main {
@@ -427,5 +534,18 @@ const copyShareLink = () => {
   background: var(--el-color-primary-light-3);
   width: 42px;
   height: 42px;
+}
+
+.file-pagination {
+  display: flex;
+  justify-content: center;
+  margin-top: 22px;
+}
+
+@media (max-width: 768px) {
+  .file-browser { padding-bottom: 74px; }
+  .empty-actions { gap: 8px; }
+  .empty-actions :deep(.el-button) { width: 100%; margin-left: 0; }
+  .file-pagination { margin-top: 16px; overflow-x: auto; justify-content: flex-start; padding-bottom: 4px; }
 }
 </style>

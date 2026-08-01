@@ -50,6 +50,16 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+}
+
 /* ===== Element Plus 全局微调 ===== */
 .el-button {
   border-radius: 10px;
@@ -81,6 +91,15 @@ body {
   border-radius: 16px;
   overflow: hidden;
   box-shadow: 0 12px 40px rgba(61, 50, 38, 0.1);
+}
+
+.el-dialog__header {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--ap-border-color);
+}
+
+.el-dialog__body {
+  overflow-wrap: anywhere;
 }
 
 .el-menu {
@@ -146,6 +165,26 @@ body {
   white-space: nowrap;
 }
 
+/* 文件名必须保留完整内容；仅在没有自然断点时才从任意位置换行。 */
+.ap-file-name {
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: pre-wrap;
+  hyphens: auto;
+  unicode-bidi: plaintext;
+}
+
+.el-dialog__title {
+  min-width: 0;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: normal;
+}
+
 /* ===== 进度条平滑过渡 ===== */
 .el-progress-bar__inner {
   transition: width 0.3s ease !important;
@@ -170,9 +209,45 @@ html {
     min-height: 44px;
     min-width: 44px;
   }
+
+  .el-dialog {
+    width: calc(100vw - 20px) !important;
+    max-width: none;
+    margin-top: max(10px, 2vh) !important;
+    border-radius: 14px;
+  }
+
+  .el-dialog__header {
+    padding: 14px 16px 12px;
+  }
+
+  .el-dialog__body {
+    max-height: calc(100dvh - 100px);
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .el-message-box {
+    width: calc(100vw - 28px);
+    max-width: 420px;
+  }
 }
 
 /* ===== 安全区域 ===== */
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

@@ -9,33 +9,12 @@
       </el-button>
       <slot name="breadcrumb" />
     </div>
-    <div class="right">
-      <template v-if="isMobile">
-        <el-button v-if="!searchVisible" class="search-toggle" text @click="searchVisible = true">
-          <el-icon size="20"><Search /></el-icon>
-        </el-button>
-        <div v-else class="mobile-search-bar">
-          <el-input
-            ref="mobileSearchRef"
-            v-model="mobileKeyword"
-            placeholder="搜索文件..."
-            :prefix-icon="Search"
-            clearable
-            size="small"
-            @keyup.enter="doMobileSearch"
-            @blur="onSearchBlur"
-          />
-        </div>
-      </template>
-      <SearchBar v-else />
-    </div>
+    <div v-if="!isMobile" class="right"><SearchBar /></div>
   </header>
 </template>
 
 <script setup>
-import { ref, nextTick, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { Fold, Expand, Search } from '@element-plus/icons-vue'
+import { Fold, Expand } from '@element-plus/icons-vue'
 import { useResponsive } from '@/composables/useResponsive'
 import SearchBar from '@/components/search/SearchBar.vue'
 
@@ -45,53 +24,27 @@ defineProps({
 defineEmits(['toggle-sidebar'])
 
 const { isMobile } = useResponsive()
-const router = useRouter()
-const searchVisible = ref(false)
-const mobileKeyword = ref('')
-const mobileSearchRef = ref(null)
-
-watch(searchVisible, async (val) => {
-  if (val) {
-    await nextTick()
-    mobileSearchRef.value?.focus()
-  }
-})
-
-const doMobileSearch = () => {
-  const q = mobileKeyword.value.trim()
-  if (!q) return
-  router.push({ path: '/search', query: { q } })
-  searchVisible.value = false
-  mobileKeyword.value = ''
-}
-
-const onSearchBlur = () => {
-  setTimeout(() => {
-    if (mobileKeyword.value.trim() === '') {
-      searchVisible.value = false
-    }
-  }, 150)
-}
 </script>
 
 <style scoped>
 .app-header {
-  min-height: 48px;
+  min-height: 58px;
   background-color: var(--ap-bg-card);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  padding: 6px 16px;
+  padding: 7px 16px;
   border-bottom: 1px solid var(--ap-border-color);
   flex-shrink: 0;
 }
 .app-header.mobile {
-  min-height: 48px;
-  padding: 6px 12px;
+  min-height: 50px;
+  align-items: flex-start;
+  padding: 5px 10px;
 }
 .left {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   min-width: 0;
   flex: 1;
@@ -101,11 +54,10 @@ const onSearchBlur = () => {
 }
 .right {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
 }
-.search-toggle {
-  padding: 8px;
-}
-.mobile-search-bar {
-  width: 180px;
+@media (max-width: 768px) {
+  .app-header.mobile .left { align-items: flex-start; padding-top: 0; }
 }
 </style>

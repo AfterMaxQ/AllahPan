@@ -27,7 +27,7 @@
         @dblclick="navigateTo(folder.id)"
       >
         <el-icon :size="20" color="#409EFF"><FolderOpened /></el-icon>
-        <span class="folder-name">{{ folder.fileName }}</span>
+        <span class="folder-name ap-file-name" dir="auto" :title="folder.fileName">{{ folder.fileName }}</span>
         <el-button size="small" type="primary" @click.stop="confirmMove(folder.id)">移动到此</el-button>
       </div>
     </div>
@@ -119,7 +119,7 @@ defineExpose({ open })
 }
 .move-folder-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 8px 4px;
   border-bottom: 1px solid #f0f0f0;
@@ -130,8 +130,10 @@ defineExpose({ open })
 }
 .folder-name {
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding-top: 5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: pre-wrap;
 }
 </style>

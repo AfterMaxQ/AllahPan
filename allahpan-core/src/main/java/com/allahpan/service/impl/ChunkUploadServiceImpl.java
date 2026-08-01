@@ -283,7 +283,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             record.setMd5(actualMd5);
             record.setIsFolder((byte) 0);
             record.setProcessStatus((byte) 0);
-            record.setFileType(detectFileType(contentType));
+            record.setFileType(detectFileType(contentType, finalName));
             record.setCreateTime(new Date());
             record.setFilePath(buildPath(finalName, parentId));
             fileMapper.insert(record);
@@ -647,22 +647,36 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         return path.toString();
     }
 
-    private String detectFileType(String contentType) {
-        if (contentType == null) return "OTHER";
-        if (contentType.startsWith("image/")) return "IMAGE";
-        if (contentType.startsWith("video/")) return "VIDEO";
-        if (contentType.startsWith("application/pdf")) return "DOCUMENT";
-        if (contentType.equals("application/msword")) return "DOCUMENT";
-        if (contentType.equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+    /**
+     * 分片上传的 contentType 同样可能是 application/octet-stream，
+     * DOC/DOCX 必须用最终文件名扩展名兜底，才能进入文本提取和在线预览流程。
+     */
+    private String detectFileType(String contentType, String fileName) {
+        String type = contentType != null ? contentType.toLowerCase(java.util.Locale.ROOT) : "";
+        if (type.startsWith("image/")) return "IMAGE";
+        if (type.startsWith("video/")) return "VIDEO";
+        if (type.startsWith("application/pdf")) return "DOCUMENT";
+        if (type.equals("application/msword")) return "DOCUMENT";
+        if (type.equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
             return "DOCUMENT";
-        if (contentType.equals("application/vnd.ms-excel")) return "DOCUMENT";
-        if (contentType.equals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+        String extension = extensionOf(fileName);
+        if ("doc".equals(extension) || "docx".equals(extension)) return "DOCUMENT";
+        if (type.equals("application/vnd.ms-excel")) return "DOCUMENT";
+        if (type.equals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
             return "DOCUMENT";
-        if (contentType.equals("application/vnd.ms-powerpoint")) return "DOCUMENT";
-        if (contentType.equals("application/vnd.openxmlformats-officedocument.presentationml.presentation"))
+        if (type.equals("application/vnd.ms-powerpoint")) return "DOCUMENT";
+        if (type.equals("application/vnd.openxmlformats-officedocument.presentationml.presentation"))
             return "DOCUMENT";
-        if (contentType.startsWith("text/")) return "DOCUMENT";
+        if (type.startsWith("text/")) return "DOCUMENT";
         return "OTHER";
+    }
+
+    private String extensionOf(String fileName) {
+        if (fileName == null) return "";
+        int dot = fileName.lastIndexOf('.');
+        return dot >= 0 && dot < fileName.length() - 1
+                ? fileName.substring(dot + 1).toLowerCase(java.util.Locale.ROOT)
+                : "";
     }
 
     private Map<String, Object> toFileResponse(File f) {

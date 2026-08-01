@@ -14,7 +14,7 @@
               :file-type="file.fileType"
               :file-name="file.fileName"
               :thumb-url="thumbUrl(file)"
-              :size="64"
+              :size="isMobile ? 52 : 64"
             />
             <el-button
               class="remove-btn"
@@ -27,7 +27,7 @@
             />
           </div>
           <div class="info-area">
-            <span class="file-name" :title="file.fileName">{{ file.fileName }}</span>
+            <span class="file-name ap-file-name" dir="auto" :title="file.fileName">{{ file.fileName }}</span>
             <span class="origin-path" :title="file.filePath">{{ file.filePath }}</span>
             <span v-if="file.isFolder !== 1" class="file-size">{{ formatBytes(file.fileSize) }}</span>
           </div>
@@ -112,8 +112,8 @@ onMounted(loadFavorites)
 }
 .fav-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: clamp(12px, 1.5vw, 18px);
 }
 .fav-card {
   background-color: var(--ap-bg-card);
@@ -153,22 +153,24 @@ onMounted(loadFavorites)
   display: flex;
   flex-direction: column;
   min-width: 0;
+  flex: 1;
 }
 .file-name {
   font-size: 14px;
   font-weight: 600;
   color: var(--ap-text-main);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: pre-wrap;
 }
 .origin-path {
   font-size: 12px;
   color: var(--ap-text-sub);
   margin-top: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .file-size {
   font-size: 11px;
@@ -178,7 +180,7 @@ onMounted(loadFavorites)
 
 @media (max-width: 768px) {
   .fav-grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
   }
   .page-header {
@@ -187,5 +189,8 @@ onMounted(loadFavorites)
   .fav-card .remove-btn {
     opacity: 1;
   }
+  .preview-area { height: 94px; }
+  .info-area { padding: 10px; }
+  .file-name { font-size: 15px; line-height: 1.48; }
 }
 </style>

@@ -41,7 +41,12 @@ export const useFileStore = defineStore('file', () => {
   }
 
   const toggleViewMode = () => {
-    viewMode.value = viewMode.value === 'grid' ? 'list' : 'grid'
+    setViewMode(viewMode.value === 'grid' ? 'list' : 'grid')
+  }
+
+  const setViewMode = (mode) => {
+    if (mode !== 'grid' && mode !== 'list') return
+    viewMode.value = mode
     localStorage.setItem('allahpan_viewMode', viewMode.value)
   }
 
@@ -52,6 +57,6 @@ export const useFileStore = defineStore('file', () => {
   return {
     currentFolderId, viewMode, refreshTrigger,
     canGoBack, canGoForward, navigateTo, goBack, goForward,
-    setCurrentFolder, toggleViewMode, triggerRefresh,
+    setCurrentFolder, toggleViewMode, setViewMode, triggerRefresh,
   }
 })

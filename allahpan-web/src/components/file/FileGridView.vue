@@ -25,14 +25,32 @@ defineEmits(['item-contextmenu', 'item-toggle-select', 'item-open'])
 <style scoped>
 .grid-container {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  align-items: stretch;
+  gap: clamp(12px, 1.4vw, 18px);
+}
+
+@media (min-width: 1440px) {
+  .grid-container {
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .grid-container {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+  }
 }
 
 @media (max-width: 768px) {
   .grid-container {
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
   }
+}
+
+@media (max-width: 300px) {
+  .grid-container { grid-template-columns: 1fr; }
 }
 </style>

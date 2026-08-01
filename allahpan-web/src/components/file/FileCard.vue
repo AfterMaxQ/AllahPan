@@ -1,17 +1,17 @@
 <template>
   <div
     class="file-card"
-    :class="{ selected: isSelected, mobile: isMobile }"
-    @contextmenu.prevent="$emit('contextmenu', $event)"
+    :class="{ selected: !isMobile && isSelected, mobile: isMobile }"
+    @contextmenu.prevent.stop="handleContextMenu"
     @click="handleClick"
-    @dblclick="$emit('open')"
+    @dblclick="handleDoubleClick"
   >
-    <div class="select-checkbox" @click.stop="$emit('toggle-select')">
+    <div v-if="!isMobile" class="select-checkbox" @click.stop="$emit('toggle-select')">
       <el-checkbox :model-value="isSelected" @click.stop="$emit('toggle-select')" />
     </div>
-    <div v-if="isMobile" class="more-btn" @click.stop="handleMore">
+    <button v-if="isMobile" type="button" class="more-btn" :aria-label="`${file.fileName}的更多操作`" @click.stop="handleMore">
       <el-icon size="18"><MoreFilled /></el-icon>
-    </div>
+    </button>
 
     <div class="preview-area">
       <FileIcon
@@ -24,9 +24,12 @@
     </div>
 
     <div class="info-area">
-      <span class="file-name" :title="file.fileName">{{ file.fileName }}</span>
+      <span class="file-name ap-file-name" dir="auto" :title="file.fileName">{{ file.fileName }}</span>
       <div class="meta-row">
-        <ProcessBadge v-if="file.isFolder !== 1" :status="file.processStatus" />
+        <ProcessBadge
+          v-if="file.isFolder !== 1 && (!isMobile || file.processStatus !== 3)"
+          :status="file.processStatus"
+        />
         <span v-if="file.isFolder !== 1" class="size-label">{{ formatBytes(file.fileSize) }}</span>
       </div>
     </div>
@@ -47,9 +50,11 @@ defineProps({
 const emit = defineEmits(['contextmenu', 'toggle-select', 'open'])
 
 const { isMobile } = useResponsive()
+let suppressClickUntil = 0
 
 const handleClick = () => {
   if (isMobile.value) {
+    if (Date.now() < suppressClickUntil) return
     emit('open')
   } else {
     emit('toggle-select')
@@ -58,6 +63,15 @@ const handleClick = () => {
 
 const handleMore = (e) => {
   emit('contextmenu', e)
+}
+
+const handleContextMenu = (event) => {
+  if (isMobile.value) suppressClickUntil = Date.now() + 700
+  emit('contextmenu', event)
+}
+
+const handleDoubleClick = () => {
+  if (!isMobile.value) emit('open')
 }
 </script>
 
@@ -70,6 +84,9 @@ const handleMore = (e) => {
   position: relative;
   cursor: pointer;
   display: flex;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
   flex-direction: column;
   align-items: center;
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
@@ -110,7 +127,7 @@ const handleMore = (e) => {
   opacity: 1;
 }
 .preview-area {
-  height: 90px;
+  height: 92px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -118,16 +135,18 @@ const handleMore = (e) => {
 .info-area {
   width: 100%;
   text-align: center;
-  margin-top: 8px;
+  margin-top: 6px;
+  min-width: 0;
 }
 .file-name {
   font-size: 14px;
   font-weight: 500;
   color: var(--ap-text-main);
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: pre-wrap;
 }
 .meta-row {
   margin-top: 4px;
@@ -141,17 +160,24 @@ const handleMore = (e) => {
 
 /* 移动端 */
 .file-card.mobile {
-  padding: 8px;
-  border-radius: 12px;
+  padding: 10px;
+  border-radius: 14px;
 }
 .file-card.mobile:hover {
   transform: none;
 }
-.file-card.mobile .select-checkbox {
-  opacity: 1;
-}
 .file-card.mobile .preview-area {
-  height: 64px;
+  height: 70px;
+}
+.file-card.mobile .info-area {
+  min-height: 70px;
+  padding-bottom: 34px;
+  box-sizing: border-box;
+}
+.file-card.mobile .file-name {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.48;
 }
 
 .more-btn {
@@ -163,10 +189,16 @@ const handleMore = (e) => {
   z-index: 2;
   color: var(--ap-text-sub);
   background: var(--ap-bg-card);
+  border: 0;
+  font: inherit;
   display: flex;
   align-items: center;
   justify-content: center;
   min-width: 44px;
   min-height: 44px;
+}
+
+@media (hover: none) {
+  .file-card:hover { transform: none; box-shadow: none; }
 }
 </style>

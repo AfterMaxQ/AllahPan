@@ -40,7 +40,7 @@
   <transition name="sheet-slide">
     <div v-if="visible && isMobile" class="action-sheet-overlay" @click.self="$emit('close')">
       <div class="action-sheet">
-        <div class="sheet-title">{{ activeFile?.fileName || '操作' }}</div>
+        <div class="sheet-title ap-file-name" dir="auto">{{ activeFile?.fileName || '操作' }}</div>
         <div class="sheet-item" @click="doAction('open')">
           <el-icon><FolderOpened /></el-icon>
           <span>{{ activeFile?.isFolder ? '打开文件夹' : '预览文件' }}</span>
@@ -176,9 +176,11 @@ onUnmounted(() => {
   padding: 14px 0;
   border-bottom: 1px solid var(--ap-border-color);
   margin-bottom: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-height: 88px;
+  overflow-y: auto;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .sheet-item {
   display: flex;

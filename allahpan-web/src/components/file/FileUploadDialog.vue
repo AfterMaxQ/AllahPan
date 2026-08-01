@@ -36,7 +36,7 @@
           点击选择<em>文件夹</em>
         </div>
         <div v-if="selectedFolderName" class="folder-name">
-          已选择：<strong>{{ selectedFolderName }}</strong>（{{ folderFileCount }} 个文件）
+          已选择：<strong class="ap-file-name" dir="auto">{{ selectedFolderName }}</strong>（{{ folderFileCount }} 个文件）
         </div>
       </div>
       <input

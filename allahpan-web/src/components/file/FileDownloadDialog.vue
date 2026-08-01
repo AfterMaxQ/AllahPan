@@ -8,7 +8,7 @@
     destroy-on-close
   >
     <div class="download-body">
-      <div class="file-name" :title="fileName">{{ fileName }}</div>
+      <div class="file-name ap-file-name" dir="auto" :title="fileName">{{ fileName }}</div>
       <el-progress
         :percentage="progress.percent"
         :status="progress.status === 'done' ? 'success' : progress.status === 'error' ? 'exception' : ''"
@@ -92,9 +92,10 @@ defineExpose({ open })
   font-size: 14px;
   font-weight: 500;
   color: var(--ap-text-main);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: pre-wrap;
 }
 .download-detail {
   display: flex;

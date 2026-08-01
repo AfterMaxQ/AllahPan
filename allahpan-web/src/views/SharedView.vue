@@ -30,7 +30,7 @@
               :size="80"
             />
           </div>
-          <h3>{{ sharedItem.fileName }}</h3>
+          <h3 class="ap-file-name" dir="auto" :title="sharedItem.fileName">{{ sharedItem.fileName }}</h3>
           <p class="meta">
             大小：{{ formatBytes(sharedItem.fileSize) }}
             <template v-if="sharedItem.createTime">
@@ -53,7 +53,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Share } from '@element-plus/icons-vue'
 import { downloadSharedFile, getSharedContent } from '@/api/share'
@@ -73,15 +73,24 @@ const downloadText = ref('正在准备下载...')
 
 const loadShare = async () => {
   const code = route.params.code
+  expired.value = false
+  errorMessage.value = ''
+  sharedItem.value = null
   loading.value = true
   try {
     sharedItem.value = await getSharedContent(code)
   } catch (err) {
     const status = err?.response?.status
-    if (status === 404 || err?.data?.message?.includes('过期') || err?.data?.message?.includes('不存在')) {
+    const message = err?.data?.message || err?.message || ''
+    if (
+      status === 404
+      || message.includes('过期')
+      || message.includes('不存在')
+      || message.includes('已删除')
+    ) {
       expired.value = true
     } else {
-      errorMessage.value = status ? `服务器错误 (${status})` : '网络连接失败，请稍后重试'
+      errorMessage.value = message || (status ? `服务器错误 (${status})` : '网络连接失败，请稍后重试')
     }
     console.error('加载分享失败', err)
   } finally {
@@ -105,16 +114,20 @@ const handleDownload = async () => {
   }
 }
 
-onMounted(loadShare)
+watch(() => route.params.code, loadShare, { immediate: true })
 </script>
 
 <style scoped>
 .share-landing {
   background-color: var(--ap-bg-page);
-  height: 100vh;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 24px 0;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow-y: auto;
 }
 .card {
   background-color: var(--ap-bg-card);
@@ -154,9 +167,10 @@ onMounted(loadShare)
   margin: 0 0 8px 0;
   color: var(--ap-text-main);
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: pre-wrap;
 }
 .meta {
   font-size: 12px;

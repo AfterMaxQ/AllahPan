@@ -127,7 +127,7 @@ public class FileServiceImpl implements FileService {
         record.setMd5(md5);
         record.setIsFolder((byte) 0);
         record.setProcessStatus((byte) 0);
-        record.setFileType(detectFileType(contentType));
+        record.setFileType(detectFileType(contentType, finalName));
         record.setCreateTime(new Date());
         record.setFilePath(buildPath(finalName, pid));
         try {
@@ -502,22 +502,36 @@ public class FileServiceImpl implements FileService {
 
     // ========== 工具方法 ==========
 
-    private String detectFileType(String contentType) {
-        if (contentType == null) return "OTHER";
-        if (contentType.startsWith("image/")) return "IMAGE";
-        if (contentType.startsWith("video/")) return "VIDEO";
-        if (contentType.startsWith("application/pdf")) return "DOCUMENT";
-        if (contentType.equals("application/msword")) return "DOCUMENT";
-        if (contentType.equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+    /**
+     * MIME 类型由浏览器提供，部分浏览器/客户端上传 Word 文件时会退化成
+     * application/octet-stream，因此 DOC/DOCX 需要用文件扩展名兜底识别。
+     */
+    private String detectFileType(String contentType, String fileName) {
+        String type = contentType != null ? contentType.toLowerCase(java.util.Locale.ROOT) : "";
+        if (type.startsWith("image/")) return "IMAGE";
+        if (type.startsWith("video/")) return "VIDEO";
+        if (type.startsWith("application/pdf")) return "DOCUMENT";
+        if (type.equals("application/msword")) return "DOCUMENT";
+        if (type.equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
             return "DOCUMENT";
-        if (contentType.equals("application/vnd.ms-excel")) return "DOCUMENT";
-        if (contentType.equals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+        String extension = extensionOf(fileName);
+        if ("doc".equals(extension) || "docx".equals(extension)) return "DOCUMENT";
+        if (type.equals("application/vnd.ms-excel")) return "DOCUMENT";
+        if (type.equals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
             return "DOCUMENT";
-        if (contentType.equals("application/vnd.ms-powerpoint")) return "DOCUMENT";
-        if (contentType.equals("application/vnd.openxmlformats-officedocument.presentationml.presentation"))
+        if (type.equals("application/vnd.ms-powerpoint")) return "DOCUMENT";
+        if (type.equals("application/vnd.openxmlformats-officedocument.presentationml.presentation"))
             return "DOCUMENT";
-        if (contentType.startsWith("text/")) return "DOCUMENT";
+        if (type.startsWith("text/")) return "DOCUMENT";
         return "OTHER";
+    }
+
+    private String extensionOf(String fileName) {
+        if (fileName == null) return "";
+        int dot = fileName.lastIndexOf('.');
+        return dot >= 0 && dot < fileName.length() - 1
+                ? fileName.substring(dot + 1).toLowerCase(java.util.Locale.ROOT)
+                : "";
     }
 
     /**

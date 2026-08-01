@@ -13,17 +13,21 @@
                 :disabled="!fileStore.canGoBack"
                 size="small"
                 class="nav-arrow"
+                title="返回上一个文件夹位置"
+                aria-label="返回上一个文件夹位置"
                 @click="fileStore.goBack()"
               >
-                <el-icon size="14"><ArrowLeft /></el-icon>
+                <el-icon :size="isMobile ? 14 : 16"><ArrowLeft /></el-icon>
               </el-button>
               <el-button
                 :disabled="!fileStore.canGoForward"
                 size="small"
                 class="nav-arrow"
+                title="前往下一个文件夹位置"
+                aria-label="前往下一个文件夹位置"
                 @click="fileStore.goForward()"
               >
-                <el-icon size="14"><ArrowRight /></el-icon>
+                <el-icon :size="isMobile ? 14 : 16"><ArrowRight /></el-icon>
               </el-button>
             </div>
             <BreadcrumbNav />
@@ -62,8 +66,8 @@ const sidebarCollapsed = ref(false)
 <style scoped>
 .nav-row {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 .nav-arrows {
@@ -73,18 +77,21 @@ const sidebarCollapsed = ref(false)
   flex-shrink: 0;
 }
 .nav-arrow {
-  padding: 2px;
-  min-width: auto;
-  border-radius: 4px;
-  color: #e74c3c;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 9px;
+  color: var(--el-color-primary-dark-2);
   border: 1px solid var(--ap-border-color);
   background: var(--ap-bg-card);
   transition: all 0.15s;
 }
 .nav-arrow:hover:not(:disabled) {
-  background: #fde8e5;
-  border-color: #e74c3c;
-  color: #c0392b;
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-5);
+  color: var(--el-color-primary-dark-2);
 }
 .nav-arrow:disabled {
   opacity: 0.25;
@@ -105,8 +112,10 @@ const sidebarCollapsed = ref(false)
 }
 .content-body {
   flex: 1;
-  padding: 24px;
+  padding: clamp(16px, 2vw, 28px);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
 }
 
 /* 移动端适配 */
@@ -115,10 +124,30 @@ const sidebarCollapsed = ref(false)
     flex-direction: column;
   }
   .main-container {
-    padding-bottom: 56px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(58px + env(safe-area-inset-bottom, 0px));
   }
   .content-body {
-    padding: 12px;
+    flex: 1 0 auto;
+    padding: 10px;
+    overflow: visible;
+  }
+  .nav-row {
+    width: 100%;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .nav-arrows {
+    gap: 2px;
+  }
+  .nav-arrow {
+    width: 28px;
+    min-width: 28px;
+    height: 30px;
+    min-height: 30px;
+    border-radius: 8px;
   }
 }
 

@@ -1,7 +1,7 @@
 <template>
   <div class="transfer-task" :class="task.status">
     <div class="task-head">
-      <div class="task-name" :title="task.name">{{ task.name }}</div>
+      <div class="task-name ap-file-name" dir="auto" :title="task.name">{{ task.name }}</div>
       <span class="task-status">{{ statusText }}</span>
     </div>
 
@@ -85,7 +85,7 @@ const progressStatus = computed(() => {
 }
 .task-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 8px;
@@ -96,9 +96,10 @@ const progressStatus = computed(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--ap-text-main);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: pre-wrap;
 }
 .task-status {
   font-size: 12px;
@@ -130,9 +131,9 @@ const progressStatus = computed(() => {
 .task-error {
   color: #f56c6c;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .task-actions {
   display: flex;

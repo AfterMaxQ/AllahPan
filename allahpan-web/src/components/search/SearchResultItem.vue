@@ -8,7 +8,7 @@
           :file-name="item.fileName"
           :size="32"
         />
-        <span class="name-highlight" v-html="item.fileNameHighlight || item.fileName" />
+        <span class="name-highlight ap-file-name" dir="auto" v-html="item.fileNameHighlight || item.fileName" />
         <span class="path">{{ item.filePath }}</span>
       </div>
       <div v-if="item.contentSnippets?.length" class="text-snippets">
@@ -56,13 +56,17 @@ defineEmits(['click'])
 }
 .title-section {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 12px;
 }
 .name-highlight {
+  min-width: 0;
   font-size: 16px;
   font-weight: 600;
+  line-height: 1.45;
   color: var(--el-color-primary-dark-2);
+  overflow-wrap: anywhere;
 }
 .name-highlight :deep(mark) {
   background-color: var(--el-color-primary-light-7);
@@ -71,8 +75,12 @@ defineEmits(['click'])
   border-radius: 2px;
 }
 .path {
+  width: 100%;
+  padding-left: 44px;
   font-size: 12px;
+  line-height: 1.45;
   color: var(--ap-text-sub);
+  overflow-wrap: anywhere;
 }
 .text-snippets {
   background-color: var(--ap-bg-page);
@@ -105,5 +113,14 @@ defineEmits(['click'])
   gap: 16px;
   font-size: 12px;
   color: var(--ap-text-sub);
+}
+
+@media (max-width: 768px) {
+  .result-item { padding: 12px; gap: 10px; }
+  .title-section { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 6px 10px; }
+  .name-highlight { font-size: 16px; line-height: 1.48; }
+  .path { grid-column: 2; width: auto; padding-left: 0; font-size: 12px; }
+  .text-snippets { padding: 9px; }
+  .item-meta { flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 }
 </style>

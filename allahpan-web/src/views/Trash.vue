@@ -40,7 +40,7 @@
                     :file-name="row.fileName"
                     :size="32"
                   />
-                  <span class="file-name">{{ row.fileName }}</span>
+                  <span class="file-name ap-file-name" dir="auto" :title="row.fileName">{{ row.fileName }}</span>
                 </div>
               </template>
             </el-table-column>
@@ -72,7 +72,7 @@
               :size="40"
             />
             <div class="trash-card-body">
-              <span class="file-name">{{ row.fileName }}</span>
+              <span class="file-name ap-file-name" dir="auto" :title="row.fileName">{{ row.fileName }}</span>
               <div class="trash-meta">
                 <span>{{ row.isFolder === 1 ? '-' : formatBytes(row.fileSize) }}</span>
                 <span>{{ formatDate(row.deleteTime) }}</span>
@@ -239,6 +239,10 @@ onBeforeUnmount(() => {
 .file-name {
   font-weight: 500;
   color: var(--ap-text-main);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: pre-wrap;
 }
 .file-name-cell {
   display: flex;
@@ -280,6 +284,7 @@ onBeforeUnmount(() => {
     justify-content: flex-end;
     flex-wrap: wrap;
   }
+  .file-name { font-size: 15px; line-height: 1.48; }
   .page-header {
     margin-bottom: 14px;
   }

@@ -29,6 +29,7 @@ import org.springframework.stereotype.Component;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 
 @Component
 public class TextExtractor {
@@ -52,18 +53,17 @@ public class TextExtractor {
             return ollamaService.ocr(file);
         }
         if ("DOCUMENT".equals(file.getFileType())) {
-            String ct = file.getContentType();
-            if (ct == null) {
-                LOG.warn("DOCUMENT 类型但 contentType 为 null, fileId={}", file.getId());
-                return null;
-            }
+            String ct = file.getContentType() != null
+                    ? file.getContentType().toLowerCase(Locale.ROOT) : "";
+            String extension = extensionOf(file.getFileName());
             if (ct.startsWith("application/pdf")) {
                 return extractPdfText(file);
             }
-            if (ct.equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document")) {
+            if (ct.equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                    || "docx".equals(extension)) {
                 return extractDocxText(file);
             }
-            if (ct.equals("application/msword")) {
+            if (ct.equals("application/msword") || "doc".equals(extension)) {
                 return extractDocText(file);
             }
             if (ct.equals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) {
@@ -259,6 +259,14 @@ public class TextExtractor {
 
     private InputStream open(File file) throws Exception {
         return minioUtil.getObject(file.getStorageKey());
+    }
+
+    private String extensionOf(String fileName) {
+        if (fileName == null) return "";
+        int dot = fileName.lastIndexOf('.');
+        return dot >= 0 && dot < fileName.length() - 1
+                ? fileName.substring(dot + 1).toLowerCase(Locale.ROOT)
+                : "";
     }
 
     private String truncate(String text) {
