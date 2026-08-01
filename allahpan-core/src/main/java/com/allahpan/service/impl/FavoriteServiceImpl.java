@@ -58,7 +58,23 @@ public class FavoriteServiceImpl implements FavoriteService {
     public List<File> listFavorites(int pageNum, int pageSize) {
         Long userId = getCurrentUserId();
         PageHelper.startPage(pageNum, pageSize);
-        return fileMapper.selectFavoritesByUserId(userId);
+        List<File> files = fileMapper.selectFavoritesByUserId(userId);
+        List<Long> folderIds = files.stream()
+                .filter(file -> file.getIsFolder() != null && file.getIsFolder() == 1)
+                .map(File::getId)
+                .toList();
+        if (!folderIds.isEmpty()) {
+            java.util.Map<Long, Long> sizes = new java.util.HashMap<>();
+            for (File sizeRow : fileMapper.getFolderSizes(folderIds)) {
+                sizes.put(sizeRow.getId(), sizeRow.getFileSize() != null ? sizeRow.getFileSize() : 0L);
+            }
+            for (File file : files) {
+                if (file.getIsFolder() != null && file.getIsFolder() == 1) {
+                    file.setFileSize(sizes.getOrDefault(file.getId(), 0L));
+                }
+            }
+        }
+        return files;
     }
 
     private Long getCurrentUserId() {

@@ -58,7 +58,7 @@ defineEmits(['cancel', 'retry'])
 
 const statusText = computed(() => {
   if (props.task.status === 'running') {
-    return props.task.type === 'download' ? '下载中' : '上传中'
+    return props.task.statusText || (props.task.type === 'download' ? '下载中' : '上传中')
   }
   const map = {
     queued: '等待中',

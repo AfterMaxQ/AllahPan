@@ -29,7 +29,7 @@
           <div class="info-area">
             <span class="file-name ap-file-name" dir="auto" :title="file.fileName">{{ file.fileName }}</span>
             <span class="origin-path" :title="file.filePath">{{ file.filePath }}</span>
-            <span v-if="file.isFolder !== 1" class="file-size">{{ formatBytes(file.fileSize) }}</span>
+            <span class="file-size">{{ formatBytes(file.fileSize) }}</span>
           </div>
         </div>
       </div>

@@ -46,7 +46,7 @@
             </el-table-column>
             <el-table-column label="大小" width="110">
               <template #default="{ row }">
-                {{ row.isFolder === 1 ? '-' : formatBytes(row.fileSize) }}
+                {{ formatBytes(row.fileSize) }}
               </template>
             </el-table-column>
             <el-table-column label="删除时间" width="170">
@@ -74,7 +74,7 @@
             <div class="trash-card-body">
               <span class="file-name ap-file-name" dir="auto" :title="row.fileName">{{ row.fileName }}</span>
               <div class="trash-meta">
-                <span>{{ row.isFolder === 1 ? '-' : formatBytes(row.fileSize) }}</span>
+                <span>{{ formatBytes(row.fileSize) }}</span>
                 <span>{{ formatDate(row.deleteTime) }}</span>
               </div>
             </div>

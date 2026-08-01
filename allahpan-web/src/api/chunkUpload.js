@@ -19,7 +19,12 @@ noTimeoutAxios.interceptors.response.use(
     const res = response.data
     if (res.code === undefined) return res
     if (res.code === 200) return res.data
-    return Promise.reject(new Error(res.message || 'Error'))
+    const error = new Error(res.message || 'Error')
+    // CommonResult 将业务错误包装在 HTTP 200 中，保留业务码才能让分片
+    // 上传把 500 类临时错误纳入重试，而不是直接结束整个文件任务。
+    error.businessCode = res.code
+    error.data = res
+    return Promise.reject(error)
   },
   (error) => Promise.reject(error)
 )
@@ -27,14 +32,31 @@ noTimeoutAxios.interceptors.response.use(
 export function isRetryableUploadError(error) {
   const status = error?.response?.status
   if ([408, 429, 500, 502, 503, 504, 524].includes(status)) return true
+  if ([500, 502, 503, 504].includes(Number(error?.businessCode))) return true
   const code = error?.code
   if (code === 'ECONNABORTED' || code === 'ERR_NETWORK' || code === 'ETIMEDOUT') return true
   const msg = (error?.message || '').toLowerCase()
   return msg.includes('timeout') || msg.includes('network') || msg.includes('524')
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('上传已取消', 'AbortError'))
+      return
+    }
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', handleAbort)
+      resolve()
+    }, ms)
+    const handleAbort = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', handleAbort)
+      reject(new DOMException('上传已取消', 'AbortError'))
+    }
+    signal?.addEventListener('abort', handleAbort, { once: true })
+  })
 }
 
 async function withRetry(requestFn, { maxRetries = 4, baseDelay = 1500, signal, onRetry } = {}) {
@@ -52,7 +74,7 @@ async function withRetry(requestFn, { maxRetries = 4, baseDelay = 1500, signal, 
       }
       if (!isRetryableUploadError(error) || attempt === maxRetries) throw error
       onRetry?.(attempt + 1, lastError)
-      await sleep(baseDelay * Math.pow(2, attempt))
+      await sleep(baseDelay * Math.pow(2, attempt), signal)
     }
   }
   throw lastError

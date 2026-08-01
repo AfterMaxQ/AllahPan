@@ -10,8 +10,24 @@ const MAX_UPLOADS = 3
 const MAX_DOWNLOADS = 3
 const MAX_UPLOAD_AUTO_RETRIES = 2
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('上传已取消', 'AbortError'))
+      return
+    }
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', handleAbort)
+      resolve()
+    }, ms)
+    const handleAbort = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', handleAbort)
+      reject(new DOMException('上传已取消', 'AbortError'))
+    }
+    signal?.addEventListener('abort', handleAbort, { once: true })
+  })
 }
 
 function createId(prefix) {
@@ -150,9 +166,10 @@ export const useTransferStore = defineStore('transfer', () => {
         scheduleUploads()
         return
       } catch (error) {
-        const canceled = task.controller?.signal.aborted
-        task.controller = null
+        const controller = task.controller
+        const canceled = controller?.signal.aborted
         if (canceled) {
+          task.controller = null
           updateTask(task, {
             status: 'canceled',
             statusText: '已取消',
@@ -166,10 +183,26 @@ export const useTransferStore = defineStore('transfer', () => {
         const canRetry = isRetryableUploadError(error) && attempt < MAX_UPLOAD_AUTO_RETRIES
         if (canRetry) {
           attempt += 1
-          await sleep(2000 * attempt)
+          updateTask(task, {
+            statusText: `等待重试（${attempt}/${MAX_UPLOAD_AUTO_RETRIES}）...`,
+          })
+          try {
+            await sleep(2000 * attempt, controller?.signal)
+          } catch {
+            task.controller = null
+            updateTask(task, {
+              status: 'canceled',
+              statusText: '已取消',
+              speed: 0,
+              error: '已取消',
+            })
+            scheduleUploads()
+            return
+          }
           continue
         }
 
+        task.controller = null
         updateTask(task, {
           status: 'exception',
           statusText: '上传失败',

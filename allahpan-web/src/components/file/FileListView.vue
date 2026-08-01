@@ -18,7 +18,7 @@
         <div class="mobile-file-content">
           <div class="mobile-file-name ap-file-name" dir="auto" :title="row.fileName">{{ row.fileName }}</div>
           <div class="mobile-file-meta">
-            <span>{{ row.isFolder === 1 ? '文件夹' : formatBytes(row.fileSize) }}</span>
+            <span>{{ formatBytes(row.fileSize) }}</span>
             <span class="meta-dot" aria-hidden="true" />
             <span>{{ formatDate(row.createTime) }}</span>
           </div>
@@ -64,7 +64,7 @@
         </template>
       </el-table-column>
       <el-table-column label="大小" width="120" align="right">
-        <template #default="{ row }">{{ row.isFolder === 1 ? '—' : formatBytes(row.fileSize) }}</template>
+        <template #default="{ row }">{{ formatBytes(row.fileSize) }}</template>
       </el-table-column>
       <el-table-column label="状态" width="110" align="center">
         <template #default="{ row }">

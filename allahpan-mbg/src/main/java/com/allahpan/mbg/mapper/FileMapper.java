@@ -47,6 +47,11 @@ public interface FileMapper {
     List<File> getFolderSizes(@Param("folderIds") List<Long> folderIds);
 
     /**
+     * 一次查询多个垃圾站文件夹的递归大小，包含已软删除的子孙节点。
+     */
+    List<File> getTrashFolderSizes(@Param("folderIds") List<Long> folderIds);
+
+    /**
      * 查询指定垃圾站节点及其仍在垃圾站中的所有子孙节点。
      */
     List<File> selectTrashSubtree(@Param("rootIds") List<Long> rootIds);

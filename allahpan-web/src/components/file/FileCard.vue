@@ -30,7 +30,7 @@
           v-if="file.isFolder !== 1 && (!isMobile || file.processStatus !== 3)"
           :status="file.processStatus"
         />
-        <span v-if="file.isFolder !== 1" class="size-label">{{ formatBytes(file.fileSize) }}</span>
+        <span class="size-label">{{ formatBytes(file.fileSize) }}</span>
       </div>
     </div>
   </div>

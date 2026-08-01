@@ -47,7 +47,8 @@ public class ChunkController {
         try {
             chunkUploadService.uploadChunk(uploadId, chunkIndex, chunk);
         } catch (Exception e) {
-            LOG.warn(StructuredLog.event("file.upload.chunk.failed", "chunkIndex", chunkIndex,
+            LOG.warn(StructuredLog.event("file.upload.chunk.failed", "uploadId", uploadId,
+                    "chunkIndex", chunkIndex,
                     "errorType", e.getClass().getSimpleName()), e);
             return CommonResult.failed("分片上传失败，请重试");
         }

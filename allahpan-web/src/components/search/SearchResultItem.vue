@@ -3,7 +3,7 @@
     <div class="item-main">
       <div class="title-section">
         <FileIcon
-          :is-folder="false"
+          :is-folder="item.isFolder === true || item.isFolder === 1"
           :file-type="item.fileType"
           :file-name="item.fileName"
           :size="32"

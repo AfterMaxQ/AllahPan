@@ -518,6 +518,25 @@
     GROUP BY root_id
   </select>
 
+  <!-- 一次递归计算垃圾站列表中所有文件夹的大小（包含已软删除子孙节点） -->
+  <select id="getTrashFolderSizes" resultMap="BaseResultMap">
+    WITH RECURSIVE folder_tree AS (
+      SELECT id AS root_id, id, file_size, is_folder
+      FROM files
+      WHERE id IN
+      <foreach collection="folderIds" item="id" open="(" separator="," close=")">
+        #{id,jdbcType=BIGINT}
+      </foreach>
+      UNION ALL
+      SELECT ft.root_id, f.id, f.file_size, f.is_folder
+      FROM files f
+      INNER JOIN folder_tree ft ON f.parent_id = ft.id
+    )
+    SELECT root_id AS id, COALESCE(SUM(CASE WHEN is_folder = 0 THEN file_size ELSE 0 END), 0) AS file_size
+    FROM folder_tree
+    GROUP BY root_id
+  </select>
+
   <!-- 批量永久删除前一次取回选中节点及其垃圾站子树 -->
   <select id="selectTrashSubtree" resultMap="BaseResultMap">
     WITH RECURSIVE trash_tree AS (

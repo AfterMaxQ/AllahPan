@@ -6,7 +6,9 @@ import { uploadFile } from '@/api/file'
 
 const CHUNK_SIZE = 2 * 1024 * 1024
 const CHUNK_THRESHOLD = 10 * 1024 * 1024
-const CONCURRENCY = 4
+// 每个文件最多同时上传两个分片。传输 store 最多会同时处理三个文件，
+// 这样可以把总并发控制在 6 个请求以内，避免慢网络/代理下的请求排队和超时。
+const CONCURRENCY = 2
 const UPLOAD_PROGRESS_MAX = 98
 
 function isCanceledError(error) {
@@ -204,9 +206,19 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
     }
 
     const queue = [...pendingChunks]
+    const workerController = new AbortController()
+    let firstWorkerError = null
+
+    // 任一 worker 失败时，必须先停止并等待其他 worker，才能让外层安全重试。
+    // 否则旧一轮请求会和新一轮请求同时操作同一个 uploadId，造成分片状态竞态。
+    const abortWorkers = () => {
+      if (!workerController.signal.aborted) workerController.abort()
+    }
+    const handleCallerAbort = () => abortWorkers()
+    signal?.addEventListener('abort', handleCallerAbort, { once: true })
 
     async function worker() {
-      while (queue.length > 0) {
+      while (queue.length > 0 && !firstWorkerError && !workerController.signal.aborted) {
         ensureNotCanceled(signal)
         const chunk = queue.shift()
         try {
@@ -218,11 +230,14 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
               setChunkProgress(chunk.index, Math.round(chunk.blob.size * chunkPercent / 100))
               reportProgress(getTotalLoaded(), '上传中...')
             },
-            signal,
+            workerController.signal,
           )
         } catch (e) {
-          if (isCanceledError(e) || signal?.aborted) return
-          throw e
+          // 调用方取消，或其他 worker 已经失败并触发了内部 abort，均由外层统一收口。
+          if (isCanceledError(e) || signal?.aborted || workerController.signal.aborted) return
+          firstWorkerError = e
+          abortWorkers()
+          return
         }
         setChunkProgress(chunk.index, chunk.blob.size)
         reportProgress(getTotalLoaded(), '上传中...')
@@ -230,8 +245,13 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
     }
 
     const workerCount = Math.min(CONCURRENCY, Math.max(pendingChunks.length, 1))
-    await Promise.all(Array.from({ length: workerCount }, () => worker()))
-    ensureNotCanceled(signal)
+    try {
+      await Promise.all(Array.from({ length: workerCount }, () => worker()))
+      ensureNotCanceled(signal)
+      if (firstWorkerError) throw firstWorkerError
+    } finally {
+      signal?.removeEventListener('abort', handleCallerAbort)
+    }
 
     startMergeKeepalive()
     await completeUpload(uploadId, signal)

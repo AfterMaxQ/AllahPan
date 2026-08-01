@@ -83,7 +83,13 @@ public class GlobalExceptionHandler {
                 "errorId", errorId, "errorCode", errorCode,
                 "path", RequestLogFilter.safeRequestPath(request.getRequestURI()),
                 "reason", error.getClass().getSimpleName());
-        if (stacktrace) LOG.error(message, error);
+        // EventSource 断开时 Spring 会以 AsyncRequestNotUsableException 结束 SSE
+        // 请求，这是客户端离开页面/网络切换后的正常清理，不应伪装成服务端 500。
+        if ("AsyncRequestNotUsableException".equals(error.getClass().getSimpleName())) {
+            LOG.debug(StructuredLog.event("http.client.disconnected",
+                    "path", RequestLogFilter.safeRequestPath(request.getRequestURI()),
+                    "errorType", error.getClass().getSimpleName()));
+        } else if (stacktrace) LOG.error(message, error);
         else LOG.info(message);
         return errorId;
     }

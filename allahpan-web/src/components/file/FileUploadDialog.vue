@@ -36,7 +36,7 @@
           点击选择<em>文件夹</em>
         </div>
         <div v-if="selectedFolderName" class="folder-name">
-          已选择：<strong class="ap-file-name" dir="auto">{{ selectedFolderName }}</strong>（{{ folderFileCount }} 个文件）
+          已选择：<strong class="ap-file-name" dir="auto">{{ selectedFolderName }}</strong>（{{ folderFileCount }} 个文件，{{ formatBytes(folderTotalSize) }}）
         </div>
       </div>
       <input
@@ -61,6 +61,7 @@ import { UploadFilled, FolderOpened } from '@element-plus/icons-vue'
 import { useFileStore } from '@/stores/file'
 import { useTransferStore } from '@/stores/transfer'
 import { createFolder } from '@/api/file'
+import { formatBytes } from '@/utils/format'
 
 const visible = ref(false)
 const mode = ref('file') // 'file' | 'folder'
@@ -69,6 +70,7 @@ const transferStore = useTransferStore()
 const folderInputRef = ref(null)
 const selectedFolderName = ref('')
 const folderFileCount = ref(0)
+const folderTotalSize = ref(0)
 
 const open = () => {
   mode.value = 'file'
@@ -80,6 +82,7 @@ const openFolder = () => {
   visible.value = true
   selectedFolderName.value = ''
   folderFileCount.value = 0
+  folderTotalSize.value = 0
 }
 
 defineExpose({ open, openFolder })
@@ -107,6 +110,7 @@ const handleFolderChange = async (event) => {
   const firstPath = files[0].webkitRelativePath || files[0].name
   selectedFolderName.value = firstPath.split('/')[0]
   folderFileCount.value = files.length
+  folderTotalSize.value = files.reduce((total, file) => total + (file.size || 0), 0)
 
   // 1. 收集所有唯一目录路径，按深度排序
   const dirSet = new Set()

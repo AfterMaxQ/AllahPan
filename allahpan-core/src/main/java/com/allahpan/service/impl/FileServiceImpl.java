@@ -182,7 +182,7 @@ public class FileServiceImpl implements FileService {
         // 分页前先给数据库一个稳定的全局顺序，避免翻页时记录漂移或重复。
         example.setOrderByClause("is_folder DESC, file_name ASC, id ASC");
         List<File> files = fileMapper.selectByExample(example);
-        populateFolderSizes(files);
+        populateFolderSizes(files, false);
         files.sort(this::compareFiles);
         return files;
     }
@@ -303,7 +303,9 @@ public class FileServiceImpl implements FileService {
                 .andUploaderIdEqualTo(userId);
         example.setOrderByClause("delete_time DESC");
         PageHelper.startPage(pageNum, pageSize);
-        return fileMapper.selectByExample(example);
+        List<File> files = fileMapper.selectByExample(example);
+        populateFolderSizes(files, true);
+        return files;
     }
 
     @Override
@@ -776,7 +778,7 @@ public class FileServiceImpl implements FileService {
         return fileMapper.countByExample(example) > 0;
     }
 
-    private void populateFolderSizes(List<File> files) {
+    private void populateFolderSizes(List<File> files, boolean includeDeleted) {
         List<Long> folderIds = files.stream()
                 .filter(file -> file.getIsFolder() != null && file.getIsFolder() == 1)
                 .map(File::getId)
@@ -784,7 +786,10 @@ public class FileServiceImpl implements FileService {
         if (folderIds.isEmpty()) return;
 
         Map<Long, Long> sizes = new HashMap<>();
-        for (File sizeRow : fileMapper.getFolderSizes(folderIds)) {
+        List<File> sizeRows = includeDeleted
+                ? fileMapper.getTrashFolderSizes(folderIds)
+                : fileMapper.getFolderSizes(folderIds);
+        for (File sizeRow : sizeRows) {
             sizes.put(sizeRow.getId(), sizeRow.getFileSize() != null ? sizeRow.getFileSize() : 0L);
         }
         for (File file : files) {
