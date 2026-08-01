@@ -1,6 +1,7 @@
 import request from './index'
 import axios from 'axios'
 import { useUserStore } from '@/stores/user'
+import { uploadFileName } from '@/utils/fileName'
 
 // 无超时的 axios 实例（用于大文件下载）
 const noTimeoutAxios = axios.create({ baseURL: '/api', timeout: 0 })
@@ -15,7 +16,9 @@ noTimeoutAxios.interceptors.request.use((config) => {
 // 单步上传（multipart）
 export function uploadFile(file, parentId, onProgress, signal) {
   const formData = new FormData()
-  formData.append('file', file)
+  // Explicitly override multipart's filename. Some browsers retain
+  // webkitRelativePath for files selected through a directory input.
+  formData.append('file', file, uploadFileName(file))
   formData.append('parentId', parentId || 0)
   return request.post('/file/upload', formData, {
     timeout: 300000, // 5 分钟超时，覆盖默认 30s，给慢速网络和 MinIO 处理足够时间

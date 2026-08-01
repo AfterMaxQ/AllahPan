@@ -62,6 +62,7 @@ import { useFileStore } from '@/stores/file'
 import { useTransferStore } from '@/stores/transfer'
 import { createFolder } from '@/api/file'
 import { formatBytes } from '@/utils/format'
+import { uploadFileName } from '@/utils/fileName'
 
 const visible = ref(false)
 const mode = ref('file') // 'file' | 'folder'
@@ -160,7 +161,7 @@ const handleFolderChange = async (event) => {
   for (let i = 0; i < fileList.length; i++) {
     const file = fileList[i]
     const parentId = fileTaskIds[i]
-    transferStore.enqueueUpload(file, parentId, (file.webkitRelativePath || file.name).split('/').pop())
+    transferStore.enqueueUpload(file, parentId, uploadFileName(file))
   }
 
   transferStore.notifyQueued(fileList.length, '上传')

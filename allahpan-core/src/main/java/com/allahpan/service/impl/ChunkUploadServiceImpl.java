@@ -15,6 +15,7 @@ import com.allahpan.mbg.mapper.FileMapper;
 import com.allahpan.mbg.model.File;
 import com.allahpan.mbg.model.FileExample;
 import com.allahpan.service.ChunkUploadService;
+import com.allahpan.util.UploadFileName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,6 +78,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     @Override
     public Map<String, Object> init(String fileName, long fileSize, String fileMd5,
                                     String contentType, Long parentId, int chunkSize, int totalChunks) {
+        fileName = UploadFileName.baseName(fileName);
         Long userId = getCurrentUserId();
         Long pid = parentId != null ? parentId : 0L;
         validateUploadRequest(fileName, fileSize, fileMd5, pid, chunkSize, totalChunks);

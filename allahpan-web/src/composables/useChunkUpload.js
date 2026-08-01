@@ -3,6 +3,7 @@ import { calculateMD5 } from '@/utils/md5'
 import { SpeedTracker, formatSpeed, formatETA } from '@/utils/transfer'
 import { initUpload, uploadChunk, completeUpload } from '@/api/chunkUpload'
 import { uploadFile } from '@/api/file'
+import { uploadFileName } from '@/utils/fileName'
 
 const CHUNK_SIZE = 2 * 1024 * 1024
 const CHUNK_THRESHOLD = 10 * 1024 * 1024
@@ -140,7 +141,7 @@ async function uploadWithChunks(file, parentId, taskId, onTaskUpdate, signal) {
     emit({ statusText: '准备中...' })
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
     const initResult = await initUpload({
-      fileName: file.name,
+      fileName: uploadFileName(file),
       fileSize: file.size,
       fileMd5,
       contentType: file.type || 'application/octet-stream',

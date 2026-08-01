@@ -5,6 +5,7 @@ import { uploadTransferFile } from '@/composables/useChunkUpload'
 import { downloadFile } from '@/api/file'
 import { isRetryableUploadError } from '@/api/chunkUpload'
 import { useFileStore } from '@/stores/file'
+import { uploadFileName } from '@/utils/fileName'
 
 const MAX_UPLOADS = 3
 const MAX_DOWNLOADS = 3
@@ -97,8 +98,13 @@ export const useTransferStore = defineStore('transfer', () => {
     })
   }
 
-  function enqueueUpload(file, parentId = 0, name = file.name) {
-    const task = createTask('upload', { file, parentId, name, size: file.size })
+  function enqueueUpload(file, parentId = 0, name) {
+    const task = createTask('upload', {
+      file,
+      parentId,
+      name: name || uploadFileName(file),
+      size: file.size,
+    })
     uploads.value.unshift(task)
     openPanel()
     scheduleUploads()

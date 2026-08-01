@@ -9,6 +9,7 @@ import com.allahpan.mbg.mapper.FileMapper;
 import com.allahpan.mbg.model.File;
 import com.allahpan.mbg.model.FileExample;
 import com.allahpan.service.FileService;
+import com.allahpan.util.UploadFileName;
 import com.github.pagehelper.PageHelper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -57,7 +58,7 @@ public class FileServiceImpl implements FileService {
             validateActiveFolder(pid);
         }
 
-        String originalName = file.getOriginalFilename();
+        String originalName = UploadFileName.baseName(file.getOriginalFilename());
         Asserts.isTrue(originalName != null && !originalName.isBlank(), "文件名不能为空");
         Asserts.isTrue(originalName.length() <= MAX_FILE_NAME_LENGTH,
                 "文件名过长（最大" + MAX_FILE_NAME_LENGTH + "字符）");
