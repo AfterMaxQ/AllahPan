@@ -20,7 +20,9 @@ public class EsFile {
     @Id
     private Long fileId;
 
-    @Field(type = FieldType.Text, analyzer = "ik_max_word")
+    @MultiField(
+            mainField = @Field(type = FieldType.Text, analyzer = "ik_max_word"),
+            otherFields = @InnerField(suffix = "raw", type = FieldType.Keyword, ignoreAbove = 512))
     private String fileName;
 
     @Field(type = FieldType.Keyword)

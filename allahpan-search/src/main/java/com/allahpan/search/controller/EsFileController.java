@@ -2,6 +2,7 @@ package com.allahpan.search.controller;
 
 import com.allahpan.search.service.EsFileService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -37,11 +38,27 @@ public class EsFileController {
     }
 
     @GetMapping("/search")
-    public Map<String, Object> search(
+    public ResponseEntity<Map<String, Object>> search(
             @RequestParam String keyword,
             @RequestParam(required = false) String fileType,
+            @RequestParam(required = false) Long minSize,
+            @RequestParam(required = false) Long maxSize,
+            @RequestParam(required = false) String startTime,
+            @RequestParam(required = false) String endTime,
+            @RequestParam(required = false, defaultValue = "all") String searchScope,
+            @RequestParam(required = false, defaultValue = "relevance") String sortBy,
+            @RequestParam(required = false, defaultValue = "desc") String sortOrder,
+            @RequestParam(required = false) String filterExpression,
             @RequestParam(defaultValue = "1") int pageNum,
             @RequestParam(defaultValue = "20") int pageSize) {
-        return esFileService.search(keyword, fileType, pageNum, pageSize);
+        try {
+            return ResponseEntity.ok(esFileService.search(keyword, fileType,
+                    minSize, maxSize, startTime, endTime, searchScope,
+                    sortBy, sortOrder, filterExpression, pageNum, pageSize));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", e.getMessage() == null ? "搜索筛选条件无效" : e.getMessage()));
+        }
     }
 }

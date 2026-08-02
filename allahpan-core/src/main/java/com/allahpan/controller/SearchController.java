@@ -21,11 +21,12 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.http.HttpClient;
 import java.net.URI;
 import java.time.Duration;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
@@ -56,15 +57,31 @@ public class SearchController {
     public CommonResult<Map<String, Object>> search(
             @RequestParam String keyword,
             @RequestParam(required = false) String fileType,
+            @RequestParam(required = false) Long minSize,
+            @RequestParam(required = false) Long maxSize,
+            @RequestParam(required = false) String startTime,
+            @RequestParam(required = false) String endTime,
+            @RequestParam(required = false, defaultValue = "all") String searchScope,
+            @RequestParam(required = false, defaultValue = "relevance") String sortBy,
+            @RequestParam(required = false, defaultValue = "desc") String sortOrder,
+            @RequestParam(required = false) String filterExpression,
             @RequestParam(defaultValue = "1") int pageNum,
             @RequestParam(defaultValue = "20") int pageSize) {
-        // 手动构建 URI（URLEncoder + URI 构造器确保中文参数正确编码）
-        String encodedKeyword = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
-        String query = "keyword=" + encodedKeyword + "&pageNum=" + pageNum + "&pageSize=" + pageSize;
-        if (fileType != null && !fileType.isEmpty()) {
-            query += "&fileType=" + URLEncoder.encode(fileType, StandardCharsets.UTF_8);
-        }
-        URI uri = URI.create(searchServiceUrl + "/search?" + query);
+        UriComponentsBuilder builder = UriComponentsBuilder
+                .fromUriString(searchServiceUrl + "/search")
+                .queryParam("keyword", keyword)
+                .queryParam("pageNum", pageNum)
+                .queryParam("pageSize", pageSize);
+        addQueryParam(builder, "fileType", fileType);
+        addQueryParam(builder, "minSize", minSize);
+        addQueryParam(builder, "maxSize", maxSize);
+        addQueryParam(builder, "startTime", startTime);
+        addQueryParam(builder, "endTime", endTime);
+        addQueryParam(builder, "searchScope", searchScope);
+        addQueryParam(builder, "sortBy", sortBy);
+        addQueryParam(builder, "sortOrder", sortOrder);
+        addQueryParam(builder, "filterExpression", filterExpression);
+        URI uri = builder.encode(StandardCharsets.UTF_8).build().toUri();
         long started = System.nanoTime();
         try {
             HttpHeaders headers = new HttpHeaders();
@@ -78,12 +95,22 @@ public class SearchController {
                     "fileType", fileType, "pageNum", pageNum, "pageSize", pageSize,
                     "resultCount", total, "durationMs", elapsedMs(started)));
             return CommonResult.success(result);
+        } catch (HttpClientErrorException.BadRequest e) {
+            LOG.warn(StructuredLog.event("search.invalid_filter", "keywordLength", keyword.length(),
+                    "durationMs", elapsedMs(started)));
+            return CommonResult.failed("搜索筛选条件无效，请检查后重试");
         } catch (RestClientException e) {
             LOG.warn(StructuredLog.event("search.failed", "keywordLength", keyword.length(),
                     "fileType", fileType, "errorType", e.getClass().getSimpleName(),
                     "durationMs", elapsedMs(started)));
             return CommonResult.failed("搜索服务暂不可用，请稍后重试");
         }
+    }
+
+    private void addQueryParam(UriComponentsBuilder builder, String name, Object value) {
+        if (value == null) return;
+        if (value instanceof String text && text.isBlank()) return;
+        builder.queryParam(name, value);
     }
 
     @PostMapping("/rebuild-index")

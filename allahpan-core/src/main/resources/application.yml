@@ -1,3 +1,8 @@
 spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
+
+allahpan:
+  share:
+    # 分享页必须使用公网入口，不能取访问者当前的 localhost/内网地址。
+    public-base-url: ${ALLAHPAN_PUBLIC_BASE_URL:https://allahpan.cn}

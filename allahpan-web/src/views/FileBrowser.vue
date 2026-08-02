@@ -362,11 +362,32 @@ const triggerShare = () => {
   openShareDialog(selectedFiles.value[0])
 }
 
+const getPublicShareUrl = (value) => {
+  const rawUrl = String(value || '').trim()
+  if (!rawUrl) return ''
+
+  try {
+    const url = new URL(rawUrl)
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    const isLocalHost = ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(host)
+    if (!['http:', 'https:'].includes(url.protocol) || isLocalHost) return ''
+    return rawUrl
+  } catch {
+    return ''
+  }
+}
+
 const openShareDialog = async (file) => {
   const res = await createShareLink(file.id, 24)
+  const publicShareUrl = getPublicShareUrl(res.shareUrl)
+  if (!publicShareUrl) {
+    ElMessage.error('公网分享地址未配置，请联系管理员')
+    return
+  }
+
   shareFileName.value = file.fileName
   shareCode.value = res.shareCode
-  shareLink.value = `${window.location.origin}/share/${res.shareCode}`
+  shareLink.value = publicShareUrl
   shareExpireTime.value = formatDate(res.expireTime)
   shareVisible.value = true
 }

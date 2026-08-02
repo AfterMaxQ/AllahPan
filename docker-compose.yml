@@ -80,6 +80,8 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       ALLAHPAN_CHUNK_TEMP_DIR: /tmp/allahpan-chunks
       ALLAHPAN_SEARCH_SERVICE_URL: http://search:8081/es-admin/files
+      # 分享链接始终指向公网入口，即使用户从 localhost:88 打开管理页面。
+      ALLAHPAN_PUBLIC_BASE_URL: ${ALLAHPAN_PUBLIC_BASE_URL:-https://allahpan.cn}
       # Ollama 运行在宿主机，容器通过 host.docker.internal 访问
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       ALLAHPAN_SLOW_REQUEST_MS: 1000

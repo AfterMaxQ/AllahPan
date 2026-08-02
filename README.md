@@ -124,6 +124,16 @@ Windows PowerShell 也可以直接使用项目脚本：
 | RabbitMQ 控制台 | <http://localhost:15672> | 消息队列管理 |
 | Swagger UI | <http://localhost:8088/swagger-ui/index.html> | API 文档 |
 
+分享链接固定使用公网入口生成，不会使用打开管理页面的当前地址。Docker Compose 默认使用
+`https://allahpan.cn`；如果部署到其他公网域名，请设置 `ALLAHPAN_PUBLIC_BASE_URL`，例如：
+
+```bash
+ALLAHPAN_PUBLIC_BASE_URL=https://drive.example.com docker compose up -d --build
+```
+
+即使从 `http://localhost:88` 创建分享，复制出的链接也会是
+`https://drive.example.com/share/{分享码}` 这样的公网页面地址。
+
 查看容器状态和日志：
 
 ```bash

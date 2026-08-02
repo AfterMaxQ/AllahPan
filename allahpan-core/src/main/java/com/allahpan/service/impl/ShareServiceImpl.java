@@ -10,10 +10,13 @@ import com.allahpan.service.ShareService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -27,6 +30,8 @@ public class ShareServiceImpl implements ShareService {
     private RedisService redisService;
     @Autowired
     private FileMapper fileMapper;
+    @Value("${allahpan.share.public-base-url:https://allahpan.cn}")
+    private String publicBaseUrl;
 
     @Override
     public Map<String, Object> createShare(Long fileId, int expireHours) {
@@ -37,6 +42,7 @@ public class ShareServiceImpl implements ShareService {
         Asserts.isTrue(file.getStorageKey() != null, "文件无存储对象");
         Asserts.isTrue(expireHours > 0 && expireHours <= MAX_EXPIRE_HOURS,
                 "有效期需在 1~" + MAX_EXPIRE_HOURS + " 小时之间");
+        String shareBaseUrl = getPublicBaseUrl();
 
         // 生成唯一分享码（最多重试 10 次）
         String code = null;
@@ -62,7 +68,9 @@ public class ShareServiceImpl implements ShareService {
 
         Map<String, Object> result = new HashMap<>();
         result.put("shareCode", code);
-        result.put("shareUrl", "/api/share/" + code);
+        // shareUrl 是给用户复制的公网分享页；API 地址另行返回，避免把接口地址当成页面地址。
+        result.put("shareUrl", shareBaseUrl + "/share/" + code);
+        result.put("shareApiUrl", shareBaseUrl + "/api/share/" + code);
         result.put("expireTime", new Date(expireTime));
         return result;
     }
@@ -137,5 +145,48 @@ public class ShareServiceImpl implements ShareService {
         }
         Asserts.fail(ResultCode.UNAUTHORIZED);
         return 0L;
+    }
+
+    /**
+     * 分享链接不能根据当前请求的 Host 生成：用户可能是从 localhost 或内网入口发起分享的。
+     * 这里统一使用部署配置中的公网入口，并拒绝明显的本地地址，避免再次生成不可分享的链接。
+     */
+    private String getPublicBaseUrl() {
+        String baseUrl = publicBaseUrl == null ? "" : publicBaseUrl.trim();
+        Asserts.isTrue(!baseUrl.isEmpty(), "公网分享地址未配置，请联系管理员");
+
+        URI uri;
+        try {
+            uri = URI.create(baseUrl);
+        } catch (IllegalArgumentException e) {
+            Asserts.fail("公网分享地址配置无效，请联系管理员");
+            return "";
+        }
+
+        String scheme = uri.getScheme();
+        String host = uri.getHost();
+        Asserts.isTrue(("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                        && host != null
+                        && !isLocalHost(host)
+                        && uri.getQuery() == null
+                        && uri.getFragment() == null,
+                "公网分享地址配置无效，请使用公网 http(s) 地址");
+
+        int end = baseUrl.length();
+        while (end > 0 && baseUrl.charAt(end - 1) == '/') {
+            end--;
+        }
+        return baseUrl.substring(0, end);
+    }
+
+    private boolean isLocalHost(String host) {
+        String normalizedHost = host.toLowerCase(Locale.ROOT);
+        if (normalizedHost.startsWith("[") && normalizedHost.endsWith("]")) {
+            normalizedHost = normalizedHost.substring(1, normalizedHost.length() - 1);
+        }
+        return "localhost".equals(normalizedHost)
+                || "127.0.0.1".equals(normalizedHost)
+                || "0.0.0.0".equals(normalizedHost)
+                || "::1".equals(normalizedHost);
     }
 }

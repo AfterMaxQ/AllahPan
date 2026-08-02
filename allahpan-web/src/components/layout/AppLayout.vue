@@ -17,7 +17,10 @@
                 aria-label="返回上一个文件夹位置"
                 @click="fileStore.goBack()"
               >
-                <el-icon :size="isMobile ? 14 : 16"><ArrowLeft /></el-icon>
+                <el-icon :size="isMobile ? 14 : 16">
+                  <ArrowLeftBold v-if="isMobile" />
+                  <ArrowLeft v-else />
+                </el-icon>
               </el-button>
               <el-button
                 :disabled="!fileStore.canGoForward"
@@ -27,7 +30,10 @@
                 aria-label="前往下一个文件夹位置"
                 @click="fileStore.goForward()"
               >
-                <el-icon :size="isMobile ? 14 : 16"><ArrowRight /></el-icon>
+                <el-icon :size="isMobile ? 14 : 16">
+                  <ArrowRightBold v-if="isMobile" />
+                  <ArrowRight v-else />
+                </el-icon>
               </el-button>
             </div>
             <BreadcrumbNav />
@@ -49,7 +55,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowLeftBold, ArrowRight, ArrowRightBold } from '@element-plus/icons-vue'
 import { useResponsive } from '@/composables/useResponsive'
 import { useFileStore } from '@/stores/file'
 import AppSidebar from './AppSidebar.vue'
@@ -148,6 +154,7 @@ const sidebarCollapsed = ref(false)
     height: 30px;
     min-height: 30px;
     border-radius: 8px;
+    color: color-mix(in srgb, var(--el-color-primary-dark-2) 70%, var(--ap-text-main));
   }
 }
 

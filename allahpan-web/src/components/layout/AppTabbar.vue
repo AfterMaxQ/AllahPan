@@ -99,7 +99,10 @@ const submitSearch = () => {
   const q = keyword.value.trim()
   if (!q) return
   closeSearch()
-  router.push({ path: '/search', query: { q } })
+  router.push({
+    path: '/search',
+    query: { ...route.query, q, pageNum: '1' },
+  })
 }
 </script>
 

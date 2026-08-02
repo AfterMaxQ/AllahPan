@@ -1,11 +1,16 @@
 package com.allahpan.search.service.impl;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.SortOrder;
+import co.elastic.clients.elasticsearch._types.SortOptions;
+import co.elastic.clients.elasticsearch._types.mapping.FieldType;
+import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import co.elastic.clients.elasticsearch._types.query_dsl.TextQueryType;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import com.allahpan.search.domain.EsFile;
 import com.allahpan.search.repository.EsFileRepository;
 import com.allahpan.search.service.EsFileService;
+import com.allahpan.search.service.SearchExpressionParser;
 import com.allahpan.common.log.StructuredLog;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -33,6 +38,8 @@ public class EsFileServiceImpl implements EsFileService {
     private ElasticsearchClient elasticsearchClient;
     @Autowired
     private ElasticsearchOperations elasticsearchOperations;
+    @Autowired
+    private SearchExpressionParser searchExpressionParser;
 
     @PostConstruct
     public void ensureIndexExists() {
@@ -94,25 +101,81 @@ public class EsFileServiceImpl implements EsFileService {
     }
 
     @Override
-    public Map<String, Object> search(String keyword, String fileType, int pageNum, int pageSize) {
+    public Map<String, Object> search(String keyword, String fileType,
+        Long minSize, Long maxSize, String startTime, String endTime,
+            String searchScope, String sortBy, String sortOrder,
+            String filterExpression, int pageNum, int pageSize) {
+        if (keyword == null || keyword.isBlank()) throw new IllegalArgumentException("搜索关键词不能为空");
+        final int normalizedPageNum = Math.max(pageNum, 1);
+        final int normalizedPageSize = Math.max(1, Math.min(pageSize, 100));
+        if ((minSize != null && minSize < 0) || (maxSize != null && maxSize < 0)) {
+            throw new IllegalArgumentException("文件大小不能是负数");
+        }
+        if (minSize != null && maxSize != null && minSize > maxSize) {
+            throw new IllegalArgumentException("最小文件大小不能大于最大文件大小");
+        }
+
+        Query expressionQuery = searchExpressionParser.parse(filterExpression);
+        String normalizedScope = normalizeSearchScope(searchScope);
+        String normalizedSort = normalizeSortBy(sortBy);
+        SortOrder normalizedOrder = normalizeSortOrder(sortOrder);
+        final String normalizedStartTime = startTime == null || startTime.isBlank() ? null : normalizeDate(startTime);
+        final String normalizedEndTime = endTime == null || endTime.isBlank() ? null : normalizeDate(endTime);
+        if (normalizedStartTime != null && normalizedEndTime != null
+                && normalizedStartTime.compareTo(normalizedEndTime) > 0) {
+            throw new IllegalArgumentException("开始时间不能晚于结束时间");
+        }
+        List<SortOptions> sortOptions = buildSortOptions(normalizedSort, normalizedOrder);
+
         var request = co.elastic.clients.elasticsearch.core.SearchRequest.of(s -> s
                 .index(EsFile.INDEX_NAME)
                 .query(q -> q
                         .bool(b -> {
                             // must: 至少匹配一个字段（标题或内容）
-                            b.must(m -> m
-                                    .multiMatch(mm -> mm
-                                            .fields("fileName^10", "originText^5", "originText.char^2")
+                            b.must(m -> {
+                                if ("name".equals(normalizedScope)) {
+                                    return m.match(mm -> mm.field("fileName").query(keyword));
+                                }
+                                if ("content".equals(normalizedScope)) {
+                                    return m.multiMatch(mm -> mm
+                                            .fields("originText^5", "originText.char^2")
                                             .query(keyword)
-                                            .type(TextQueryType.BestFields)));
+                                            .type(TextQueryType.BestFields));
+                                }
+                                return m.multiMatch(mm -> mm
+                                        .fields("fileName^10", "originText^5", "originText.char^2")
+                                        .query(keyword)
+                                        .type(TextQueryType.BestFields));
+                            });
                             // should: 标题命中额外加分，确保标题匹配优先于纯内容匹配
-                            b.should(sh -> sh
-                                    .match(mt -> mt
-                                            .field("fileName")
-                                            .query(keyword)
-                                            .boost(50.0f)));
+                            if (!"content".equals(normalizedScope)) {
+                                b.should(sh -> sh
+                                        .match(mt -> mt
+                                                .field("fileName")
+                                                .query(keyword)
+                                                .boost(50.0f)));
+                            }
                             if (fileType != null && !fileType.isEmpty()) {
-                                b.filter(f -> f.term(t -> t.field("fileType").value(fileType)));
+                                b.filter(f -> f.term(t -> t.field("fileType").value(normalizeFileType(fileType))));
+                            }
+                            if (minSize != null || maxSize != null) {
+                                b.filter(f -> f.range(r -> r.number(n -> {
+                                    n.field("fileSize");
+                                    if (minSize != null) n.gte(minSize.doubleValue());
+                                    if (maxSize != null) n.lte(maxSize.doubleValue());
+                                    return n;
+                                })));
+                            }
+                            if (normalizedStartTime != null || normalizedEndTime != null) {
+                                b.filter(f -> f.range(r -> r.date(d -> {
+                                    d.field("createTime");
+                                    if (normalizedStartTime != null) d.gte(normalizedStartTime);
+                                    if (normalizedEndTime != null) d.lte(normalizedEndTime);
+                                    return d;
+                                })));
+                            }
+                            if (expressionQuery != null) {
+                                b.filter(expressionQuery);
                             }
                             return b;
                         }))
@@ -125,8 +188,9 @@ public class EsFileServiceImpl implements EsFileService {
                                 .preTags("<mark>").postTags("</mark>")))
                 .aggregations("fileTypes", a -> a
                         .terms(t -> t.field("fileType").size(10)))
-                .from((pageNum - 1) * pageSize)
-                .size(pageSize));
+                .sort(sortOptions)
+                .from((normalizedPageNum - 1) * normalizedPageSize)
+                .size(normalizedPageSize));
 
         SearchResponse<EsFile> response;
         try {
@@ -184,6 +248,69 @@ public class EsFileServiceImpl implements EsFileService {
             result.put("aggregations", Map.of("fileTypes", aggList));
         }
         return result;
+    }
+
+    private String normalizeFileType(String value) {
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        if (!Set.of("IMAGE", "VIDEO", "DOCUMENT", "OTHER").contains(normalized)) {
+            throw new IllegalArgumentException("不支持的文件类型: " + value);
+        }
+        return normalized;
+    }
+
+    private List<SortOptions> buildSortOptions(String sortBy, SortOrder order) {
+        if ("relevance".equals(sortBy)) return List.of();
+        String field = switch (sortBy) {
+            case "fileName" -> "fileName.raw";
+            case "fileSize" -> "fileSize";
+            case "createTime" -> "createTime";
+            default -> throw new IllegalArgumentException("不支持的排序字段");
+        };
+        SortOptions primary = SortOptions.of(so -> so.field(f -> f.field(field)
+                .order(order)
+                .missing("_last")
+                .unmappedType("fileName".equals(sortBy) ? FieldType.Keyword : FieldType.Long)));
+        // 同值时使用文件 ID 保证翻页稳定，避免结果在相邻请求间漂移。
+        SortOptions tieBreaker = SortOptions.of(so -> so.field(f -> f.field("fileId")
+                .order(SortOrder.Asc).unmappedType(FieldType.Long)));
+        return List.of(primary, tieBreaker);
+    }
+
+    private String normalizeSearchScope(String value) {
+        String normalized = value == null || value.isBlank() ? "all" : value.trim().toLowerCase(Locale.ROOT);
+        if (!Set.of("all", "name", "content").contains(normalized)) {
+            throw new IllegalArgumentException("不支持的搜索范围: " + value);
+        }
+        return normalized;
+    }
+
+    private String normalizeSortBy(String value) {
+        String normalized = value == null || value.isBlank() ? "relevance" : value.trim();
+        if (!Set.of("relevance", "fileName", "fileSize", "createTime").contains(normalized)) {
+            throw new IllegalArgumentException("不支持的排序字段: " + value);
+        }
+        return normalized;
+    }
+
+    private SortOrder normalizeSortOrder(String value) {
+        String normalized = value == null || value.isBlank() ? "desc" : value.trim().toLowerCase(Locale.ROOT);
+        if (!Set.of("asc", "desc").contains(normalized)) {
+            throw new IllegalArgumentException("不支持的排序方向: " + value);
+        }
+        return "asc".equals(normalized) ? SortOrder.Asc : SortOrder.Desc;
+    }
+
+    private String normalizeDate(String value) {
+        try {
+            return Instant.parse(value.trim()).toString();
+        } catch (Exception ignored) {
+            try {
+                return LocalDateTime.parse(value.trim(), DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                        .atZone(ZoneId.systemDefault()).toInstant().toString();
+            } catch (Exception e) {
+                throw new IllegalArgumentException("时间格式无效，请使用 ISO 时间或 YYYY-MM-DD HH:mm:ss");
+            }
+        }
     }
 
     private Map<String, Object> emptyResult() {

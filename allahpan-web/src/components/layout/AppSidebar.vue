@@ -59,11 +59,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useTransferStore } from '@/stores/transfer'
-import { getMyInfo } from '@/api/user'
 import { useResponsive } from '@/composables/useResponsive'
 import { HomeFilled, FolderOpened, Star, Delete, UploadFilled } from '@element-plus/icons-vue'
 
@@ -79,15 +78,6 @@ const userStore = useUserStore()
 const transferStore = useTransferStore()
 
 const activeMenu = computed(() => route.path)
-
-onMounted(async () => {
-  try {
-    const info = await getMyInfo()
-    userStore.setUserInfo(info)
-  } catch (e) {
-    // 获取用户信息失败，静默处理
-  }
-})
 
 const handleCommand = (cmd) => {
   if (cmd === 'logout') {

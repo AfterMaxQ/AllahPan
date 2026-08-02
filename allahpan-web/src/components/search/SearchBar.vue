@@ -23,7 +23,10 @@ watch(() => route.query.q, (val) => { keyword.value = val || '' }, { immediate: 
 const triggerSearch = () => {
   const q = keyword.value.trim()
   if (!q) return
-  router.push({ path: '/search', query: { q } })
+  router.push({
+    path: '/search',
+    query: { ...route.query, q, pageNum: '1' },
+  })
 }
 </script>
 
